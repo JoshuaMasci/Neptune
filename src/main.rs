@@ -1,6 +1,4 @@
-mod device;
 mod graphics;
-mod image;
 
 use graphics::AppVersion;
 

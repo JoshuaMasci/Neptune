@@ -15,8 +15,6 @@ use winit;
 use std::ffi::CStr;
 use std::ffi::CString;
 
-use crate::device;
-
 pub struct Graphics {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
@@ -31,6 +29,8 @@ pub struct Graphics {
     pub device: ash::Device,
     pub present_queue: vk::Queue,
     pub allocator: VulkanAllocator,
+
+    descriptor: BindlessDescriptor,
 
     //TODO: seprate with surface into object
     pub swapchain_loader: Swapchain,
@@ -70,34 +70,19 @@ const SATURN_VERSION: u32 = vk::make_version(0, 0, 0);
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    _message_type: vk::DebugUtilsMessageTypeFlagsEXT,
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _user_data: *mut std::os::raw::c_void,
 ) -> vk::Bool32 {
     use std::borrow::Cow;
     let callback_data = *p_callback_data;
-    let message_id_number: i32 = callback_data.message_id_number as i32;
-
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
-        Cow::from("")
-    } else {
-        CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy()
-    };
-
     let message = if callback_data.p_message.is_null() {
         Cow::from("")
     } else {
         CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
-    println!(
-        "{:?}:\n{:?} [{} ({})] : {}\n",
-        message_severity,
-        message_type,
-        message_id_name,
-        &message_id_number.to_string(),
-        message,
-    );
+    println!("Vulkan {:?}: {}", message_severity, message,);
 
     vk::FALSE
 }
@@ -182,12 +167,14 @@ impl Graphics {
                 .expect("Failed to enumerate devices")
         };
 
-        /*println!("Vulkan Devices\n------------");
-        for pdevice in pdevices {
-            let prop = unsafe { ash_instance.get_physical_device_properties(pdevice) };
-            let device_name = unsafe { CStr::from_ptr(prop.device_name.as_ptr()) };
-            println!("{:#?}", device_name);
-        }*/
+        println!("Vulkan Devices\n------------");
+        for (i, pdevice) in pdevices.iter().enumerate() {
+            let prop = unsafe { ash_instance.get_physical_device_properties(*pdevice) };
+            let device_name =
+                unsafe { CStr::from_ptr(prop.device_name.as_ptr()).to_str().unwrap() };
+            println!("{}:{}", i, device_name);
+        }
+        println!("");
 
         let (pdevice, queue_family_index) = pdevices
             .iter()
@@ -218,10 +205,16 @@ impl Graphics {
             .next()
             .expect("Couldn't find suitable device.");
 
+        {
+            let prop = unsafe { ash_instance.get_physical_device_properties(pdevice) };
+            let device_name =
+                unsafe { CStr::from_ptr(prop.device_name.as_ptr()).to_str().unwrap() };
+            println!("Selected Device: {}", device_name);
+        }
+
         let queue_family_index = queue_family_index as u32;
         let device_extension_names_raw = [Swapchain::name().as_ptr()];
         let features = vk::PhysicalDeviceFeatures {
-            shader_clip_distance: 1,
             ..Default::default()
         };
         let priorities = [1.0];
@@ -250,6 +243,16 @@ impl Graphics {
             physical_device: pdevice,
             debug_settings: Default::default(),
         });
+
+        //TODO: read limits from device properties
+        let push_size: u32 = 128;
+        let bindings = vec![
+            (vk::DescriptorType::STORAGE_BUFFER, 2048),
+            (vk::DescriptorType::SAMPLED_IMAGE, 2048),
+            (vk::DescriptorType::SAMPLER, 512),
+        ];
+
+        let descriptor = BindlessDescriptor::new(device.clone(), push_size, bindings);
 
         let swapchain_loader = Swapchain::new(&ash_instance, &device);
 
@@ -317,6 +320,7 @@ impl Graphics {
             device,
             present_queue,
             allocator,
+            descriptor,
 
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -513,9 +517,6 @@ impl Graphics {
                 .queue_present(self.present_queue, &present_info);
         }
     }
-
-    // pub fn create_image(size: vk::Extent2D, format: vk::Format) { //-> Image {
-    // }
 }
 
 impl Drop for Graphics {
@@ -533,11 +534,101 @@ impl Drop for Graphics {
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
 
+            self.descriptor.destroy();
+
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_call_back, None);
             self.instance.destroy_instance(None);
+        }
+    }
+}
+
+struct BindlessDescriptor {
+    device: ash::Device,
+
+    descriptor_layout: vk::DescriptorSetLayout,
+    pipeline_layout: vk::PipelineLayout,
+
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set: vk::DescriptorSet,
+}
+
+impl BindlessDescriptor {
+    fn new(device: ash::Device, push_size: u32, bindings: Vec<(vk::DescriptorType, u32)>) -> Self {
+        let descriptor_bindings: Vec<vk::DescriptorSetLayoutBinding> = bindings
+            .iter()
+            .enumerate()
+            .map(|(i, (d_type, d_count))| {
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(i as u32)
+                    .descriptor_type(*d_type)
+                    .descriptor_count(*d_count)
+                    .stage_flags(vk::ShaderStageFlags::ALL)
+                    .build()
+            })
+            .collect();
+        let pool_sizes: Vec<vk::DescriptorPoolSize> = bindings
+            .iter()
+            .map(|(d_type, d_count)| {
+                vk::DescriptorPoolSize::builder()
+                    .ty(*d_type)
+                    .descriptor_count(*d_count)
+                    .build()
+            })
+            .collect();
+        let create_info =
+            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_bindings);
+        let descriptor_layout = unsafe {
+            device
+                .create_descriptor_set_layout(&create_info.build(), None)
+                .unwrap()
+        };
+
+        let create_info = vk::PipelineLayoutCreateInfo::builder()
+            .set_layouts(&[descriptor_layout])
+            .push_constant_ranges(&[vk::PushConstantRange::builder()
+                .offset(0)
+                .size(push_size)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build()])
+            .build();
+        let pipeline_layout = unsafe { device.create_pipeline_layout(&create_info, None).unwrap() };
+
+        let create_info = vk::DescriptorPoolCreateInfo::builder()
+            .max_sets(1)
+            .pool_sizes(&pool_sizes)
+            .build();
+
+        let descriptor_pool = unsafe { device.create_descriptor_pool(&create_info, None).unwrap() };
+
+        let create_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(&[descriptor_layout])
+            .build();
+        let descriptor_set = unsafe { device.allocate_descriptor_sets(&create_info).unwrap()[0] };
+
+        Self {
+            device,
+            descriptor_layout,
+            pipeline_layout,
+            descriptor_pool,
+            descriptor_set,
+        }
+    }
+
+    //TODO: replace with drop at some point
+    fn destroy(&mut self) {
+        unsafe {
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_layout, None);
         }
     }
 }
