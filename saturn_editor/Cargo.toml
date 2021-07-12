@@ -1,0 +1,11 @@
+[package]
+name = "saturn_editor"
+version = "0.1.0"
+authors = ["Joshua_Masci <iamshortman@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+saturn_rendering = { path = "../saturn_rendering"}
+image = "0.23.14"

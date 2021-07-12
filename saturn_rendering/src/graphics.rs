@@ -15,6 +15,18 @@ use winit;
 use std::ffi::CStr;
 use std::ffi::CString;
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use crate::device::InternalDevice;
+use crate::id_pool::IdPool;
+
+struct StorageBuffer {
+    size: u64,
+    buffer: vk::Buffer,
+    allocation: gpu_allocator::SubAllocation,
+}
+
 pub struct Graphics {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
@@ -26,11 +38,18 @@ pub struct Graphics {
     pub surface_loader: Surface,
     pub surface: vk::SurfaceKHR,
 
+    pub internal_device: Rc<InternalDevice>,
+
     pub device: ash::Device,
     pub present_queue: vk::Queue,
     pub allocator: VulkanAllocator,
 
     descriptor: BindlessDescriptor,
+
+    //Resources
+    storage_buffer_id: IdPool,
+    storage_buffers: HashMap<u32, StorageBuffer>,
+    storage_buffer_empty: StorageBuffer,
 
     //TODO: seprate with surface into object
     pub swapchain_loader: Swapchain,
@@ -82,7 +101,9 @@ unsafe extern "system" fn vulkan_debug_callback(
         CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
-    println!("Vulkan {:?}: {}", message_severity, message,);
+    if message_severity != vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
+        println!("Vulkan {:?}: {}", message_severity, message,);
+    }
 
     vk::FALSE
 }
@@ -237,7 +258,7 @@ impl Graphics {
 
         let present_queue = unsafe { device.get_device_queue(queue_family_index as u32, 0) };
 
-        let allocator = VulkanAllocator::new(&VulkanAllocatorCreateDesc {
+        let mut allocator = VulkanAllocator::new(&VulkanAllocatorCreateDesc {
             instance: ash_instance.clone(),
             device: device.clone(),
             physical_device: pdevice,
@@ -306,6 +327,38 @@ impl Graphics {
                 .unwrap()
         };
 
+        let storage_buffer_empty = {
+            let size: u64 = 16;
+            let vk_info = vk::BufferCreateInfo::builder()
+                .size(size)
+                .usage(vk::BufferUsageFlags::STORAGE_BUFFER);
+
+            let buffer = unsafe { device.create_buffer(&vk_info, None) }.unwrap();
+            let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+
+            let allocation = allocator
+                .allocate(&AllocationCreateDesc {
+                    name: "Example allocation",
+                    requirements,
+                    location: MemoryLocation::GpuOnly,
+                    linear: true, // Buffers are always linear
+                })
+                .unwrap();
+
+            // Bind memory to the buffer
+            unsafe {
+                device
+                    .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+                    .unwrap()
+            };
+
+            StorageBuffer {
+                size,
+                buffer,
+                allocation,
+            }
+        };
+
         let mut new_graphics = Self {
             entry,
             instance: ash_instance,
@@ -321,6 +374,10 @@ impl Graphics {
             present_queue,
             allocator,
             descriptor,
+
+            storage_buffer_id: IdPool::new(1),
+            storage_buffers: HashMap::new(),
+            storage_buffer_empty,
 
             swapchain_loader,
             swapchain: vk::SwapchainKHR::null(),
@@ -517,12 +574,118 @@ impl Graphics {
                 .queue_present(self.present_queue, &present_info);
         }
     }
+
+    pub fn create_storage_buffer(
+        &mut self,
+        useage: vk::BufferUsageFlags,
+        memory_loc: gpu_allocator::MemoryLocation,
+        size: u64,
+    ) -> u32 {
+        // Setup vulkan info
+        let vk_info = vk::BufferCreateInfo::builder()
+            .size(size)
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER | useage);
+
+        let buffer = unsafe { self.device.create_buffer(&vk_info, None) }.unwrap();
+        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+
+        let allocation = self
+            .allocator
+            .allocate(&AllocationCreateDesc {
+                name: "Example allocation",
+                requirements,
+                location: memory_loc,
+                linear: true, // Buffers are always linear
+            })
+            .unwrap();
+
+        // Bind memory to the buffer
+        unsafe {
+            self.device
+                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
+
+        let storage_buffer = StorageBuffer {
+            size,
+            buffer,
+            allocation,
+        };
+        let buffer_id: u32 = self.storage_buffer_id.get();
+
+        self.write_storage_buffer_descriptor(buffer_id, &storage_buffer);
+        self.storage_buffers.insert(buffer_id, storage_buffer);
+
+        buffer_id
+    }
+
+    pub fn destroy_storage_buffer(&mut self, id: u32) {
+        let storage_buffer = self.storage_buffers.remove(&id).unwrap();
+        self.storage_buffer_id.free(id);
+        self.allocator.free(storage_buffer.allocation).unwrap();
+        unsafe { self.device.destroy_buffer(storage_buffer.buffer, None) };
+        self.reset_storage_buffer_descriptor(id);
+    }
+
+    fn write_storage_buffer_descriptor(&mut self, index: u32, buffer: &StorageBuffer) {
+        let buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(buffer.buffer)
+            .offset(0)
+            .range(buffer.size)
+            .build();
+
+        //TODO: use builder
+        //let descriptor_write = vk::WriteDescriptorSet::builder().descriptor_type(vk::DescriptorType::STORAGE_BUFFER).dst_set(self.descriptor.descriptor_set).build();
+        let descriptor_writes = [vk::WriteDescriptorSet {
+            dst_set: self.descriptor.descriptor_set,
+            dst_binding: 0,
+            dst_array_element: index,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            p_buffer_info: &buffer_info,
+            ..Default::default()
+        }];
+
+        unsafe {
+            self.device.update_descriptor_sets(&descriptor_writes, &[]);
+        }
+    }
+
+    fn reset_storage_buffer_descriptor(&mut self, index: u32) {
+        let buffer_info = vk::DescriptorBufferInfo::builder()
+            .buffer(self.storage_buffer_empty.buffer)
+            .offset(0)
+            .range(self.storage_buffer_empty.size)
+            .build();
+
+        let descriptor_writes = [vk::WriteDescriptorSet {
+            dst_set: self.descriptor.descriptor_set,
+            dst_binding: 0,
+            dst_array_element: index,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            p_buffer_info: &buffer_info,
+            ..Default::default()
+        }];
+
+        unsafe {
+            self.device.update_descriptor_sets(&descriptor_writes, &[]);
+        }
+    }
 }
 
 impl Drop for Graphics {
     fn drop(&mut self) {
         unsafe {
             self.device.device_wait_idle().unwrap();
+
+            {
+                self.allocator
+                    .free(self.storage_buffer_empty.allocation.clone())
+                    .unwrap();
+                self.device
+                    .destroy_buffer(self.storage_buffer_empty.buffer, None);
+            }
 
             self.device
                 .destroy_semaphore(self.image_ready_semaphore, None);

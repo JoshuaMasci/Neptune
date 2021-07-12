@@ -1,0 +1,13 @@
+[package]
+name = "saturn_rendering"
+version = "0.1.0"
+authors = ["Joshua_Masci <iamshortman@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+winit = "0.25.0"
+ash = "0.32.1"
+ash-window = "0.6.0"
+gpu-allocator = "0.7.0"
