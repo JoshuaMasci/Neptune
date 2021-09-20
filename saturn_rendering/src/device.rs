@@ -1,19 +1,25 @@
-use std::mem::ManuallyDrop;
-
 use ash::*;
 use gpu_allocator::*;
 
 use ash::version::DeviceV1_0;
 use ash::version::InstanceV1_0;
 
-pub(crate) struct InternalDevice {
-    pub pdevice: vk::PhysicalDevice,
-    pub device: ash::Device,
-    pub allocator: ManuallyDrop<VulkanAllocator>,
-    pub graphics_queue: vk::Queue,
+struct DeviceDrop(ash::Device);
+
+impl Drop for DeviceDrop {
+    fn drop(&mut self) {
+        unsafe { self.0.destroy_device(None) };
+    }
 }
 
-impl InternalDevice {
+pub struct Device {
+    pdevice: vk::PhysicalDevice,
+    allocator: VulkanAllocator,
+    device: DeviceDrop,
+    graphics_queue: vk::Queue,
+}
+
+impl Device {
     pub(crate) fn new(
         instance: ash::Instance,
         pdevice: ash::vk::PhysicalDevice,
@@ -52,19 +58,17 @@ impl InternalDevice {
 
         Self {
             pdevice,
-            device,
-            allocator: ManuallyDrop::new(allocator),
+            device: DeviceDrop(device),
+            allocator,
             graphics_queue,
         }
     }
 }
 
-impl Drop for InternalDevice {
+impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
-            self.device.device_wait_idle().unwrap();
-            ManuallyDrop::drop(&mut self.allocator);
-            self.device.destroy_device(None);
+            self.device.0.device_wait_idle().unwrap();
         }
     }
 }

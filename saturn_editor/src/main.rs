@@ -1,23 +1,29 @@
-use saturn_rendering::*;
+use saturn_rendering;
+
+use winit::platform::run_return::EventLoopExtRunReturn;
+pub use winit::{
+    event::{Event, WindowEvent},
+    event_loop::ControlFlow,
+};
 
 fn main() {
-    let app = graphics::AppInfo {
+    let app = saturn_rendering::AppInfo {
         name: "Saturn Editor".to_string(),
-        version: graphics::AppVersion::new(0, 0, 0),
+        version: saturn_rendering::AppVersion::new(0, 0, 0),
     };
 
-    let (mut vulkan_graphics, (event_loop, _window)) = graphics::Graphics::new(&app);
+    let mut event_loop = winit::event_loop::EventLoop::new();
+    let window = winit::window::WindowBuilder::new()
+        .with_title(app.name.as_str())
+        .with_resizable(true)
+        .with_maximized(true)
+        .build(&event_loop)
+        .unwrap();
 
-    let id = vulkan_graphics.create_storage_buffer(
-        vk::BufferUsageFlags::empty(),
-        gpu_allocator::MemoryLocation::GpuOnly,
-        512,
-    );
-    vulkan_graphics.destroy_storage_buffer(id);
+    let mut vulkan_instance = saturn_rendering::Instance::new(&app, &window);
+    let mut _vulkan_device = vulkan_instance.create_device(0);
 
-    event_loop.run(move |event, _, control_flow| {
-        // ControlFlow::Poll continuously runs the event loop, even if the OS hasn't
-        // dispatched any events. This is ideal for games and similar applications.
+    event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::WindowEvent {
@@ -28,12 +34,14 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                vulkan_graphics.draw();
+                //Run stuff here
             }
             Event::RedrawRequested(_) => {}
             _ => (),
         }
     });
+
+    println!("Application Has closed");
 }
 
 /* BACKEND CODE IDEAS
