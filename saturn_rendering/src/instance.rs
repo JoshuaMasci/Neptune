@@ -144,7 +144,25 @@ impl Instance {
                 .enumerate_physical_devices()
                 .expect("Failed to enumerate devices")
         };
-        Device::new(self.instance.clone(), pdevices[index], 0)
+
+        unsafe {
+            if self
+                .surface_loader
+                .get_physical_device_surface_support(pdevices[index], 0, self.surface)
+                .expect("Failed to check device support")
+                == false
+            {
+                panic!("Selected Device doesn't support the surface");
+            }
+        }
+
+        Device::new(
+            self.instance.clone(),
+            pdevices[index],
+            0,
+            self.surface,
+            &self.surface_loader,
+        )
     }
 }
 

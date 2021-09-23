@@ -35,13 +35,12 @@ fn main() {
             }
             Event::MainEventsCleared => {
                 //Run stuff here
+                _vulkan_device.draw();
             }
             Event::RedrawRequested(_) => {}
             _ => (),
         }
     });
-
-    println!("Application Has closed");
 }
 
 /* BACKEND CODE IDEAS
