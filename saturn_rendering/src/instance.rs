@@ -1,8 +1,4 @@
-use ash::extensions::{ext::DebugUtils, khr::Surface};
 use ash::*;
-
-use ash::version::EntryV1_0;
-use ash::version::InstanceV1_0;
 
 use winit;
 
@@ -14,9 +10,9 @@ use crate::device::Device;
 pub struct Instance {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
-    pub debug_utils_loader: DebugUtils,
+    pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_call_back: vk::DebugUtilsMessengerEXT,
-    pub surface_loader: Surface,
+    pub surface_loader: ash::extensions::khr::Surface,
     pub surface: vk::SurfaceKHR,
     //pub device: Device,
 }
@@ -82,7 +78,9 @@ impl Instance {
             .iter()
             .map(|ext| ext.as_ptr())
             .collect::<Vec<_>>();
-        extension_names_raw.push(DebugUtils::name().as_ptr());
+        extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+        extension_names_raw
+            .push(ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr());
 
         let temp_name = CString::new(app.name.as_str()).unwrap();
         let appinfo = vk::ApplicationInfo::builder()
@@ -116,14 +114,14 @@ impl Instance {
             .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
             .pfn_user_callback(Some(vulkan_debug_callback));
 
-        let debug_utils_loader = DebugUtils::new(&entry, &ash_instance);
+        let debug_utils_loader = ash::extensions::ext::DebugUtils::new(&entry, &ash_instance);
         let debug_call_back = unsafe {
             debug_utils_loader
                 .create_debug_utils_messenger(&debug_info, None)
                 .unwrap()
         };
 
-        let surface_loader = Surface::new(&entry, &ash_instance);
+        let surface_loader = ash::extensions::khr::Surface::new(&entry, &ash_instance);
         let surface =
             unsafe { ash_window::create_surface(&entry, &ash_instance, window, None).unwrap() };
 

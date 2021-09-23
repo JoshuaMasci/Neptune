@@ -1,8 +1,6 @@
 use ash::*;
+use gpu_allocator::vulkan;
 use gpu_allocator::*;
-
-use ash::version::DeviceV1_0;
-use ash::version::InstanceV1_0;
 
 use crate::swapchain::Swapchain;
 use crate::BufferId;
@@ -68,10 +66,11 @@ pub struct Device {
     //Drop order items
     swapchain: Swapchain,
     frames: Vec<DeviceFrame>,
-    allocator: VulkanAllocator,
+    allocator: vulkan::Allocator,
     device: DeviceDrop,
 
     //Non-Dropping Items
+    synchronization2: ash::extensions::khr::Synchronization2,
     command_pool: vk::CommandPool,
     pdevice: vk::PhysicalDevice,
     graphics_queue: vk::Queue,
@@ -86,23 +85,33 @@ impl Device {
         surface: vk::SurfaceKHR,
         surface_loader: &ash::extensions::khr::Surface,
     ) -> Self {
+        let device_properties = unsafe { instance.get_physical_device_properties(pdevice) };
+        //println!("Using Device:\n {}", device_properties.device_name);
+
         const FRAMES_IN_FLIGHT: u32 = 3;
 
-        let device_extension_names_raw = [extensions::khr::Swapchain::name().as_ptr()];
-        let features = vk::PhysicalDeviceFeatures {
-            ..Default::default()
-        };
-        let priorities = [1.0];
+        let device_extension_names_raw = vec![
+            extensions::khr::Swapchain::name().as_ptr(),
+            ash::extensions::khr::Synchronization2::name().as_ptr(),
+        ];
 
+        let mut synchronization2_features =
+            vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
+                .synchronization2(true)
+                .build();
+
+        let features2 = vk::PhysicalDeviceFeatures2::builder().build();
+
+        let priorities = &[1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(graphics_queue_index)
-            .queue_priorities(&priorities)
+            .queue_priorities(priorities)
             .build()];
 
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_info)
             .enabled_extension_names(&device_extension_names_raw)
-            .enabled_features(&features);
+            .push_next(&mut synchronization2_features);
 
         let device: ash::Device = unsafe {
             instance
@@ -112,12 +121,14 @@ impl Device {
 
         let graphics_queue = unsafe { device.get_device_queue(graphics_queue_index, 0) };
 
-        let allocator = VulkanAllocator::new(&VulkanAllocatorCreateDesc {
+        let allocator = vulkan::Allocator::new(&vulkan::AllocatorCreateDesc {
             instance: instance.clone(),
             device: device.clone(),
             physical_device: pdevice,
             debug_settings: Default::default(),
-        });
+            buffer_device_address: true,
+        })
+        .expect("Failed to create allocator");
 
         let command_pool = unsafe {
             device.create_command_pool(
@@ -149,6 +160,8 @@ impl Device {
         let swapchain =
             Swapchain::new(&instance, &device, pdevice, surface, surface_loader.clone());
 
+        let synchronization2 = ash::extensions::khr::Synchronization2::new(&instance, &device);
+
         Self {
             pdevice,
             device: DeviceDrop(device),
@@ -158,6 +171,7 @@ impl Device {
             frames,
             command_pool,
             frame_index: 0,
+            synchronization2,
         }
     }
 
