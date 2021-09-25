@@ -5,9 +5,9 @@ use gpu_allocator::*;
 use crate::swapchain::Swapchain;
 use crate::BufferId;
 use std::borrow::BorrowMut;
+use std::ffi::CStr;
 
 struct DeviceDrop(ash::Device);
-
 impl Drop for DeviceDrop {
     fn drop(&mut self) {
         unsafe { self.0.destroy_device(None) };
@@ -86,7 +86,10 @@ impl Device {
         surface_loader: &ash::extensions::khr::Surface,
     ) -> Self {
         let device_properties = unsafe { instance.get_physical_device_properties(pdevice) };
-        //println!("Using Device:\n {}", device_properties.device_name);
+        let device_name = unsafe { CStr::from_ptr(device_properties.device_name.as_ptr()) }
+            .to_str()
+            .expect("Failed to convert CStr to string");
+        println!("Using Device:\n{}", device_name);
 
         const FRAMES_IN_FLIGHT: u32 = 3;
 
@@ -99,8 +102,6 @@ impl Device {
             vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
                 .synchronization2(true)
                 .build();
-
-        let features2 = vk::PhysicalDeviceFeatures2::builder().build();
 
         let priorities = &[1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
@@ -209,13 +210,16 @@ impl Device {
                 )
                 .expect("Failed to begin command buffer recording");
 
-            //Transition Image
-            let image_barrier = vk::ImageMemoryBarrier::builder()
+            let iamge_barriers = &[vk::ImageMemoryBarrier2KHR::builder()
                 .image(self.swapchain.images[image_index as usize])
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .src_access_mask(vk::AccessFlags2KHR::NONE)
+                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .subresource_range(
                     vk::ImageSubresourceRange::builder()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -225,30 +229,42 @@ impl Device {
                         .level_count(1)
                         .build(),
                 )
-                .build();
+                .build()];
 
-            device.cmd_pipeline_barrier(
-                frame.command_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[image_barrier],
-            );
+            let dependency = vk::DependencyInfoKHR::builder()
+                .image_memory_barriers(iamge_barriers)
+                .build();
+            self.synchronization2
+                .cmd_pipeline_barrier2(frame.command_buffer, &dependency);
 
             device
                 .end_command_buffer(frame.command_buffer)
                 .expect("Failed to end command buffer recording");
 
-            let submit_info = vk::SubmitInfo::builder()
-                .wait_semaphores(&[frame.image_ready_semaphore])
-                .wait_dst_stage_mask(&[vk::PipelineStageFlags::TOP_OF_PIPE])
-                .command_buffers(&[frame.command_buffer])
-                .signal_semaphores(&[frame.present_semaphore])
+            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(frame.image_ready_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
+                .command_buffer(frame.command_buffer)
+                .device_mask(0) //WTF is this?
+                .build()];
+
+            let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(frame.present_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let submit_info = vk::SubmitInfo2KHR::builder()
+                .wait_semaphore_infos(wait_semaphore_infos)
+                .command_buffer_infos(command_buffer_infos)
+                .signal_semaphore_infos(signal_semaphore_infos)
                 .build();
-            device
-                .queue_submit(self.graphics_queue, &[submit_info], frame.frame_done_fence)
+            self.synchronization2
+                .queue_submit2(self.graphics_queue, &[submit_info], frame.frame_done_fence)
                 .expect("Failed to queue command buffer");
 
             //Present Image
@@ -259,6 +275,7 @@ impl Device {
                 .wait_semaphores(wait_semaphores)
                 .swapchains(swapchains)
                 .image_indices(image_indices);
+
             self.swapchain
                 .loader
                 .queue_present(self.graphics_queue, &present_info)
