@@ -88,11 +88,7 @@ impl Instance {
             .application_version(SATURN_VERSION)
             .engine_name(engine_name.as_c_str())
             .engine_version(SATURN_VERSION)
-            .api_version(vk::make_version(
-                app.version.major,
-                app.version.minor,
-                app.version.patch,
-            ));
+            .api_version(vk::API_VERSION_1_2);
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&appinfo)
