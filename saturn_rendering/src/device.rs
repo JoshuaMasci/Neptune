@@ -3,6 +3,8 @@ use gpu_allocator::vulkan;
 use gpu_allocator::*;
 
 use crate::buffer::Buffer;
+use crate::descriptor_set::*;
+use crate::id_pool::IdPool;
 use crate::swapchain::Swapchain;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
@@ -309,7 +311,7 @@ struct BufferResource {
 struct Resources {
     device: ash::Device,
     allocator: vulkan::Allocator,
-    descriptor_set: DescriptorSet,
+    descriptor_set: DescriptorSetManager,
 
     buffers: HashMap<BufferId, BufferResource>,
 }
@@ -331,7 +333,17 @@ impl Resources {
         })
         .expect("Failed to create allocator");
 
-        let descriptor_set = DescriptorSet::new(&device);
+        let descriptor_count: u32 = 2048;
+        let descriptor_set = DescriptorSetManager::new(
+            &device,
+            &DescriptorCount {
+                storage_buffer: descriptor_count,
+                storage_image: descriptor_count,
+                sampled_image: descriptor_count,
+                sampler: 128,
+                acceleration_structure: 0,
+            },
+        );
 
         Self {
             device,
@@ -347,80 +359,6 @@ impl Drop for Resources {
         //Don't bother unbinding descriptor when destroying device
         for (_index, mut buffer) in self.buffers.drain() {
             buffer.buffer.destroy(&self.device, &mut self.allocator);
-        }
-    }
-}
-
-struct DescriptorSet {
-    device: ash::Device,
-    layout: vk::DescriptorSetLayout,
-    pool: vk::DescriptorPool,
-    set: vk::DescriptorSet,
-}
-
-impl DescriptorSet {
-    fn new(device: &ash::Device) -> Self {
-        let device = device.clone();
-
-        //TODO: generate these from inputs
-        let bindings = &[vk::DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1024)
-            .stage_flags(vk::ShaderStageFlags::all())
-            .build()];
-
-        let pool_sizes = &[vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1024)
-            .build()];
-
-        let layout = unsafe {
-            device.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder()
-                    .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-                    .bindings(bindings)
-                    .build(),
-                None,
-            )
-        }
-        .expect("Failed to create descriptor set layout");
-
-        let pool = unsafe {
-            device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::builder()
-                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
-                    .max_sets(1)
-                    .pool_sizes(pool_sizes)
-                    .build(),
-                None,
-            )
-        }
-        .expect("Failed to create descriptor pool");
-
-        let sets = unsafe {
-            device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(pool)
-                    .set_layouts(&[layout]),
-            )
-        }
-        .expect("Failed to allocate descriptor sets");
-
-        Self {
-            device,
-            layout,
-            pool,
-            set: sets[0],
-        }
-    }
-}
-
-impl Drop for DescriptorSet {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_descriptor_pool(self.pool, None);
-            self.device.destroy_descriptor_set_layout(self.layout, None);
         }
     }
 }

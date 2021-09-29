@@ -1,6 +1,8 @@
 mod buffer;
+mod descriptor_set;
 pub mod device;
 mod id_pool;
+mod image;
 pub mod instance;
 pub mod swapchain;
 
