@@ -1,19 +1,23 @@
 use ash::vk;
 use gpu_allocator::vulkan;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub(crate) struct Image {
-    pub(crate) allocation: gpu_allocator::vulkan::Allocation,
-    pub(crate) image: vk::Image,
-    pub(crate) size: vk::Extent3D,
-    pub(crate) usage: vk::ImageUsageFlags,
-    pub(crate) memory_location: gpu_allocator::MemoryLocation,
-    image_view: Option<vk::ImageView>,
+pub struct Image {
+    device: ash::Device,
+    allocator: Rc<RefCell<vulkan::Allocator>>,
+
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub image: vk::Image,
+    pub size: vk::Extent3D,
+    pub usage: vk::ImageUsageFlags,
+    pub memory_location: gpu_allocator::MemoryLocation,
 }
 
 impl Image {
     pub(crate) fn new(
-        device: &ash::Device,
-        allocator: &mut vulkan::Allocator,
+        device: ash::Device,
+        allocator: Rc<RefCell<vulkan::Allocator>>,
         create_info: &vk::ImageCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> Self {
@@ -22,6 +26,7 @@ impl Image {
         let requirements = unsafe { device.get_image_memory_requirements(image) };
 
         let allocation = allocator
+            .borrow_mut()
             .allocate(&vulkan::AllocationCreateDesc {
                 name: "Image Allocation",
                 requirements,
@@ -37,29 +42,25 @@ impl Image {
         }
 
         Self {
+            device,
+            allocator,
             allocation,
             image,
             size: create_info.extent,
             usage: create_info.usage,
             memory_location,
-            image_view: None,
         }
     }
+}
 
-    //Do not use drop as that requires storing device and allocation which is not needed
-    pub(crate) fn destroy(&mut self, device: &ash::Device, allocator: &mut vulkan::Allocator) {
-        allocator
+impl Drop for Image {
+    fn drop(&mut self) {
+        self.allocator
+            .borrow_mut()
             .free(self.allocation.clone())
             .expect("Failed to free image memory");
         unsafe {
-            device.destroy_image(self.image, None);
+            self.device.destroy_image(self.image, None);
         }
-    }
-
-    pub(crate) fn create_image_view(&mut self, create_info: &vk::ImageViewCreateInfo) {}
-
-    pub(crate) fn get_image_view(&self) -> vk::ImageView {
-        self.image_view
-            .expect("Image doesn't contain an image view")
     }
 }

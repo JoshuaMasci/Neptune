@@ -3,12 +3,20 @@ use gpu_allocator::vulkan;
 use gpu_allocator::*;
 
 use crate::buffer::Buffer;
+use crate::command_buffer::CommandBuffer;
 use crate::descriptor_set::*;
 use crate::id_pool::IdPool;
+use crate::image::Image;
+use crate::render_task::{RenderTask, ResourceAccess};
 use crate::swapchain::Swapchain;
+use crate::{BufferId, ImageId};
 use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::rc::Rc;
+
+type ResourceId = u32;
 
 struct DeviceDrop(ash::Device);
 impl Drop for DeviceDrop {
@@ -183,11 +191,37 @@ impl Device {
         }
     }
 
-    pub fn create_buffer() -> BufferId {
-        BufferId(0)
+    pub fn create_image(
+        &mut self,
+        format: vk::Format,
+        size: vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+        memory_location: gpu_allocator::MemoryLocation,
+    ) -> Image {
+        Image::new(
+            self.device.0.clone(),
+            self.resources.allocator.clone(),
+            &vk::ImageCreateInfo::builder()
+                .format(format)
+                .extent(
+                    vk::Extent3D::builder()
+                        .width(size.width)
+                        .height(size.height)
+                        .depth(1)
+                        .build(),
+                )
+                .usage(usage)
+                .array_layers(1)
+                .mip_levels(1)
+                .image_type(vk::ImageType::TYPE_2D)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .build(),
+            memory_location,
+        )
     }
-
-    pub fn destroy_buffer(_id: BufferId) {}
 
     pub fn draw(&mut self) {
         let device = self.device.0.clone();
@@ -199,15 +233,24 @@ impl Device {
         unsafe {
             device
                 .wait_for_fences(&[frame.frame_done_fence], true, u64::MAX)
-                .expect("Failed to wait for fence");
-            device
-                .reset_fences(&[frame.frame_done_fence])
-                .expect("Failed to reset fence");
-        }
+                .expect("Failed to wait for fence")
+        };
 
         let image_index = self
             .swapchain
             .acquire_next_image(frame.image_ready_semaphore);
+
+        if image_index.is_none() {
+            println!("No Image available, returning");
+            return;
+        }
+        let image_index = image_index.unwrap();
+
+        unsafe {
+            device
+                .reset_fences(&[frame.frame_done_fence])
+                .expect("Failed to reset fence")
+        };
 
         unsafe {
             device
@@ -283,12 +326,44 @@ impl Device {
                 .swapchains(swapchains)
                 .image_indices(image_indices);
 
-            self.swapchain
+            let result = self
+                .swapchain
                 .loader
-                .queue_present(self.graphics_queue, &present_info)
-                .expect("Failed to queue present");
+                .queue_present(self.graphics_queue, &present_info);
         }
     }
+
+    // pub fn get_swapchain_image(&mut self) -> Option<(ImageId, u32)> {
+    //     let device = self.device.0.clone();
+    //     let frame = self
+    //         .frames
+    //         .get_mut(self.frame_index as usize)
+    //         .expect("Failed to get current frame");
+    //
+    //     unsafe {
+    //         device
+    //             .wait_for_fences(&[frame.frame_done_fence], true, u64::MAX)
+    //             .expect("Failed to wait for fence")
+    //     };
+    //
+    //     let image_index = self
+    //         .swapchain
+    //         .acquire_next_image(frame.image_ready_semaphore);
+    //
+    //     if image_index.is_none() {
+    //         println!("No Image available, returning");
+    //         return None;
+    //     }
+    //     let image_index = image_index.unwrap();
+    //
+    //     unsafe {
+    //         device
+    //             .reset_fences(&[frame.frame_done_fence])
+    //             .expect("Failed to reset fence")
+    //     };
+    //
+    //     Some((ImageId(0), self.frame_index))
+    // }
 }
 
 impl Drop for Device {
@@ -300,20 +375,25 @@ impl Drop for Device {
     }
 }
 
-pub struct BufferId(u32);
-pub struct TextureId(u32);
-
-struct BufferResource {
-    buffer: Buffer,
-    binding_index: Option<u32>,
-}
+// struct BufferResource {
+//     buffer: Buffer,
+//     binding_index: Option<u32>,
+// }
+//
+// struct ImageResource {
+//     image: Image,
+//     binding_index: Option<u32>,
+// }
 
 struct Resources {
     device: ash::Device,
-    allocator: vulkan::Allocator,
+    allocator: Rc<RefCell<vulkan::Allocator>>,
     descriptor_set: DescriptorSetManager,
+    //buffer_ids: IdPool,
+    //image_ids: IdPool,
 
-    buffers: HashMap<BufferId, BufferResource>,
+    //buffers: HashMap<BufferId, BufferResource>,
+    //images: HashMap<ImageId, ImageResource>,
 }
 
 impl Resources {
@@ -329,7 +409,7 @@ impl Resources {
             device: device.clone(),
             physical_device: pdevice,
             debug_settings: Default::default(),
-            buffer_device_address: true,
+            buffer_device_address: false,
         })
         .expect("Failed to create allocator");
 
@@ -347,18 +427,12 @@ impl Resources {
 
         Self {
             device,
-            allocator,
+            allocator: Rc::new(RefCell::new(allocator)),
             descriptor_set,
-            buffers: HashMap::new(),
         }
     }
 }
 
 impl Drop for Resources {
-    fn drop(&mut self) {
-        //Don't bother unbinding descriptor when destroying device
-        for (_index, mut buffer) in self.buffers.drain() {
-            buffer.buffer.destroy(&self.device, &mut self.allocator);
-        }
-    }
+    fn drop(&mut self) {}
 }

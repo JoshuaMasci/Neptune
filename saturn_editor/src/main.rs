@@ -1,5 +1,13 @@
+mod world;
+
 use saturn_rendering;
 
+use saturn_rendering::command_buffer::CommandBuffer;
+use saturn_rendering::render_task::ResourceAccess;
+use saturn_rendering::render_task::ResourceAccess::{ReadImage, WriteImage};
+use saturn_rendering::vk::ClearColorValue;
+use saturn_rendering::ImageId;
+use std::ops::Deref;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
     event::{Event, WindowEvent},
@@ -21,7 +29,18 @@ fn main() {
         .unwrap();
 
     let mut vulkan_instance = saturn_rendering::Instance::new(&app, &window);
-    let mut _vulkan_device = vulkan_instance.create_device(0);
+    let mut vulkan_device = vulkan_instance.create_device(0);
+
+    // let mut image = vulkan_device.create_image(
+    //     saturn_rendering::vk::Format::R8G8B8A8_UNORM,
+    //     saturn_rendering::vk::Extent2D::builder()
+    //         .width(1920)
+    //         .height(1080)
+    //         .build(),
+    //     saturn_rendering::vk::ImageUsageFlags::TRANSFER_SRC
+    //         | saturn_rendering::vk::ImageUsageFlags::STORAGE,
+    //     saturn_rendering::gpu_allocator::MemoryLocation::GpuOnly,
+    // );
 
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -35,12 +54,48 @@ fn main() {
             }
             Event::MainEventsCleared => {
                 //Run stuff here
-                _vulkan_device.draw();
+                // let clear_image_color = |command_buffer: &mut CommandBuffer| {
+                //     command_buffer.clear_color_image(&mut image, &[0.0, 0.5, 8.0, 1.0]);
+                // };
+                //
+                // vulkan_device.render(&[clear_image_color]);
+                vulkan_device.draw();
             }
             Event::RedrawRequested(_) => {}
             _ => (),
         }
     });
+}
+
+struct ClearTask {
+    image: ImageId,
+    clear_color: [f32; 4],
+}
+
+impl saturn_rendering::render_task::RenderTask for ClearTask {
+    fn get_resources(&self) -> Vec<ResourceAccess> {
+        return vec![WriteImage(self.image)];
+    }
+
+    fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
+        println!("Clearing {:?} to {:?}", self.image, self.clear_color);
+        //command_buffer.clear_color_image(image, &self.clear_color);
+    }
+}
+
+struct BlitTask {
+    src_image: ImageId,
+    dst_image: ImageId,
+}
+
+impl saturn_rendering::render_task::RenderTask for BlitTask {
+    fn get_resources(&self) -> Vec<ResourceAccess> {
+        return vec![ReadImage(self.src_image), WriteImage(self.dst_image)];
+    }
+
+    fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
+        println!("Blit-ing {:?} to {:?}", self.src_image, self.dst_image);
+    }
 }
 
 /* BACKEND CODE IDEAS
@@ -72,5 +127,5 @@ fn main() {
  * }
  * );
  *
- * device.render(&[blit_render_pass]);
+ * device.render(swapchain, &[blit_render_pass]);
  */

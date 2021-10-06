@@ -1,12 +1,12 @@
 use ash::vk;
 use gpu_allocator::vulkan;
 
-pub(crate) struct Buffer {
-    pub(crate) allocation: gpu_allocator::vulkan::Allocation,
-    pub(crate) buffer: vk::Buffer,
-    pub(crate) size: vk::DeviceSize,
-    pub(crate) usage: vk::BufferUsageFlags,
-    pub(crate) memory_location: gpu_allocator::MemoryLocation,
+pub struct Buffer {
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub buffer: vk::Buffer,
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub memory_location: gpu_allocator::MemoryLocation,
 }
 
 impl Buffer {

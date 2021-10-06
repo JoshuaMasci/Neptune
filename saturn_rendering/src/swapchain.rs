@@ -1,3 +1,4 @@
+use crate::prelude::VkResult;
 use ash::*;
 
 pub struct SwapchainSupportDetails {
@@ -82,6 +83,7 @@ impl SwapchainSupportDetails {
 }
 
 pub struct Swapchain {
+    invalid: bool,
     pdevice: vk::PhysicalDevice,
     surface: vk::SurfaceKHR,
     surface_loader: ash::extensions::khr::Surface,
@@ -112,6 +114,7 @@ impl Swapchain {
         let images = Vec::new();
 
         let mut new = Self {
+            invalid: true,
             pdevice,
             surface,
             surface_loader,
@@ -168,27 +171,42 @@ impl Swapchain {
         unsafe {
             self.loader.destroy_swapchain(old_swapchain, None);
         }
+
+        println!("Finished rebuilding Swapchain");
+        self.invalid = false;
     }
 
-    pub fn acquire_next_image(&mut self, image_ready_semaphore: vk::Semaphore) -> u32 {
-        loop {
-            let (index, suboptimal) = unsafe {
-                self.loader
-                    .acquire_next_image(
-                        self.handle,
-                        u64::MAX,
-                        image_ready_semaphore,
-                        vk::Fence::null(),
-                    )
-                    .unwrap_or((0, true))
+    pub fn acquire_next_image(&mut self, image_ready_semaphore: vk::Semaphore) -> Option<u32> {
+        if !self.invalid {
+            let result = unsafe {
+                self.loader.acquire_next_image(
+                    self.handle,
+                    u64::MAX,
+                    image_ready_semaphore,
+                    vk::Fence::null(),
+                )
             };
 
-            if !suboptimal {
-                return index;
+            if let Ok((index, suboptimal)) = result {
+                if !suboptimal {
+                    return Some(index);
+                }
             }
+            self.invalid = true;
+        }
 
+        //Rebuild if the size is valid
+        let capabilities = unsafe {
+            self.surface_loader
+                .get_physical_device_surface_capabilities(self.pdevice, self.surface)
+                .unwrap()
+        };
+
+        if capabilities.min_image_extent.width >= 1 || capabilities.min_image_extent.height >= 1 {
             self.rebuild();
         }
+
+        None
     }
 }
 
