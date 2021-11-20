@@ -1,25 +1,52 @@
+//Old stuff probably won't use
 mod buffer;
-pub mod command_buffer;
+mod command_buffer;
 mod descriptor_set;
-pub mod device;
+mod device;
 mod id_pool;
 mod image;
-pub mod instance;
+mod instance;
 mod pipeline;
-pub mod render_task;
-pub mod swapchain;
-
-pub use ash::*;
-pub use gpu_allocator;
-
-pub use crate::instance::AppInfo;
-pub use crate::instance::AppVersion;
-pub use crate::instance::Instance;
-
+mod render_task;
+mod swapchain;
+use ash::*;
+use gpu_allocator;
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct BufferId(u32);
-
+struct BufferId(u32);
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ImageId(pub u32);
+struct ImageId(u32);
+const SwapchainImageId: ImageId = ImageId(u32::MAX);
 
-pub const SwapchainImageId: ImageId = ImageId(u32::MAX);
+pub struct Instance {} //vk::Instance
+
+impl Instance {
+    pub fn enumerate_adapters() -> Vec<Adapter> {
+        Vec::new()
+    }
+
+    //TODO: make generic
+    pub fn create_surface(&self, window: &winit::window::Window) -> Surface {
+        Surface {}
+    }
+}
+
+impl Drop for Instance {
+    fn drop(&mut self) {
+        todo!()
+    }
+}
+
+pub struct Surface {} //vk::SurfaceKHR
+
+pub struct Adapter {} //vk::PhysicalDevice
+
+pub struct Device {}
+
+impl Device {
+    pub fn create_swapchain(&self, surface: &Surface) {}
+}
+
+pub struct Buffer {}
+pub struct Image {}
+pub struct RenderPipeline {}
+pub struct ComputePipeline {}

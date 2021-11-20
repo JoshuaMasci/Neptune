@@ -1,7 +1,9 @@
+mod transform;
 mod world;
 
 use saturn_rendering;
 
+use crate::world::World;
 use saturn_rendering::command_buffer::CommandBuffer;
 use saturn_rendering::render_task::ResourceAccess;
 use saturn_rendering::render_task::ResourceAccess::{ReadImage, WriteImage};
@@ -28,8 +30,10 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut vulkan_instance = saturn_rendering::Instance::new(&app, &window);
-    let mut vulkan_device = vulkan_instance.create_device(0);
+    // let mut vulkan_instance = saturn_rendering::Instance::new(&app, &window);
+    // let mut vulkan_device = vulkan_instance.create_device(0);
+
+    let mut world = World::new();
 
     // let mut image = vulkan_device.create_image(
     //     saturn_rendering::vk::Format::R8G8B8A8_UNORM,
@@ -67,36 +71,36 @@ fn main() {
     });
 }
 
-struct ClearTask {
-    image: ImageId,
-    clear_color: [f32; 4],
-}
-
-impl saturn_rendering::render_task::RenderTask for ClearTask {
-    fn get_resources(&self) -> Vec<ResourceAccess> {
-        return vec![WriteImage(self.image)];
-    }
-
-    fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
-        println!("Clearing {:?} to {:?}", self.image, self.clear_color);
-        //command_buffer.clear_color_image(image, &self.clear_color);
-    }
-}
-
-struct BlitTask {
-    src_image: ImageId,
-    dst_image: ImageId,
-}
-
-impl saturn_rendering::render_task::RenderTask for BlitTask {
-    fn get_resources(&self) -> Vec<ResourceAccess> {
-        return vec![ReadImage(self.src_image), WriteImage(self.dst_image)];
-    }
-
-    fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
-        println!("Blit-ing {:?} to {:?}", self.src_image, self.dst_image);
-    }
-}
+// struct ClearTask {
+//     image: ImageId,
+//     clear_color: [f32; 4],
+// }
+//
+// impl saturn_rendering::render_task::RenderTask for ClearTask {
+//     fn get_resources(&self) -> Vec<ResourceAccess> {
+//         return vec![WriteImage(self.image)];
+//     }
+//
+//     fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
+//         println!("Clearing {:?} to {:?}", self.image, self.clear_color);
+//         //command_buffer.clear_color_image(image, &self.clear_color);
+//     }
+// }
+//
+// struct BlitTask {
+//     src_image: ImageId,
+//     dst_image: ImageId,
+// }
+//
+// impl saturn_rendering::render_task::RenderTask for BlitTask {
+//     fn get_resources(&self) -> Vec<ResourceAccess> {
+//         return vec![ReadImage(self.src_image), WriteImage(self.dst_image)];
+//     }
+//
+//     fn build_command(&self, frame_index: u32, command_buffer: &mut CommandBuffer) {
+//         println!("Blit-ing {:?} to {:?}", self.src_image, self.dst_image);
+//     }
+// }
 
 /* BACKEND CODE IDEAS
  * let instance = ...;
