@@ -34,10 +34,11 @@ impl DebugMessenger {
 
 impl Drop for DebugMessenger {
     fn drop(&mut self) {
-        unsafe {
-            self.debug_utils_loader
-                .destroy_debug_utils_messenger(self.debug_call_back, None);
-        }
+        //TODO: re-enable when drop works
+        // unsafe {
+        //     self.debug_utils_loader
+        //         .destroy_debug_utils_messenger(self.debug_call_back, None);
+        // }
     }
 }
 
