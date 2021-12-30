@@ -1,4 +1,3 @@
-use crate::prelude::VkResult;
 use ash::*;
 
 pub struct SwapchainSupportDetails {
@@ -9,25 +8,25 @@ pub struct SwapchainSupportDetails {
 
 impl SwapchainSupportDetails {
     pub fn new(
-        pdevice: vk::PhysicalDevice,
+        physical_device: vk::PhysicalDevice,
         surface: vk::SurfaceKHR,
         surface_loader: &ash::extensions::khr::Surface,
     ) -> Self {
         let capabilities = unsafe {
             surface_loader
-                .get_physical_device_surface_capabilities(pdevice, surface)
+                .get_physical_device_surface_capabilities(physical_device, surface)
                 .unwrap()
         };
 
         let formats = unsafe {
             surface_loader
-                .get_physical_device_surface_formats(pdevice, surface)
+                .get_physical_device_surface_formats(physical_device, surface)
                 .unwrap()
         };
 
         let present_modes = unsafe {
             surface_loader
-                .get_physical_device_surface_present_modes(pdevice, surface)
+                .get_physical_device_surface_present_modes(physical_device, surface)
                 .unwrap()
         };
 
@@ -84,7 +83,7 @@ impl SwapchainSupportDetails {
 
 pub struct Swapchain {
     invalid: bool,
-    pdevice: vk::PhysicalDevice,
+    physical_device: vk::PhysicalDevice,
     surface: vk::SurfaceKHR,
     surface_loader: ash::extensions::khr::Surface,
     pub(crate) loader: ash::extensions::khr::Swapchain,
@@ -100,7 +99,7 @@ impl Swapchain {
     pub fn new(
         instance: &ash::Instance,
         device: &ash::Device,
-        pdevice: vk::PhysicalDevice,
+        physical_device: vk::PhysicalDevice,
         surface: vk::SurfaceKHR,
         surface_loader: ash::extensions::khr::Surface,
     ) -> Self {
@@ -115,7 +114,7 @@ impl Swapchain {
 
         let mut new = Self {
             invalid: true,
-            pdevice,
+            physical_device,
             surface,
             surface_loader,
             loader,
@@ -131,7 +130,7 @@ impl Swapchain {
 
     fn rebuild(&mut self) {
         let swapchain_support =
-            SwapchainSupportDetails::new(self.pdevice, self.surface, &self.surface_loader);
+            SwapchainSupportDetails::new(self.physical_device, self.surface, &self.surface_loader);
 
         let present_mode = swapchain_support.get_present_mode(vk::PresentModeKHR::MAILBOX);
         let surface_format = swapchain_support.get_format(vk::Format::B8G8R8A8_UNORM);
@@ -172,7 +171,7 @@ impl Swapchain {
             self.loader.destroy_swapchain(old_swapchain, None);
         }
 
-        println!("Finished rebuilding Swapchain");
+        //println!("Finished rebuilding Swapchain");
         self.invalid = false;
     }
 
@@ -198,7 +197,7 @@ impl Swapchain {
         //Rebuild if the size is valid
         let capabilities = unsafe {
             self.surface_loader
-                .get_physical_device_surface_capabilities(self.pdevice, self.surface)
+                .get_physical_device_surface_capabilities(self.physical_device, self.surface)
                 .unwrap()
         };
 

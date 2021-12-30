@@ -1,13 +1,14 @@
 [package]
-name = "saturn_rendering"
+name = "neptune_core"
 version = "0.1.0"
 authors = ["Joshua_Masci <iamshortman@gmail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 winit = "0.25.0"
 ash = "0.33"
 ash-window = "0.7.0"
 gpu-allocator = "0.9.0"
+
+image = "0.23.14"
+legion = "0.4.0"

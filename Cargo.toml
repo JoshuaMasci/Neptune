@@ -1,6 +1,6 @@
 [workspace]
 
 members = [
-    "saturn_editor",
-    "saturn_rendering",
+    "neptune_core",
+    "neptune_editor",
 ]
