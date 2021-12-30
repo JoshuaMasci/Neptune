@@ -5,19 +5,28 @@ use std::sync::Arc;
 
 pub struct RenderBackend {
     instance: ash::Instance,
-    physical_device: vk::PhysicalDevice,
+    debug_messenger: crate::debug_messenger::DebugMessenger,
 
+    physical_device: vk::PhysicalDevice,
     device: ash::Device,
     graphics_queue: vk::Queue,
     device_allocator: Arc<RefCell<gpu_allocator::vulkan::Allocator>>,
+    synchronization2: ash::extensions::khr::Synchronization2,
 
     surface: vk::SurfaceKHR,
     swapchain: crate::swapchain::Swapchain,
+
+    //Temp Device Frame Objects
+    command_pool: vk::CommandPool,
+    command_buffer: vk::CommandBuffer,
+    image_ready_semaphore: vk::Semaphore,
+    present_semaphore: vk::Semaphore,
+    frame_done_fence: vk::Fence,
 }
 
 impl RenderBackend {
     pub fn new(window: &winit::window::Window) -> Self {
-        let app_name = CString::new("APP NAME HERE").unwrap();
+        let app_name = CString::new("Neptune Editor").unwrap();
         let app_version = vk::make_api_version(0, 0, 0, 0);
         let engine_name: CString = CString::new("Neptune Engine").unwrap();
         let engine_version = vk::make_api_version(0, 0, 0, 0);
@@ -59,22 +68,7 @@ impl RenderBackend {
         };
 
         //Validation Messages
-        //TODO: abstract to struct with drop
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
-            )
-            .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
-            .pfn_user_callback(Some(vulkan_debug_callback));
-
-        let debug_utils_loader = ash::extensions::ext::DebugUtils::new(&entry, &instance);
-        let debug_call_back = unsafe {
-            debug_utils_loader
-                .create_debug_utils_messenger(&debug_info, None)
-                .unwrap()
-        };
+        let debug_messenger = crate::debug_messenger::DebugMessenger::new(&entry, &instance);
 
         //Surface creation
         let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
@@ -152,6 +146,9 @@ impl RenderBackend {
             })
             .expect("Failed to create device allocator");
 
+        let synchronization2 = ash::extensions::khr::Synchronization2::new(&instance, &device);
+
+        //Swapchain
         let swapchain = crate::swapchain::Swapchain::new(
             &instance,
             &device,
@@ -160,35 +157,165 @@ impl RenderBackend {
             surface_loader,
         );
 
+        //TEMP Device frame stuff
+        let command_pool = unsafe {
+            device.create_command_pool(
+                &vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(graphics_queue_family_index)
+                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                    .build(),
+                None,
+            )
+        }
+        .expect("Failed to create command pool");
+
+        let command_buffer = unsafe {
+            device.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::builder()
+                    .command_pool(command_pool)
+                    .command_buffer_count(1)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .build(),
+            )
+        }
+        .expect("Failed to allocate command_buffers")[0];
+
+        let frame_done_fence = unsafe {
+            device.create_fence(
+                &vk::FenceCreateInfo::builder()
+                    .flags(vk::FenceCreateFlags::SIGNALED)
+                    .build(),
+                None,
+            )
+        }
+        .expect("Failed to create fence");
+        let image_ready_semaphore =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
+                .expect("Failed to create semaphore");
+        let present_semaphore =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
+                .expect("Failed to create semaphore");
+
         Self {
             instance,
+            debug_messenger,
             physical_device,
             device,
             graphics_queue,
             device_allocator: Arc::new(RefCell::new(device_allocator)),
+            synchronization2,
             surface,
             swapchain,
+
+            command_pool,
+            command_buffer,
+            image_ready_semaphore,
+            present_semaphore,
+            frame_done_fence,
         }
     }
-}
 
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    _message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    use std::borrow::Cow;
-    let callback_data = *p_callback_data;
-    let message = if callback_data.p_message.is_null() {
-        Cow::from("")
-    } else {
-        CStr::from_ptr(callback_data.p_message).to_string_lossy()
-    };
+    pub fn draw_black(&mut self) {
+        unsafe {
+            self.device
+                .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
+                .expect("Failed to wait for fence")
+        };
 
-    if message_severity != vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
-        println!("Vulkan {:?}: {}", message_severity, message,);
+        let image_index = self
+            .swapchain
+            .acquire_next_image(self.image_ready_semaphore);
+
+        if image_index.is_none() {
+            println!("No Image available, returning");
+            return;
+        }
+        let image_index = image_index.unwrap();
+
+        unsafe {
+            self.device
+                .reset_fences(&[self.frame_done_fence])
+                .expect("Failed to reset fence")
+        };
+
+        unsafe {
+            self.device
+                .begin_command_buffer(
+                    self.command_buffer,
+                    &vk::CommandBufferBeginInfo::builder().build(),
+                )
+                .expect("Failed to begin command buffer recording");
+
+            let image_barriers = &[vk::ImageMemoryBarrier2KHR::builder()
+                .image(self.swapchain.images[image_index as usize])
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_access_mask(vk::AccessFlags2KHR::NONE)
+                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .base_mip_level(0)
+                        .level_count(1)
+                        .build(),
+                )
+                .build()];
+
+            let dependency = vk::DependencyInfoKHR::builder()
+                .image_memory_barriers(image_barriers)
+                .build();
+            self.synchronization2
+                .cmd_pipeline_barrier2(self.command_buffer, &dependency);
+
+            self.device
+                .end_command_buffer(self.command_buffer)
+                .expect("Failed to end command buffer recording");
+
+            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.image_ready_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
+                .command_buffer(self.command_buffer)
+                .device_mask(0)
+                .build()];
+
+            let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.present_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let submit_info = vk::SubmitInfo2KHR::builder()
+                .wait_semaphore_infos(wait_semaphore_infos)
+                .command_buffer_infos(command_buffer_infos)
+                .signal_semaphore_infos(signal_semaphore_infos)
+                .build();
+            self.synchronization2
+                .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
+                .expect("Failed to queue command buffer");
+
+            //Present Image
+            let wait_semaphores = &[self.present_semaphore];
+            let swapchains = &[self.swapchain.handle];
+            let image_indices = &[image_index];
+            let present_info = vk::PresentInfoKHR::builder()
+                .wait_semaphores(wait_semaphores)
+                .swapchains(swapchains)
+                .image_indices(image_indices);
+
+            let result = self
+                .swapchain
+                .loader
+                .queue_present(self.graphics_queue, &present_info);
+        }
     }
-
-    vk::FALSE
 }

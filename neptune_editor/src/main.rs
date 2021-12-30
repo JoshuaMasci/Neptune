@@ -12,9 +12,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    {
-        neptune_core::render_backend::RenderBackend::new(&window);
-    }
+    let mut render_backend = neptune_core::render_backend::RenderBackend::new(&window);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -26,7 +24,9 @@ fn main() {
                 println!("The close button was pressed; stopping");
                 *control_flow = ControlFlow::Exit
             }
-            Event::MainEventsCleared => {}
+            Event::MainEventsCleared => {
+                render_backend.draw_black();
+            }
             Event::RedrawRequested(_) => {}
             _ => (),
         }
