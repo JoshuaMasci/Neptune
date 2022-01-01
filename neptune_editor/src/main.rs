@@ -37,10 +37,18 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                imgui_layer.begin_frame(&window);
-                imgui_layer.end_frame(&window);
+                if let Some(command_buffer) = render_backend.begin_frame() {
+                    imgui_layer.render_frame(&window, command_buffer);
 
-                render_backend.draw_black();
+                    render_backend.end_frame_blit(
+                        &imgui_layer.framebuffer_set.framebuffers[0].color_attachments[0],
+                    );
+                }
+
+                // imgui_layer.begin_frame(&window);
+                // imgui_layer.end_frame(&window);
+                //
+                // render_backend.draw_black();
             }
             Event::RedrawRequested(_) => {}
             event => {

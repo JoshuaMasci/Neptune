@@ -1,8 +1,6 @@
 use ash::vk;
 use gpu_allocator::vulkan;
 use std::cell::RefCell;
-use std::ffi::c_void;
-use std::ptr::null;
 use std::rc::Rc;
 
 pub struct Image {
@@ -14,6 +12,7 @@ pub struct Image {
     pub size: vk::Extent3D,
     pub usage: vk::ImageUsageFlags,
     pub memory_location: gpu_allocator::MemoryLocation,
+    pub image_view: Option<vk::ImageView>,
 }
 
 impl Image {
@@ -25,53 +24,64 @@ impl Image {
         size: vk::Extent2D,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> Self {
-        // Self::new(
-        //     device,
-        //     allocator,
-        //     &vk::ImageCreateInfo::builder()
-        //         .flags(vk::ImageCreateFlags::empty())
-        //         .usage(usage)
-        //         .format(format)
-        //         .extent(vk::Extent3D {
-        //             width: size.width,
-        //             height: size.height,
-        //             depth: 1,
-        //         })
-        //         .samples(vk::SampleCountFlags::TYPE_1)
-        //         .mip_levels(1)
-        //         .array_layers(1)
-        //         .image_type(vk::ImageType::TYPE_2D)
-        //         .initial_layout(vk::ImageLayout::UNDEFINED)
-        //         .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        //         .queue_family_indices(&[0]), //TODO: not this
-        //     memory_location,
-        // )
-        Self::new(
+        let device_clone = device.clone();
+        let mut new_self = Self::new(
             device,
             allocator,
-            vk::ImageCreateInfo {
-                s_type: vk::StructureType::IMAGE_CREATE_INFO,
-                p_next: null(),
-                flags: vk::ImageCreateFlags::empty(),
-                image_type: vk::ImageType::TYPE_2D,
-                format,
-                extent: vk::Extent3D {
+            vk::ImageCreateInfo::builder()
+                .flags(vk::ImageCreateFlags::empty())
+                .usage(usage)
+                .format(format)
+                .extent(vk::Extent3D {
                     width: size.width,
                     height: size.height,
                     depth: 1,
-                },
-                mip_levels: 1,
-                array_layers: 1,
-                samples: vk::SampleCountFlags::TYPE_1,
-                tiling: vk::ImageTiling::LINEAR,
-                usage,
-                sharing_mode: vk::SharingMode::EXCLUSIVE,
-                queue_family_index_count: 0,
-                p_queue_family_indices: null(),
-                initial_layout: vk::ImageLayout::UNDEFINED,
-            },
+                })
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .mip_levels(1)
+                .array_layers(1)
+                .image_type(vk::ImageType::TYPE_2D)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .queue_family_indices(&[0]) //TODO: not this
+                .build(),
             memory_location,
-        )
+        );
+
+        let aspect_mask: vk::ImageAspectFlags =
+            if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            };
+
+        new_self.image_view = Some(
+            unsafe {
+                device_clone.create_image_view(
+                    &vk::ImageViewCreateInfo::builder()
+                        .format(format)
+                        .image(new_self.image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .components(vk::ComponentMapping {
+                            r: vk::ComponentSwizzle::IDENTITY,
+                            g: vk::ComponentSwizzle::IDENTITY,
+                            b: vk::ComponentSwizzle::IDENTITY,
+                            a: vk::ComponentSwizzle::IDENTITY,
+                        })
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        }),
+                    None,
+                )
+            }
+            .expect("Failed to create image view"),
+        );
+
+        new_self
     }
 
     pub(crate) fn new(
@@ -109,6 +119,7 @@ impl Image {
             size: create_info.extent,
             usage: create_info.usage,
             memory_location,
+            image_view: None,
         }
     }
 }

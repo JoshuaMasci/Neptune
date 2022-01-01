@@ -5,8 +5,10 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::buffer::Buffer;
+use crate::framebuffer::FrameBufferSet;
 use crate::image::Image;
 use ash::vk;
+use ash::vk::Offset2D;
 use gpu_allocator::MemoryLocation;
 
 pub struct ImguiLayer {
@@ -18,6 +20,8 @@ pub struct ImguiLayer {
 
     texture_atlas_staging_buffer: Option<Buffer>,
     texture_atlas: Image,
+
+    pub framebuffer_set: FrameBufferSet,
 
     descriptor_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
@@ -90,7 +94,20 @@ impl ImguiLayer {
         }
         .expect("Failed to create pipeline layout");
 
-        let pipeline = vk::Pipeline::null(); //create_pipeline(&device, pipeline_layout, vk::RenderPass::null());
+        let size = window.inner_size();
+        let framebuffer_set = FrameBufferSet::new(
+            device.clone(),
+            device_allocator.clone(),
+            vk::Extent2D {
+                width: size.width,
+                height: size.height,
+            },
+            vec![vk::Format::R8G8B8A8_UNORM],
+            None,
+            1,
+        );
+
+        let pipeline = create_pipeline(&device, pipeline_layout, framebuffer_set.render_pass);
 
         Self {
             imgui_context,
@@ -99,6 +116,7 @@ impl ImguiLayer {
             device_allocator,
             texture_atlas_staging_buffer,
             texture_atlas,
+            framebuffer_set,
             descriptor_layout,
             pipeline_layout,
             pipeline,
@@ -120,17 +138,45 @@ impl ImguiLayer {
             .handle_event(self.imgui_context.io_mut(), window, event);
     }
 
-    pub fn begin_frame(&mut self, window: &winit::window::Window) {
+    pub fn render_frame(
+        &mut self,
+        window: &winit::window::Window,
+        command_buffer: vk::CommandBuffer,
+    ) {
         self.winit_platform
             .prepare_frame(self.imgui_context.io_mut(), window)
             .expect("Failed to prepare frame");
-    }
-
-    pub fn end_frame(&mut self, window: &winit::window::Window) {
         let frame = self.imgui_context.frame();
+
+        let mut run = true;
+        frame.show_demo_window(&mut run);
+
         self.winit_platform.prepare_render(frame, window);
         let _draw_data = self.imgui_context.render();
         //TODO: draw frame here
+
+        unsafe {
+            let clear_values = &[vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [1.0, 0.0, 1.0, 1.0],
+                },
+            }];
+
+            self.device.cmd_begin_render_pass(
+                command_buffer,
+                &vk::RenderPassBeginInfo::builder()
+                    .render_pass(self.framebuffer_set.render_pass)
+                    .framebuffer(self.framebuffer_set.framebuffers[0].handle)
+                    .render_area(vk::Rect2D {
+                        offset: Offset2D { x: 0, y: 0 },
+                        extent: self.framebuffer_set.current_size,
+                    })
+                    .clear_values(clear_values),
+                vk::SubpassContents::INLINE,
+            );
+
+            self.device.cmd_end_render_pass(command_buffer);
+        }
     }
 }
 
