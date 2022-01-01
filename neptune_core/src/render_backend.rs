@@ -1,17 +1,20 @@
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub struct RenderBackend {
+    entry: ash::Entry,
     instance: ash::Instance,
     debug_messenger: crate::debug_messenger::DebugMessenger,
 
     physical_device: vk::PhysicalDevice,
-    device: ash::Device,
+    pub device: ash::Device,
     graphics_queue: vk::Queue,
-    device_allocator: Arc<RefCell<gpu_allocator::vulkan::Allocator>>,
+    pub device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     synchronization2: ash::extensions::khr::Synchronization2,
+
+    push_descriptor: ash::extensions::khr::PushDescriptor,
 
     surface: vk::SurfaceKHR,
     swapchain: crate::swapchain::Swapchain,
@@ -85,14 +88,13 @@ impl RenderBackend {
         let (physical_device, graphics_queue_family_index) = (devices[0], 0u32);
 
         unsafe {
-            if surface_loader
+            if !surface_loader
                 .get_physical_device_surface_support(
                     physical_device,
                     graphics_queue_family_index,
                     surface,
                 )
                 .expect("Failed to check device support")
-                == false
             {
                 panic!("Selected device doesn't support the surface");
             }
@@ -108,6 +110,7 @@ impl RenderBackend {
         let device_extension_names_raw = vec![
             ash::extensions::khr::Swapchain::name().as_ptr(),
             ash::extensions::khr::Synchronization2::name().as_ptr(),
+            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long term
         ];
 
         let mut synchronization2_features =
@@ -147,6 +150,8 @@ impl RenderBackend {
             .expect("Failed to create device allocator");
 
         let synchronization2 = ash::extensions::khr::Synchronization2::new(&instance, &device);
+
+        let push_descriptor = ash::extensions::khr::PushDescriptor::new(&instance, &device);
 
         //Swapchain
         let swapchain = crate::swapchain::Swapchain::new(
@@ -197,13 +202,15 @@ impl RenderBackend {
                 .expect("Failed to create semaphore");
 
         Self {
+            entry,
             instance,
             debug_messenger,
             physical_device,
             device,
             graphics_queue,
-            device_allocator: Arc::new(RefCell::new(device_allocator)),
+            device_allocator: Rc::new(RefCell::new(device_allocator)),
             synchronization2,
+            push_descriptor,
             surface,
             swapchain,
 
@@ -316,6 +323,24 @@ impl RenderBackend {
                 .swapchain
                 .loader
                 .queue_present(self.graphics_queue, &present_info);
+        }
+    }
+}
+
+impl Drop for RenderBackend {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.device.device_wait_idle();
+
+            let _ = self
+                .device
+                .free_command_buffers(self.command_pool, &[self.command_buffer]);
+            let _ = self.device.destroy_command_pool(self.command_pool, None);
+
+            self.device.destroy_fence(self.frame_done_fence, None);
+            self.device
+                .destroy_semaphore(self.image_ready_semaphore, None);
+            self.device.destroy_semaphore(self.present_semaphore, None);
         }
     }
 }
