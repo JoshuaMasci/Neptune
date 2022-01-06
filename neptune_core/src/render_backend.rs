@@ -7,14 +7,14 @@ use std::rc::Rc;
 
 pub struct RenderBackend {
     entry: ash::Entry,
-    instance: ash::Instance,
+    pub instance: ash::Instance,
     debug_messenger: crate::debug_messenger::DebugMessenger,
 
     physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
     graphics_queue: vk::Queue,
     pub device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-    synchronization2: ash::extensions::khr::Synchronization2,
+    pub synchronization2: ash::extensions::khr::Synchronization2,
 
     push_descriptor: ash::extensions::khr::PushDescriptor,
 

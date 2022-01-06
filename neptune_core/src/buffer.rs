@@ -50,12 +50,17 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn fill(&mut self, data: &[u8]) {
-        let mut_ptr = self
+    pub(crate) fn fill<T: Copy>(&mut self, data: &[T]) {
+        let buffer_ptr = self
             .allocation
-            .mapped_slice_mut()
-            .expect("Failed to map buffer memory");
-        mut_ptr.copy_from_slice(data);
+            .mapped_ptr()
+            .expect("Failed to map buffer memory")
+            .as_ptr();
+
+        let mut align =
+            unsafe { ash::util::Align::new(buffer_ptr, std::mem::align_of::<T>() as _, self.size) };
+
+        align.copy_from_slice(data);
     }
 }
 
