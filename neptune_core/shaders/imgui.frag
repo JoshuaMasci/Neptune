@@ -9,5 +9,5 @@ layout(binding = 0) uniform sampler2D texture_atlas;
 
 void main()
 {
-    out_color = in_color * texture(texture_atlas, in_uv).rrrr;
+    out_color = in_color * vec4(1.0, 1.0, 1.0, texture(texture_atlas, in_uv).r);
 }

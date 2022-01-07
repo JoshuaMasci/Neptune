@@ -4,6 +4,8 @@ use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
+//TODO: this
+#[allow(dead_code)]
 pub struct ResourceDeleter {
     base: Rc<ash::Device>,
     allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
@@ -13,7 +15,6 @@ pub struct ResourceDeleter {
 pub struct RenderDevice {
     pub base: Rc<ash::Device>,
     pub allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-    //pub deleter: Rc<ResourceDeleter>,
     pub surface: Rc<ash::extensions::khr::Surface>,
     pub swapchain: Rc<ash::extensions::khr::Swapchain>,
     pub synchronization2: Rc<ash::extensions::khr::Synchronization2>,

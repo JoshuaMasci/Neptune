@@ -1,5 +1,6 @@
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use std::ffi::CString;
+use std::ptr::null;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -76,19 +77,15 @@ impl ImguiLayer {
         let texture_sampler = unsafe {
             device.base.create_sampler(
                 &vk::SamplerCreateInfo::builder()
-                    .mag_filter(vk::Filter::NEAREST)
-                    .min_filter(vk::Filter::NEAREST)
+                    .mag_filter(vk::Filter::LINEAR)
+                    .min_filter(vk::Filter::LINEAR)
+                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                     .address_mode_u(vk::SamplerAddressMode::REPEAT)
                     .address_mode_v(vk::SamplerAddressMode::REPEAT)
                     .address_mode_w(vk::SamplerAddressMode::REPEAT)
-                    .anisotropy_enable(false)
                     .max_anisotropy(1.0)
-                    .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
-                    .unnormalized_coordinates(false)
-                    .compare_enable(false)
-                    .mip_lod_bias(0.0)
-                    .min_lod(0.0)
-                    .max_lod(1.0),
+                    .min_lod(-1000.0)
+                    .max_lod(1000.0),
                 None,
             )
         }
@@ -274,6 +271,22 @@ impl ImguiLayer {
         let ui = self.imgui_context.frame();
 
         //TODO: enable docking
+        unsafe {
+            let _ = imgui::sys::igDockSpaceOverViewport(
+                imgui::sys::igGetMainViewport(),
+                imgui::sys::ImGuiDockNodeFlags_PassthruCentralNode
+                    as imgui::sys::ImGuiDockNodeFlags,
+                null(),
+            );
+        }
+
+        if let Some(menu_bar) = ui.begin_main_menu_bar() {
+            if let Some(menu) = ui.begin_menu("Options") {
+                menu.end();
+            }
+
+            menu_bar.end();
+        }
 
         let mut run = true;
         ui.show_demo_window(&mut run);
@@ -281,10 +294,12 @@ impl ImguiLayer {
         self.winit_platform.prepare_render(ui, window);
 
         let draw_data = self.imgui_context.render();
-        let vertex_count = (draw_data.total_vtx_count as usize
-            * std::mem::size_of::<imgui::DrawVert>()) as vk::DeviceSize;
-        let index_count =
-            (draw_data.total_idx_count as usize * std::mem::size_of::<u16>()) as vk::DeviceSize;
+
+        let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
+
+        let vertex_count =
+            (vertices.len() * std::mem::size_of::<imgui::DrawVert>()) as vk::DeviceSize;
+        let index_count = (indices.len() * std::mem::size_of::<u16>()) as vk::DeviceSize;
 
         let frame = &mut self.frames[0];
 
@@ -312,12 +327,17 @@ impl ImguiLayer {
         }
 
         //Fill Buffers
-        let offsets = {
-            let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
-            frame.vertex_buffer.fill(&vertices);
-            frame.index_buffer.fill(&indices);
-            offsets
-        };
+        frame.vertex_buffer.fill(&vertices);
+        frame.index_buffer.fill(&indices);
+
+        let framebuffer_width = draw_data.framebuffer_scale[0] * draw_data.display_size[0];
+        let framebuffer_height = draw_data.framebuffer_scale[1] * draw_data.display_size[1];
+
+        self.framebuffer_set.set_size(vk::Extent2D {
+            width: framebuffer_width as u32,
+            height: framebuffer_height as u32,
+        });
+        self.framebuffer_set.update_frame(0);
 
         //Draw UI
         unsafe {
@@ -346,17 +366,18 @@ impl ImguiLayer {
                 self.pipeline,
             );
 
-            let viewports = &[vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: self.framebuffer_set.current_size.width as f32,
-                height: self.framebuffer_set.current_size.height as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            }];
-            self.device
-                .base
-                .cmd_set_viewport(command_buffer, 0, viewports);
+            self.device.base.cmd_set_viewport(
+                command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: framebuffer_width,
+                    height: framebuffer_height,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
 
             //Push data
             let mut push_data = [0f32; 4];
@@ -424,35 +445,47 @@ impl ImguiLayer {
                                     idx_offset,
                                 },
                         } => {
-                            let clip_x = (clip_rect[0] - clip_offset[0]) * clip_scale[0];
-                            let clip_y = (clip_rect[1] - clip_offset[1]) * clip_scale[1];
-                            let clip_w = (clip_rect[2] - clip_offset[0]) * clip_scale[0] - clip_x;
-                            let clip_h = (clip_rect[3] - clip_offset[1]) * clip_scale[1] - clip_y;
+                            //TODO: texture_id
+                            let mut clip_rect: [f32; 4] = [
+                                (clip_rect[0] - clip_offset[0]) * clip_scale[0],
+                                (clip_rect[1] - clip_offset[1]) * clip_scale[1],
+                                (clip_rect[2] - clip_offset[0]) * clip_scale[0],
+                                (clip_rect[3] - clip_offset[1]) * clip_scale[1],
+                            ];
 
-                            let scissors = [vk::Rect2D {
-                                offset: vk::Offset2D {
-                                    x: clip_x as _,
-                                    y: clip_y as _,
-                                },
-                                extent: vk::Extent2D {
-                                    width: clip_w as _,
-                                    height: clip_h as _,
-                                },
-                            }];
-                            self.device
-                                .base
-                                .cmd_set_scissor(command_buffer, 0, &scissors);
+                            if (clip_rect[0] < framebuffer_width)
+                                && (clip_rect[1] < framebuffer_height)
+                                && (clip_rect[2] >= 0.0)
+                                && (clip_rect[3] >= 0.0)
+                            {
+                                clip_rect[0] = clip_rect[0].max(0.0);
+                                clip_rect[1] = clip_rect[1].max(0.0);
 
-                            let (index_offset, vertex_offset) = offsets[draw_index];
+                                let scissors = [vk::Rect2D {
+                                    offset: vk::Offset2D {
+                                        x: clip_rect[0] as i32,
+                                        y: clip_rect[1] as i32,
+                                    },
+                                    extent: vk::Extent2D {
+                                        width: (clip_rect[2] - clip_rect[0]) as u32,
+                                        height: (clip_rect[3] - clip_rect[1]) as u32,
+                                    },
+                                }];
+                                self.device
+                                    .base
+                                    .cmd_set_scissor(command_buffer, 0, &scissors);
 
-                            self.device.base.cmd_draw_indexed(
-                                command_buffer,
-                                count as _,
-                                1,
-                                index_offset + idx_offset as u32,
-                                vertex_offset + vtx_offset as i32,
-                                0,
-                            )
+                                let (vertex_offset, index_offset) = offsets[draw_index];
+
+                                self.device.base.cmd_draw_indexed(
+                                    command_buffer,
+                                    count as _,
+                                    1,
+                                    index_offset + idx_offset as u32,
+                                    vertex_offset + vtx_offset as i32,
+                                    0,
+                                )
+                            }
                         }
                         DrawCmd::ResetRenderState => {}
                         DrawCmd::RawCallback { .. } => {}
@@ -484,19 +517,14 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
 }
 
-fn collect_mesh_buffers(draw_data: &DrawData) -> (Vec<DrawVert>, Vec<DrawIdx>, Vec<(u32, i32)>) {
+fn collect_mesh_buffers(draw_data: &DrawData) -> (Vec<DrawVert>, Vec<DrawIdx>, Vec<(i32, u32)>) {
     let mut vertices = Vec::with_capacity(draw_data.total_vtx_count as usize);
     let mut indices = Vec::with_capacity(draw_data.total_idx_count as usize);
     let mut offsets = Vec::new();
-    let mut vertex_offset: u32 = 0;
-    let mut index_offset: i32 = 0;
-
     for draw_list in draw_data.draw_lists() {
-        offsets.push((vertex_offset, index_offset));
         let vertex_buffer = draw_list.vtx_buffer();
         let index_buffer = draw_list.idx_buffer();
-        vertex_offset += vertex_buffer.len() as u32;
-        index_offset += index_buffer.len() as i32;
+        offsets.push((vertices.len() as i32, indices.len() as u32));
         vertices.extend_from_slice(vertex_buffer);
         indices.extend_from_slice(index_buffer);
     }
