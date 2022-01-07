@@ -14,13 +14,8 @@ fn main() {
         .unwrap();
 
     let mut render_backend = neptune_core::render_backend::RenderBackend::new(&window);
-    let mut imgui_layer = neptune_core::imgui_layer::ImguiLayer::new(
-        &window,
-        render_backend.instance.clone(),
-        render_backend.device.clone(),
-        render_backend.device_allocator.clone(),
-        render_backend.synchronization2.clone(),
-    );
+    let mut imgui_layer =
+        neptune_core::imgui_layer::ImguiLayer::new(&window, render_backend.device.clone());
 
     let mut last_frame = Instant::now();
 
@@ -36,7 +31,7 @@ fn main() {
                 ..
             } => {
                 println!("The close button was pressed; stopping");
-                let _ = unsafe { render_backend.device.device_wait_idle() };
+                let _ = unsafe { render_backend.device.base.device_wait_idle() };
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {

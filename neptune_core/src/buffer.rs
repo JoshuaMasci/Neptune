@@ -1,10 +1,11 @@
 use ash::vk;
+use gpu_allocator::vulkan;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct Buffer {
-    device: ash::Device,
-    device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
+    device: Rc<ash::Device>,
+    device_allocator: Rc<RefCell<vulkan::Allocator>>,
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub buffer: vk::Buffer,
     pub size: vk::DeviceSize,
@@ -14,8 +15,8 @@ pub struct Buffer {
 
 impl Buffer {
     pub(crate) fn new(
-        device: ash::Device,
-        device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
+        device: Rc<ash::Device>,
+        device_allocator: Rc<RefCell<vulkan::Allocator>>,
         create_info: &vk::BufferCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> Self {

@@ -1,4 +1,5 @@
 use crate::image::Image;
+use crate::render_backend::RenderDevice;
 use ash::vk;
 use ash::vk::AttachmentReference;
 use gpu_allocator::vulkan;
@@ -6,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct FrameBufferSet {
-    device: ash::Device,
+    device: Rc<ash::Device>,
     device_allocator: Rc<RefCell<vulkan::Allocator>>,
     color_formats: Vec<vk::Format>,
     depth_stencil_format: Option<vk::Format>,
@@ -19,8 +20,7 @@ pub struct FrameBufferSet {
 
 impl FrameBufferSet {
     pub(crate) fn new(
-        device: ash::Device,
-        device_allocator: Rc<RefCell<vulkan::Allocator>>,
+        device: &RenderDevice,
         size: vk::Extent2D,
         color_formats: Vec<vk::Format>,
         depth_stencil_format: Option<vk::Format>,
@@ -69,7 +69,7 @@ impl FrameBufferSet {
         }
 
         let render_pass = unsafe {
-            device.create_render_pass(
+            device.base.create_render_pass(
                 &vk::RenderPassCreateInfo::builder()
                     .attachments(&attachments)
                     .subpasses(&[vk::SubpassDescription::builder()
@@ -84,8 +84,8 @@ impl FrameBufferSet {
         let framebuffers: Vec<Framebuffer> = (0..count)
             .map(|_| {
                 Framebuffer::new(
-                    device.clone(),
-                    device_allocator.clone(),
+                    device.base.clone(),
+                    device.allocator.clone(),
                     render_pass,
                     size,
                     color_formats.clone(),
@@ -95,8 +95,8 @@ impl FrameBufferSet {
             .collect();
 
         Self {
-            device,
-            device_allocator,
+            device: device.base.clone(),
+            device_allocator: device.allocator.clone(),
             color_formats,
             depth_stencil_format,
             render_pass,
@@ -132,7 +132,7 @@ impl Drop for FrameBufferSet {
 }
 
 pub struct Framebuffer {
-    device: ash::Device,
+    device: Rc<ash::Device>,
     size: vk::Extent2D,
     pub color_attachments: Vec<Image>,
     depth_attachment: Option<Image>,
@@ -141,7 +141,7 @@ pub struct Framebuffer {
 
 impl Framebuffer {
     pub(crate) fn new(
-        device: ash::Device,
+        device: Rc<ash::Device>,
         device_allocator: Rc<RefCell<vulkan::Allocator>>,
         render_pass: vk::RenderPass,
         size: vk::Extent2D,

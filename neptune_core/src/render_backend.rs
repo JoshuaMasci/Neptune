@@ -1,22 +1,33 @@
 use crate::image::Image;
-use crate::swapchain::SwapchainSupportDetails;
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
+pub struct ResourceDeleter {
+    base: Rc<ash::Device>,
+    allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
+}
+
+#[derive(Clone)]
+pub struct RenderDevice {
+    pub base: Rc<ash::Device>,
+    pub allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
+    //pub deleter: Rc<ResourceDeleter>,
+    pub surface: Rc<ash::extensions::khr::Surface>,
+    pub swapchain: Rc<ash::extensions::khr::Swapchain>,
+    pub synchronization2: Rc<ash::extensions::khr::Synchronization2>,
+    pub push_descriptor: Rc<ash::extensions::khr::PushDescriptor>,
+}
+
 pub struct RenderBackend {
     entry: ash::Entry,
-    pub instance: ash::Instance,
+    instance: ash::Instance,
     debug_messenger: crate::debug_messenger::DebugMessenger,
 
     physical_device: vk::PhysicalDevice,
-    pub device: ash::Device,
     graphics_queue: vk::Queue,
-    pub device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-    pub synchronization2: ash::extensions::khr::Synchronization2,
-
-    push_descriptor: ash::extensions::khr::PushDescriptor,
+    pub device: RenderDevice,
 
     surface: vk::SurfaceKHR,
     swapchain: crate::swapchain::Swapchain,
@@ -128,37 +139,45 @@ impl RenderBackend {
             .queue_priorities(priorities)
             .build()];
 
-        let device: ash::Device = unsafe {
-            instance
-                .create_device(
-                    physical_device,
-                    &vk::DeviceCreateInfo::builder()
-                        .queue_create_infos(&queue_info)
-                        .enabled_extension_names(&device_extension_names_raw)
-                        .push_next(&mut synchronization2_features),
-                    None,
-                )
-                .expect("Failed to initialize vulkan device")
-        };
+        //Load all device functions
+        let base = unsafe {
+            instance.create_device(
+                physical_device,
+                &vk::DeviceCreateInfo::builder()
+                    .queue_create_infos(&queue_info)
+                    .enabled_extension_names(&device_extension_names_raw)
+                    .push_next(&mut synchronization2_features),
+                None,
+            )
+        }
+        .expect("Failed to initialize vulkan device");
 
-        let graphics_queue = unsafe { device.get_device_queue(graphics_queue_family_index, 0) };
-
-        let device_allocator =
+        let allocator = Rc::new(RefCell::new(
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
                 instance: instance.clone(),
-                device: device.clone(),
+                device: base.clone(),
                 physical_device,
                 debug_settings: Default::default(),
                 buffer_device_address: false,
             })
-            .expect("Failed to create device allocator");
+            .expect("Failed to create device allocator"),
+        ));
 
-        let synchronization2 = ash::extensions::khr::Synchronization2::new(&instance, &device);
+        let device = RenderDevice {
+            base: Rc::new(base.clone()),
+            allocator,
+            surface: Rc::new(surface_loader),
+            swapchain: Rc::new(ash::extensions::khr::Swapchain::new(&instance, &base)),
+            synchronization2: Rc::new(ash::extensions::khr::Synchronization2::new(
+                &instance, &base,
+            )),
+            push_descriptor: Rc::new(ash::extensions::khr::PushDescriptor::new(&instance, &base)),
+        };
 
-        let push_descriptor = ash::extensions::khr::PushDescriptor::new(&instance, &device);
+        let graphics_queue =
+            unsafe { device.base.get_device_queue(graphics_queue_family_index, 0) };
 
         //TODO: calculate swapchain details beforehand
-
         // let swapchain_support =
         //     SwapchainSupportDetails::new(physical_device, surface, &surface_loader);
         // let swapchain_present_mode =
@@ -172,17 +191,11 @@ impl RenderBackend {
         //});
 
         //Swapchain
-        let swapchain = crate::swapchain::Swapchain::new(
-            &instance,
-            &device,
-            physical_device,
-            surface,
-            surface_loader,
-        );
+        let swapchain = crate::swapchain::Swapchain::new(&device, physical_device, surface);
 
         //TEMP Device frame stuff
         let command_pool = unsafe {
-            device.create_command_pool(
+            device.base.create_command_pool(
                 &vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(graphics_queue_family_index)
                     .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -193,7 +206,7 @@ impl RenderBackend {
         .expect("Failed to create command pool");
 
         let command_buffer = unsafe {
-            device.allocate_command_buffers(
+            device.base.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
                     .command_pool(command_pool)
                     .command_buffer_count(1)
@@ -204,7 +217,7 @@ impl RenderBackend {
         .expect("Failed to allocate command_buffers")[0];
 
         let frame_done_fence = unsafe {
-            device.create_fence(
+            device.base.create_fence(
                 &vk::FenceCreateInfo::builder()
                     .flags(vk::FenceCreateFlags::SIGNALED)
                     .build(),
@@ -212,12 +225,18 @@ impl RenderBackend {
             )
         }
         .expect("Failed to create fence");
-        let image_ready_semaphore =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
-                .expect("Failed to create semaphore");
-        let present_semaphore =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
-                .expect("Failed to create semaphore");
+        let image_ready_semaphore = unsafe {
+            device
+                .base
+                .create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None)
+        }
+        .expect("Failed to create semaphore");
+        let present_semaphore = unsafe {
+            device
+                .base
+                .create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None)
+        }
+        .expect("Failed to create semaphore");
 
         Self {
             entry,
@@ -226,9 +245,6 @@ impl RenderBackend {
             physical_device,
             device,
             graphics_queue,
-            device_allocator: Rc::new(RefCell::new(device_allocator)),
-            synchronization2,
-            push_descriptor,
             surface,
             swapchain,
             swapchain_image_index: 0,
@@ -244,6 +260,7 @@ impl RenderBackend {
     pub fn begin_frame(&mut self) -> Option<vk::CommandBuffer> {
         unsafe {
             self.device
+                .base
                 .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
                 .expect("Failed to wait for fence")
         };
@@ -260,12 +277,14 @@ impl RenderBackend {
 
         unsafe {
             self.device
+                .base
                 .reset_fences(&[self.frame_done_fence])
                 .expect("Failed to reset fence")
         };
 
         unsafe {
             self.device
+                .base
                 .begin_command_buffer(
                     self.command_buffer,
                     &vk::CommandBufferBeginInfo::builder().build(),
@@ -301,7 +320,7 @@ impl RenderBackend {
                 .subresource_range(image_range)
                 .build()];
 
-            self.synchronization2.cmd_pipeline_barrier2(
+            self.device.synchronization2.cmd_pipeline_barrier2(
                 self.command_buffer,
                 &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers1),
             );
@@ -315,7 +334,7 @@ impl RenderBackend {
 
             let swapchain_size = self.swapchain.size;
 
-            self.device.cmd_blit_image(
+            self.device.base.cmd_blit_image(
                 self.command_buffer,
                 src_image.image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -365,12 +384,13 @@ impl RenderBackend {
                 )
                 .build()];
 
-            self.synchronization2.cmd_pipeline_barrier2(
+            self.device.synchronization2.cmd_pipeline_barrier2(
                 self.command_buffer,
                 &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers2),
             );
 
             self.device
+                .base
                 .end_command_buffer(self.command_buffer)
                 .expect("Failed to end command buffer recording");
 
@@ -396,7 +416,8 @@ impl RenderBackend {
                 .command_buffer_infos(command_buffer_infos)
                 .signal_semaphore_infos(signal_semaphore_infos)
                 .build();
-            self.synchronization2
+            self.device
+                .synchronization2
                 .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
                 .expect("Failed to queue command buffer");
 
@@ -410,8 +431,8 @@ impl RenderBackend {
                 .image_indices(image_indices);
 
             let _ = self
+                .device
                 .swapchain
-                .loader
                 .queue_present(self.graphics_queue, &present_info);
         }
     }
@@ -419,6 +440,7 @@ impl RenderBackend {
     pub fn draw_black(&mut self) {
         unsafe {
             self.device
+                .base
                 .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
                 .expect("Failed to wait for fence")
         };
@@ -435,12 +457,14 @@ impl RenderBackend {
 
         unsafe {
             self.device
+                .base
                 .reset_fences(&[self.frame_done_fence])
                 .expect("Failed to reset fence")
         };
 
         unsafe {
             self.device
+                .base
                 .begin_command_buffer(
                     self.command_buffer,
                     &vk::CommandBufferBeginInfo::builder().build(),
@@ -471,10 +495,12 @@ impl RenderBackend {
             let dependency = vk::DependencyInfoKHR::builder()
                 .image_memory_barriers(image_barriers)
                 .build();
-            self.synchronization2
+            self.device
+                .synchronization2
                 .cmd_pipeline_barrier2(self.command_buffer, &dependency);
 
             self.device
+                .base
                 .end_command_buffer(self.command_buffer)
                 .expect("Failed to end command buffer recording");
 
@@ -500,7 +526,8 @@ impl RenderBackend {
                 .command_buffer_infos(command_buffer_infos)
                 .signal_semaphore_infos(signal_semaphore_infos)
                 .build();
-            self.synchronization2
+            self.device
+                .synchronization2
                 .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
                 .expect("Failed to queue command buffer");
 
@@ -514,8 +541,8 @@ impl RenderBackend {
                 .image_indices(image_indices);
 
             let _ = self
+                .device
                 .swapchain
-                .loader
                 .queue_present(self.graphics_queue, &present_info);
         }
     }
@@ -524,17 +551,24 @@ impl RenderBackend {
 impl Drop for RenderBackend {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.device.device_wait_idle();
+            let _ = self.device.base.device_wait_idle();
 
             let _ = self
                 .device
+                .base
                 .free_command_buffers(self.command_pool, &[self.command_buffer]);
-            let _ = self.device.destroy_command_pool(self.command_pool, None);
+            let _ = self
+                .device
+                .base
+                .destroy_command_pool(self.command_pool, None);
 
-            self.device.destroy_fence(self.frame_done_fence, None);
+            self.device.base.destroy_fence(self.frame_done_fence, None);
             self.device
+                .base
                 .destroy_semaphore(self.image_ready_semaphore, None);
-            self.device.destroy_semaphore(self.present_semaphore, None);
+            self.device
+                .base
+                .destroy_semaphore(self.present_semaphore, None);
         }
     }
 }

@@ -4,9 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct Image {
-    device: ash::Device,
-    allocator: Rc<RefCell<vulkan::Allocator>>,
-
+    device: Rc<ash::Device>,
+    device_allocator: Rc<RefCell<vulkan::Allocator>>,
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub image: vk::Image,
     pub size: vk::Extent3D,
@@ -17,8 +16,8 @@ pub struct Image {
 
 impl Image {
     pub(crate) fn new_2d(
-        device: ash::Device,
-        allocator: Rc<RefCell<vulkan::Allocator>>,
+        device: Rc<ash::Device>,
+        device_allocator: Rc<RefCell<vulkan::Allocator>>,
         usage: vk::ImageUsageFlags,
         format: vk::Format,
         size: vk::Extent2D,
@@ -27,7 +26,7 @@ impl Image {
         let device_clone = device.clone();
         let mut new_self = Self::new(
             device,
-            allocator,
+            device_allocator,
             vk::ImageCreateInfo::builder()
                 .flags(vk::ImageCreateFlags::empty())
                 .usage(usage)
@@ -85,8 +84,8 @@ impl Image {
     }
 
     pub(crate) fn new(
-        device: ash::Device,
-        allocator: Rc<RefCell<vulkan::Allocator>>,
+        device: Rc<ash::Device>,
+        device_allocator: Rc<RefCell<vulkan::Allocator>>,
         create_info: vk::ImageCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> Self {
@@ -95,7 +94,7 @@ impl Image {
 
         let requirements = unsafe { device.get_image_memory_requirements(image) };
 
-        let allocation = allocator
+        let allocation = device_allocator
             .borrow_mut()
             .allocate(&vulkan::AllocationCreateDesc {
                 name: "Image Allocation",
@@ -113,7 +112,7 @@ impl Image {
 
         Self {
             device,
-            allocator,
+            device_allocator,
             allocation,
             image,
             size: create_info.extent,
@@ -126,7 +125,7 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        self.allocator
+        self.device_allocator
             .borrow_mut()
             .free(self.allocation.clone())
             .expect("Failed to free image memory");

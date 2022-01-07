@@ -1,4 +1,6 @@
+use crate::render_backend::RenderDevice;
 use ash::*;
+use std::rc::Rc;
 
 pub struct SwapchainSupportDetails {
     capabilities: vk::SurfaceCapabilitiesKHR,
@@ -84,9 +86,11 @@ impl SwapchainSupportDetails {
 pub struct Swapchain {
     invalid: bool,
     physical_device: vk::PhysicalDevice,
+
+    surface_loader: Rc<ash::extensions::khr::Surface>,
+    swapchain_loader: Rc<ash::extensions::khr::Swapchain>,
+
     surface: vk::SurfaceKHR,
-    surface_loader: ash::extensions::khr::Surface,
-    pub(crate) loader: ash::extensions::khr::Swapchain,
     pub(crate) handle: vk::SwapchainKHR,
 
     pub(crate) format: vk::Format,
@@ -97,13 +101,12 @@ pub struct Swapchain {
 
 impl Swapchain {
     pub fn new(
-        instance: &ash::Instance,
-        device: &ash::Device,
+        device: &RenderDevice,
         physical_device: vk::PhysicalDevice,
         surface: vk::SurfaceKHR,
-        surface_loader: ash::extensions::khr::Surface,
     ) -> Self {
-        let loader = ash::extensions::khr::Swapchain::new(instance, device);
+        let surface_loader = device.surface.clone();
+        let swapchain_loader = device.swapchain.clone();
 
         //Temp values
         let handle = vk::SwapchainKHR::null();
@@ -115,9 +118,9 @@ impl Swapchain {
         let mut new = Self {
             invalid: true,
             physical_device,
-            surface,
             surface_loader,
-            loader,
+            swapchain_loader,
+            surface,
             handle,
             format,
             size,
@@ -132,7 +135,7 @@ impl Swapchain {
         let swapchain_support =
             SwapchainSupportDetails::new(self.physical_device, self.surface, &self.surface_loader);
 
-        let present_mode = swapchain_support.get_present_mode(vk::PresentModeKHR::MAILBOX);
+        let present_mode = swapchain_support.get_present_mode(vk::PresentModeKHR::FIFO);
         let surface_format = swapchain_support.get_format(vk::Format::B8G8R8A8_UNORM);
         let image_count = swapchain_support.get_image_count(3);
 
@@ -157,18 +160,18 @@ impl Swapchain {
             .old_swapchain(old_swapchain)
             .build();
 
-        self.handle = unsafe { self.loader.create_swapchain(&create_info, None) }
+        self.handle = unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }
             .expect("Failed to create swapchain!");
 
         self.format = surface_format.format;
         self.size = surface_size;
         self.mode = present_mode;
 
-        self.images = unsafe { self.loader.get_swapchain_images(self.handle) }
+        self.images = unsafe { self.swapchain_loader.get_swapchain_images(self.handle) }
             .expect("Failed to get swapchain images");
 
         unsafe {
-            self.loader.destroy_swapchain(old_swapchain, None);
+            self.swapchain_loader.destroy_swapchain(old_swapchain, None);
         }
 
         //println!("Finished rebuilding Swapchain");
@@ -178,7 +181,7 @@ impl Swapchain {
     pub fn acquire_next_image(&mut self, image_ready_semaphore: vk::Semaphore) -> Option<u32> {
         if !self.invalid {
             let result = unsafe {
-                self.loader.acquire_next_image(
+                self.swapchain_loader.acquire_next_image(
                     self.handle,
                     u64::MAX,
                     image_ready_semaphore,
@@ -212,7 +215,7 @@ impl Swapchain {
 impl Drop for Swapchain {
     fn drop(&mut self) {
         unsafe {
-            self.loader.destroy_swapchain(self.handle, None);
+            self.swapchain_loader.destroy_swapchain(self.handle, None);
         }
     }
 }

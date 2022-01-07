@@ -1,5 +1,4 @@
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
-use std::cell::RefCell;
 use std::ffi::CString;
 use std::rc::Rc;
 use std::time::Instant;
@@ -7,6 +6,7 @@ use std::time::Instant;
 use crate::buffer::Buffer;
 use crate::framebuffer::FrameBufferSet;
 use crate::image::Image;
+use crate::render_backend::RenderDevice;
 use ash::vk;
 use ash::vk::Offset2D;
 use gpu_allocator::MemoryLocation;
@@ -21,10 +21,7 @@ pub struct ImguiLayer {
     imgui_context: imgui::Context,
     winit_platform: WinitPlatform,
 
-    device: ash::Device,
-    device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-    push_descriptor: ash::extensions::khr::PushDescriptor,
-    synchronization2: ash::extensions::khr::Synchronization2,
+    device: RenderDevice,
 
     texture_atlas_staging_buffer: Option<Buffer>,
     old_staging_buffer: Option<Buffer>,
@@ -40,28 +37,21 @@ pub struct ImguiLayer {
 }
 
 impl ImguiLayer {
-    pub fn new(
-        window: &winit::window::Window,
-        instance: ash::Instance,
-        device: ash::Device,
-        device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-        synchronization2: ash::extensions::khr::Synchronization2,
-    ) -> Self {
+    pub fn new(window: &winit::window::Window, device: RenderDevice) -> Self {
         let mut imgui_context = imgui::Context::create();
         let mut winit_platform = WinitPlatform::init(&mut imgui_context);
         winit_platform.attach_window(imgui_context.io_mut(), window, HiDpiMode::Default);
 
         //Config imgui
         imgui_context.io_mut().config_flags |= imgui::ConfigFlags::DOCKING_ENABLE;
-        imgui_context.io_mut().want_save_ini_settings = false;
-
-        let push_descriptor = ash::extensions::khr::PushDescriptor::new(&instance, &device);
+        imgui_context.set_ini_filename(None);
+        imgui_context.set_renderer_name(Some(String::from("Neptune Renderer")));
 
         let image_data = imgui_context.fonts().build_alpha8_texture();
         let texture_atlas_staging_buffer = Some({
             let mut buffer = Buffer::new(
-                device.clone(),
-                device_allocator.clone(),
+                device.base.clone(),
+                device.allocator.clone(),
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                     .size(image_data.data.len() as vk::DeviceSize),
@@ -72,8 +62,8 @@ impl ImguiLayer {
         });
 
         let texture_atlas = Image::new_2d(
-            device.clone(),
-            device_allocator.clone(),
+            device.base.clone(),
+            device.allocator.clone(),
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             vk::Format::R8_UNORM,
             vk::Extent2D {
@@ -84,7 +74,7 @@ impl ImguiLayer {
         );
 
         let texture_sampler = unsafe {
-            device.create_sampler(
+            device.base.create_sampler(
                 &vk::SamplerCreateInfo::builder()
                     .mag_filter(vk::Filter::NEAREST)
                     .min_filter(vk::Filter::NEAREST)
@@ -106,7 +96,7 @@ impl ImguiLayer {
 
         //TODO: replace Push Descriptors once images are supported
         let descriptor_layout = unsafe {
-            device.create_descriptor_set_layout(
+            device.base.create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::builder()
                     .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
                     .bindings(&[vk::DescriptorSetLayoutBinding::builder()
@@ -121,7 +111,7 @@ impl ImguiLayer {
         .expect("Failed to create descriptor set layout");
 
         let pipeline_layout = unsafe {
-            device.create_pipeline_layout(
+            device.base.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::builder()
                     .set_layouts(&[descriptor_layout])
                     .push_constant_ranges(&[vk::PushConstantRange::builder()
@@ -135,8 +125,7 @@ impl ImguiLayer {
 
         let size = window.inner_size();
         let framebuffer_set = FrameBufferSet::new(
-            device.clone(),
-            device_allocator.clone(),
+            &device,
             vk::Extent2D {
                 width: size.width,
                 height: size.height,
@@ -146,21 +135,21 @@ impl ImguiLayer {
             1,
         );
 
-        let pipeline = create_pipeline(&device, pipeline_layout, framebuffer_set.render_pass);
+        let pipeline = create_pipeline(&device.base, pipeline_layout, framebuffer_set.render_pass);
 
         //Will be resized during first frame
         let frames = vec![Frame {
             vertex_buffer: Buffer::new(
-                device.clone(),
-                device_allocator.clone(),
+                device.base.clone(),
+                device.allocator.clone(),
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                     .size(16),
                 gpu_allocator::MemoryLocation::CpuToGpu,
             ),
             index_buffer: Buffer::new(
-                device.clone(),
-                device_allocator.clone(),
+                device.base.clone(),
+                device.allocator.clone(),
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                     .size(16),
@@ -172,9 +161,6 @@ impl ImguiLayer {
             imgui_context,
             winit_platform,
             device,
-            device_allocator,
-            push_descriptor,
-            synchronization2,
             texture_atlas_staging_buffer,
             old_staging_buffer: None,
             texture_atlas,
@@ -232,14 +218,14 @@ impl ImguiLayer {
                 .build()];
 
             unsafe {
-                self.synchronization2.cmd_pipeline_barrier2(
+                self.device.synchronization2.cmd_pipeline_barrier2(
                     command_buffer,
                     &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers1),
                 );
             }
 
             unsafe {
-                self.device.cmd_copy_buffer_to_image(
+                self.device.base.cmd_copy_buffer_to_image(
                     command_buffer,
                     staging_buffer.buffer,
                     self.texture_atlas.image,
@@ -274,7 +260,7 @@ impl ImguiLayer {
                 .build()];
 
             unsafe {
-                self.synchronization2.cmd_pipeline_barrier2(
+                self.device.synchronization2.cmd_pipeline_barrier2(
                     command_buffer,
                     &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers2),
                 );
@@ -285,12 +271,14 @@ impl ImguiLayer {
         self.winit_platform
             .prepare_frame(self.imgui_context.io_mut(), window)
             .expect("Failed to prepare frame");
-        let frame = self.imgui_context.frame();
+        let ui = self.imgui_context.frame();
+
+        //TODO: enable docking
 
         let mut run = true;
-        frame.show_demo_window(&mut run);
+        ui.show_demo_window(&mut run);
 
-        self.winit_platform.prepare_render(frame, window);
+        self.winit_platform.prepare_render(ui, window);
 
         let draw_data = self.imgui_context.render();
         let vertex_count = (draw_data.total_vtx_count as usize
@@ -303,8 +291,8 @@ impl ImguiLayer {
         //Resize buffers
         if frame.vertex_buffer.size < vertex_count {
             frame.vertex_buffer = Buffer::new(
-                self.device.clone(),
-                self.device_allocator.clone(),
+                self.device.base.clone(),
+                self.device.allocator.clone(),
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
                     .size(vertex_count),
@@ -314,8 +302,8 @@ impl ImguiLayer {
 
         if frame.index_buffer.size < index_count {
             frame.index_buffer = Buffer::new(
-                self.device.clone(),
-                self.device_allocator.clone(),
+                self.device.base.clone(),
+                self.device.allocator.clone(),
                 &vk::BufferCreateInfo::builder()
                     .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                     .size(index_count),
@@ -324,11 +312,12 @@ impl ImguiLayer {
         }
 
         //Fill Buffers
-        {
-            let (vertices, indices) = collect_mesh_buffers(&draw_data);
+        let offsets = {
+            let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
             frame.vertex_buffer.fill(&vertices);
             frame.index_buffer.fill(&indices);
-        }
+            offsets
+        };
 
         //Draw UI
         unsafe {
@@ -338,7 +327,7 @@ impl ImguiLayer {
                 },
             }];
 
-            self.device.cmd_begin_render_pass(
+            self.device.base.cmd_begin_render_pass(
                 command_buffer,
                 &vk::RenderPassBeginInfo::builder()
                     .render_pass(self.framebuffer_set.render_pass)
@@ -351,7 +340,7 @@ impl ImguiLayer {
                 vk::SubpassContents::INLINE,
             );
 
-            self.device.cmd_bind_pipeline(
+            self.device.base.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline,
@@ -365,7 +354,9 @@ impl ImguiLayer {
                 min_depth: 0.0,
                 max_depth: 1.0,
             }];
-            self.device.cmd_set_viewport(command_buffer, 0, viewports);
+            self.device
+                .base
+                .cmd_set_viewport(command_buffer, 0, viewports);
 
             //Push data
             let mut push_data = [0f32; 4];
@@ -375,7 +366,7 @@ impl ImguiLayer {
             //Translate
             push_data[2] = -1.0 - (draw_data.display_pos[0] * push_data[0]);
             push_data[3] = -1.0 - (draw_data.display_pos[1] * push_data[1]);
-            self.device.cmd_push_constants(
+            self.device.base.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
@@ -384,13 +375,13 @@ impl ImguiLayer {
             );
 
             //Bind buffers
-            self.device.cmd_bind_vertex_buffers(
+            self.device.base.cmd_bind_vertex_buffers(
                 command_buffer,
                 0,
                 &[frame.vertex_buffer.buffer],
                 &[0],
             );
-            self.device.cmd_bind_index_buffer(
+            self.device.base.cmd_bind_index_buffer(
                 command_buffer,
                 frame.index_buffer.buffer,
                 0,
@@ -408,7 +399,7 @@ impl ImguiLayer {
                 .dst_array_element(0)
                 .image_info(&[*image_info])
                 .build()];
-            self.push_descriptor.cmd_push_descriptor_set(
+            self.device.push_descriptor.cmd_push_descriptor_set(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline_layout,
@@ -416,12 +407,10 @@ impl ImguiLayer {
                 writes,
             );
 
-            let mut index_offset = 0;
-            let mut vertex_offset = 0;
-
             let clip_offset = draw_data.display_pos;
             let clip_scale = draw_data.framebuffer_scale;
 
+            let mut draw_index = 0;
             for draw_list in draw_data.draw_lists() {
                 for command in draw_list.commands() {
                     match command {
@@ -450,9 +439,13 @@ impl ImguiLayer {
                                     height: clip_h as _,
                                 },
                             }];
-                            self.device.cmd_set_scissor(command_buffer, 0, &scissors);
+                            self.device
+                                .base
+                                .cmd_set_scissor(command_buffer, 0, &scissors);
 
-                            self.device.cmd_draw_indexed(
+                            let (index_offset, vertex_offset) = offsets[draw_index];
+
+                            self.device.base.cmd_draw_indexed(
                                 command_buffer,
                                 count as _,
                                 1,
@@ -465,11 +458,10 @@ impl ImguiLayer {
                         DrawCmd::RawCallback { .. } => {}
                     }
                 }
-                index_offset += draw_list.idx_buffer().len() as u32;
-                vertex_offset += draw_list.vtx_buffer().len() as i32;
+                draw_index += 1;
             }
 
-            self.device.cmd_end_render_pass(command_buffer);
+            self.device.base.cmd_end_render_pass(command_buffer);
         }
     }
 }
@@ -477,10 +469,12 @@ impl ImguiLayer {
 impl Drop for ImguiLayer {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_pipeline(self.pipeline, None);
+            self.device.base.destroy_pipeline(self.pipeline, None);
             self.device
+                .base
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device
+                .base
                 .destroy_descriptor_set_layout(self.descriptor_layout, None);
         }
     }
@@ -490,14 +484,23 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
 }
 
-fn collect_mesh_buffers(draw_data: &DrawData) -> (Vec<DrawVert>, Vec<DrawIdx>) {
+fn collect_mesh_buffers(draw_data: &DrawData) -> (Vec<DrawVert>, Vec<DrawIdx>, Vec<(u32, i32)>) {
     let mut vertices = Vec::with_capacity(draw_data.total_vtx_count as usize);
     let mut indices = Vec::with_capacity(draw_data.total_idx_count as usize);
+    let mut offsets = Vec::new();
+    let mut vertex_offset: u32 = 0;
+    let mut index_offset: i32 = 0;
+
     for draw_list in draw_data.draw_lists() {
-        vertices.extend_from_slice(draw_list.vtx_buffer());
-        indices.extend_from_slice(draw_list.idx_buffer());
+        offsets.push((vertex_offset, index_offset));
+        let vertex_buffer = draw_list.vtx_buffer();
+        let index_buffer = draw_list.idx_buffer();
+        vertex_offset += vertex_buffer.len() as u32;
+        index_offset += index_buffer.len() as i32;
+        vertices.extend_from_slice(vertex_buffer);
+        indices.extend_from_slice(index_buffer);
     }
-    (vertices, indices)
+    (vertices, indices, offsets)
 }
 
 fn read_shader_from_source(source: &[u8]) -> Vec<u32> {
@@ -507,7 +510,7 @@ fn read_shader_from_source(source: &[u8]) -> Vec<u32> {
 }
 
 fn create_pipeline(
-    device: &ash::Device,
+    device: &Rc<ash::Device>,
     pipeline_layout: vk::PipelineLayout,
     render_pass: vk::RenderPass,
 ) -> vk::Pipeline {
