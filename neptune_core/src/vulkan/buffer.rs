@@ -1,3 +1,4 @@
+use crate::render_backend::RenderDevice;
 use ash::vk;
 use gpu_allocator::vulkan;
 use std::cell::RefCell;
@@ -21,7 +22,18 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub(crate) fn new(
+    pub(crate) fn new(device: &RenderDevice, description: &BufferDescription) -> Self {
+        Self::new_vk(
+            device.base.clone(),
+            device.allocator.clone(),
+            &vk::BufferCreateInfo::builder()
+                .size(description.size as vk::DeviceSize)
+                .usage(description.usage),
+            description.memory_location,
+        )
+    }
+
+    pub(crate) fn new_vk(
         device: Rc<ash::Device>,
         device_allocator: Rc<RefCell<vulkan::Allocator>>,
         create_info: &vk::BufferCreateInfo,

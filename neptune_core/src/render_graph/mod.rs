@@ -1,4 +1,6 @@
+mod compiled_pass;
 pub mod render_graph;
+mod renderer;
 
 pub type BufferHandle = u32;
 pub type ImageHandle = u32;
@@ -41,8 +43,8 @@ pub fn build_imgui_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHand
     }));
 
     let mut imgui_pass = rgb.create_pass("ImguiPass");
-    imgui_pass.write_buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
-    imgui_pass.write_buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
+    let _ = imgui_pass.write_buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
+    let _ = imgui_pass.write_buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
     imgui_pass.raster(vec![output_image], None);
     output_image
 }
@@ -53,6 +55,49 @@ pub fn build_blit_pass(
     dst_image: ImageHandle,
 ) {
     let mut blit_pass = rgb.create_pass("SwapchainBlitPass");
-    blit_pass.read_image(src_image, render_graph::ImageAccessType::BlitRead);
-    blit_pass.write_image(dst_image, render_graph::ImageAccessType::BLitWrite);
+    let src_index = blit_pass.read_image(src_image, render_graph::ImageAccessType::BlitRead);
+    let dst_index = blit_pass.write_image(dst_image, render_graph::ImageAccessType::BLitWrite);
+
+    blit_pass.render(move |command_buffer, compiled_pass| {
+        let image_layers = vk::ImageSubresourceLayers::builder()
+            .base_array_layer(0)
+            .layer_count(1)
+            .mip_level(0)
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .build();
+
+        let src_image = &compiled_pass.read_images[src_index];
+        let dst_image = &compiled_pass.write_images[dst_index];
+
+        unsafe {
+            command_buffer.device.cmd_blit_image(
+                command_buffer.command_buffer,
+                src_image.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                dst_image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::ImageBlit::builder()
+                    .src_offsets([
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: src_image.size.width as i32,
+                            y: src_image.size.height as i32,
+                            z: 1,
+                        },
+                    ])
+                    .dst_offsets([
+                        vk::Offset3D { x: 0, y: 0, z: 0 },
+                        vk::Offset3D {
+                            x: dst_image.size.width as i32,
+                            y: dst_image.size.height as i32,
+                            z: 1,
+                        },
+                    ])
+                    .src_subresource(image_layers)
+                    .dst_subresource(image_layers)
+                    .build()],
+                vk::Filter::NEAREST,
+            );
+        }
+    });
 }

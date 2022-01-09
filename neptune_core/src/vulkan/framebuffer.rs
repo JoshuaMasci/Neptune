@@ -1,5 +1,6 @@
 use crate::render_backend::RenderDevice;
 use crate::vulkan::image::Image;
+use crate::vulkan::ImageDescription;
 use ash::vk;
 use ash::vk::AttachmentReference;
 use gpu_allocator::vulkan;
@@ -7,8 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct FrameBufferSet {
-    device: Rc<ash::Device>,
-    device_allocator: Rc<RefCell<vulkan::Allocator>>,
+    device: RenderDevice,
     color_formats: Vec<vk::Format>,
     depth_stencil_format: Option<vk::Format>,
 
@@ -84,8 +84,7 @@ impl FrameBufferSet {
         let framebuffers: Vec<Framebuffer> = (0..count)
             .map(|_| {
                 Framebuffer::new(
-                    device.base.clone(),
-                    device.allocator.clone(),
+                    &device,
                     render_pass,
                     size,
                     color_formats.clone(),
@@ -95,8 +94,7 @@ impl FrameBufferSet {
             .collect();
 
         Self {
-            device: device.base.clone(),
-            device_allocator: device.allocator.clone(),
+            device: device.clone(),
             color_formats,
             depth_stencil_format,
             render_pass,
@@ -112,8 +110,7 @@ impl FrameBufferSet {
     pub(crate) fn update_frame(&mut self, frame_index: usize) {
         if self.framebuffers[frame_index].size != self.current_size {
             self.framebuffers[frame_index] = Framebuffer::new(
-                self.device.clone(),
-                self.device_allocator.clone(),
+                &self.device,
                 self.render_pass,
                 self.current_size,
                 self.color_formats.clone(),
@@ -126,7 +123,7 @@ impl FrameBufferSet {
 impl Drop for FrameBufferSet {
     fn drop(&mut self) {
         let _ = unsafe {
-            self.device.destroy_render_pass(self.render_pass, None);
+            self.device.base.destroy_render_pass(self.render_pass, None);
         };
     }
 }
@@ -141,8 +138,7 @@ pub struct Framebuffer {
 
 impl Framebuffer {
     pub(crate) fn new(
-        device: Rc<ash::Device>,
-        device_allocator: Rc<RefCell<vulkan::Allocator>>,
+        device: &RenderDevice,
         render_pass: vk::RenderPass,
         size: vk::Extent2D,
         color_formats: Vec<vk::Format>,
@@ -152,24 +148,27 @@ impl Framebuffer {
             .iter()
             .map(|&format| {
                 Image::new_2d(
-                    device.clone(),
-                    device_allocator.clone(),
-                    vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-                    format,
-                    size,
-                    gpu_allocator::MemoryLocation::GpuOnly,
+                    device,
+                    &ImageDescription {
+                        format,
+                        size: [size.width, size.height],
+                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                            | vk::ImageUsageFlags::TRANSFER_SRC,
+                        memory_location: gpu_allocator::MemoryLocation::GpuOnly,
+                    },
                 )
             })
             .collect();
 
         let depth_attachment = depth_stencil_format.map(|depth_format| {
             Image::new_2d(
-                device.clone(),
-                device_allocator.clone(),
-                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                depth_format,
-                size,
-                gpu_allocator::MemoryLocation::GpuOnly,
+                device,
+                &ImageDescription {
+                    format: depth_format,
+                    size: [size.width, size.height],
+                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    memory_location: gpu_allocator::MemoryLocation::GpuOnly,
+                },
             )
         });
 
@@ -183,7 +182,7 @@ impl Framebuffer {
         }
 
         let handle = unsafe {
-            device.create_framebuffer(
+            device.base.create_framebuffer(
                 &vk::FramebufferCreateInfo::builder()
                     .render_pass(render_pass)
                     .width(size.width)
@@ -196,7 +195,7 @@ impl Framebuffer {
         .expect("Failed to create framebuffer");
 
         Self {
-            device,
+            device: device.base.clone(),
             size,
             color_attachments,
             depth_attachment,

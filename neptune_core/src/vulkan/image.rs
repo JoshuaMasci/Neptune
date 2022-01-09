@@ -1,3 +1,4 @@
+use crate::render_backend::RenderDevice;
 use ash::vk;
 use gpu_allocator::vulkan;
 use std::cell::RefCell;
@@ -23,25 +24,33 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) fn new_2d(
+    pub(crate) fn null(
         device: Rc<ash::Device>,
         device_allocator: Rc<RefCell<vulkan::Allocator>>,
-        usage: vk::ImageUsageFlags,
-        format: vk::Format,
-        size: vk::Extent2D,
-        memory_location: gpu_allocator::MemoryLocation,
     ) -> Self {
-        let device_clone = device.clone();
-        let mut new_self = Self::new(
+        Self {
             device,
             device_allocator,
+            allocation: Default::default(),
+            image: Default::default(),
+            size: Default::default(),
+            usage: Default::default(),
+            memory_location: gpu_allocator::MemoryLocation::Unknown,
+            image_view: None,
+        }
+    }
+
+    pub(crate) fn new_2d(device: &RenderDevice, description: &ImageDescription) -> Self {
+        let mut new_self = Self::new(
+            device.base.clone(),
+            device.allocator.clone(),
             vk::ImageCreateInfo::builder()
                 .flags(vk::ImageCreateFlags::empty())
-                .usage(usage)
-                .format(format)
+                .usage(description.usage)
+                .format(description.format)
                 .extent(vk::Extent3D {
-                    width: size.width,
-                    height: size.height,
+                    width: description.size[0],
+                    height: description.size[1],
                     depth: 1,
                 })
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -49,24 +58,24 @@ impl Image {
                 .array_layers(1)
                 .image_type(vk::ImageType::TYPE_2D)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .queue_family_indices(&[0]) //TODO: not this
                 .build(),
-            memory_location,
+            description.memory_location,
         );
 
-        let aspect_mask: vk::ImageAspectFlags =
-            if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
-                vk::ImageAspectFlags::DEPTH
-            } else {
-                vk::ImageAspectFlags::COLOR
-            };
+        let aspect_mask: vk::ImageAspectFlags = if description
+            .usage
+            .contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+        {
+            vk::ImageAspectFlags::DEPTH
+        } else {
+            vk::ImageAspectFlags::COLOR
+        };
 
         new_self.image_view = Some(
             unsafe {
-                device_clone.create_image_view(
+                device.base.create_image_view(
                     &vk::ImageViewCreateInfo::builder()
-                        .format(format)
+                        .format(description.format)
                         .image(new_self.image)
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .components(vk::ComponentMapping {

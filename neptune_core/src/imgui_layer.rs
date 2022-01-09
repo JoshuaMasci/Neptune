@@ -1,13 +1,12 @@
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use std::ffi::CString;
-use std::ptr::null;
 use std::rc::Rc;
 use std::time::Instant;
 
 use crate::render_backend::RenderDevice;
 use crate::vulkan::framebuffer::FrameBufferSet;
-use crate::vulkan::Buffer;
-use crate::vulkan::Image;
+use crate::vulkan::{Buffer, BufferDescription};
+use crate::vulkan::{Image, ImageDescription};
 use ash::vk;
 use ash::vk::Offset2D;
 use gpu_allocator::MemoryLocation;
@@ -51,27 +50,25 @@ impl ImguiLayer {
         let image_data = imgui_context.fonts().build_alpha8_texture();
         let texture_atlas_staging_buffer = Some({
             let mut buffer = Buffer::new(
-                device.base.clone(),
-                device.allocator.clone(),
-                &vk::BufferCreateInfo::builder()
-                    .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                    .size(image_data.data.len() as vk::DeviceSize),
-                MemoryLocation::CpuToGpu,
+                &device,
+                &BufferDescription {
+                    size: image_data.data.len(),
+                    usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                    memory_location: MemoryLocation::CpuToGpu,
+                },
             );
             buffer.fill(image_data.data);
             buffer
         });
 
         let texture_atlas = Image::new_2d(
-            device.base.clone(),
-            device.allocator.clone(),
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            vk::Format::R8_UNORM,
-            vk::Extent2D {
-                width: image_data.width,
-                height: image_data.height,
+            &device,
+            &ImageDescription {
+                format: vk::Format::R8_UNORM,
+                size: [image_data.width, image_data.height],
+                usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                memory_location: MemoryLocation::GpuOnly,
             },
-            MemoryLocation::GpuOnly,
         );
 
         let texture_sampler = unsafe {
@@ -137,20 +134,20 @@ impl ImguiLayer {
         //Will be resized during first frame
         let frames = vec![Frame {
             vertex_buffer: Buffer::new(
-                device.base.clone(),
-                device.allocator.clone(),
-                &vk::BufferCreateInfo::builder()
-                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-                    .size(16),
-                gpu_allocator::MemoryLocation::CpuToGpu,
+                &device,
+                &BufferDescription {
+                    size: 16,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                    memory_location: MemoryLocation::CpuToGpu,
+                },
             ),
             index_buffer: Buffer::new(
-                device.base.clone(),
-                device.allocator.clone(),
-                &vk::BufferCreateInfo::builder()
-                    .usage(vk::BufferUsageFlags::INDEX_BUFFER)
-                    .size(16),
-                gpu_allocator::MemoryLocation::CpuToGpu,
+                &device,
+                &BufferDescription {
+                    size: 16,
+                    usage: vk::BufferUsageFlags::INDEX_BUFFER,
+                    memory_location: MemoryLocation::CpuToGpu,
+                },
             ),
         }];
 
@@ -296,32 +293,31 @@ impl ImguiLayer {
 
         let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
 
-        let vertex_count =
-            (vertices.len() * std::mem::size_of::<imgui::DrawVert>()) as vk::DeviceSize;
-        let index_count = (indices.len() * std::mem::size_of::<u16>()) as vk::DeviceSize;
+        let vertex_size = vertices.len() * std::mem::size_of::<imgui::DrawVert>();
+        let index_size = indices.len() * std::mem::size_of::<u16>();
 
         let frame = &mut self.frames[0];
 
         //Resize buffers
-        if frame.vertex_buffer.size < vertex_count {
+        if frame.vertex_buffer.size < vertex_size as vk::DeviceSize {
             frame.vertex_buffer = Buffer::new(
-                self.device.base.clone(),
-                self.device.allocator.clone(),
-                &vk::BufferCreateInfo::builder()
-                    .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-                    .size(vertex_count),
-                gpu_allocator::MemoryLocation::CpuToGpu,
+                &self.device,
+                &BufferDescription {
+                    size: vertex_size,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                    memory_location: MemoryLocation::CpuToGpu,
+                },
             );
         }
 
-        if frame.index_buffer.size < index_count {
+        if frame.index_buffer.size < index_size as vk::DeviceSize {
             frame.index_buffer = Buffer::new(
-                self.device.base.clone(),
-                self.device.allocator.clone(),
-                &vk::BufferCreateInfo::builder()
-                    .usage(vk::BufferUsageFlags::INDEX_BUFFER)
-                    .size(index_count),
-                gpu_allocator::MemoryLocation::CpuToGpu,
+                &self.device,
+                &BufferDescription {
+                    size: index_size,
+                    usage: vk::BufferUsageFlags::INDEX_BUFFER,
+                    memory_location: MemoryLocation::CpuToGpu,
+                },
             );
         }
 

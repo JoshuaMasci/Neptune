@@ -1,7 +1,7 @@
-use crate::vulkan::{BufferDescription, ImageDescription};
-use std::borrow::BorrowMut;
-use std::collections::HashMap;
+use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
+use std::rc::Rc;
 
+use crate::render_graph::compiled_pass::RenderPassCompiled;
 use crate::render_graph::{BufferHandle, ImageHandle};
 use ash::vk;
 
@@ -46,14 +46,14 @@ pub enum ImageAccessType {
 
 pub enum BufferResource {
     New(BufferDescription),
-    Import(),
+    Import(Rc<Buffer>),
 }
 
-#[derive(PartialEq, Debug)]
+//#[derive(PartialEq, Debug)]
 pub enum ImageResource {
     Swapchain, //Not valid in create_image function
     New(ImageDescription),
-    Import(),
+    Import(Rc<Image>),
 }
 
 pub struct RenderGraphBuilder {
@@ -82,17 +82,17 @@ impl RenderGraphBuilder {
     }
 
     pub fn create_image(&mut self, image_description: ImageResource) -> ImageHandle {
-        assert_ne!(
-            image_description,
-            ImageResource::Swapchain,
-            "Cannot create image of ImageResourceDescription::Swapchain type"
-        );
+        // assert_ne!(
+        //     image_description,
+        //     ImageResource::Swapchain,
+        //     "Cannot create image of ImageResourceDescription::Swapchain type"
+        // );
         let description = self
             .description
             .as_mut()
             .expect("Render Graph already built");
-        let new_id = description.images2d.len() as ImageHandle;
-        description.images2d.push(image_description);
+        let new_id = description.images.len() as ImageHandle;
+        description.images.push(image_description);
         new_id
     }
 
@@ -125,36 +125,44 @@ impl<'s> Drop for RenderPassBuilder<'s> {
 }
 
 impl<'rg> RenderPassBuilder<'rg> {
-    pub fn read_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) {
+    pub fn read_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) -> usize {
         let description = self.description.as_mut().unwrap();
+        let index = description.read_buffers.len();
         description.read_buffers.push(BufferResourceAccess {
             id: resource,
             access_type: access,
         });
+        index
     }
 
-    pub fn write_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) {
+    pub fn write_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) -> usize {
         let description = self.description.as_mut().unwrap();
+        let index = description.write_buffers.len();
         description.write_buffers.push(BufferResourceAccess {
             id: resource,
             access_type: access,
         });
+        index
     }
 
-    pub fn read_image(&mut self, resource: ImageHandle, access: ImageAccessType) {
+    pub fn read_image(&mut self, resource: ImageHandle, access: ImageAccessType) -> usize {
         let description = self.description.as_mut().unwrap();
+        let index = description.read_images.len();
         description.read_images.push(ImageResourceAccess {
             id: resource,
             access_type: access,
         });
+        index
     }
 
-    pub fn write_image(&mut self, resource: ImageHandle, access: ImageAccessType) {
+    pub fn write_image(&mut self, resource: ImageHandle, access: ImageAccessType) -> usize {
         let description = self.description.as_mut().unwrap();
+        let index = description.write_images.len();
         description.write_images.push(ImageResourceAccess {
             id: resource,
             access_type: access,
         });
+        index
     }
 
     pub fn raster(
@@ -174,7 +182,10 @@ impl<'rg> RenderPassBuilder<'rg> {
         description.pipelines.push(pipeline_description);
     }
 
-    pub fn render(mut self, render: impl FnOnce(&mut RenderInfo, &RenderPassCompiled) + 'static) {
+    pub fn render(
+        mut self,
+        render: impl FnOnce(&mut CommandBuffer, &RenderPassCompiled) + 'static,
+    ) {
         let prev = self
             .description
             .as_mut()
@@ -182,14 +193,14 @@ impl<'rg> RenderPassBuilder<'rg> {
             .render_fn
             .replace(Box::new(render));
 
-        assert!(prev.is_none());
+        assert!(prev.is_none(), "Already set render function");
     }
 }
 
 pub struct RenderGraphDescription {
     passes: Vec<RenderPassDescription>,
-    buffers: Vec<BufferResource>,
-    images2d: Vec<ImageResource>,
+    pub(crate) buffers: Vec<BufferResource>,
+    pub(crate) images: Vec<ImageResource>,
 }
 
 impl RenderGraphDescription {
@@ -199,7 +210,7 @@ impl RenderGraphDescription {
         Self {
             passes: Vec::new(),
             buffers: vec![],
-            images2d: vec![ImageResource::Swapchain],
+            images: vec![ImageResource::Swapchain],
         }
     }
 }
@@ -259,11 +270,9 @@ impl RenderPassDescription {
 }
 
 //Placeholder definitions, need to flesh out with vulkan primitives later
-pub struct RenderInfo {
-    command_buffer: (),
-}
-pub struct RenderPassCompiled {
-    name: String,
+pub struct CommandBuffer {
+    pub(crate) device: Rc<ash::Device>,
+    pub(crate) command_buffer: vk::CommandBuffer,
 }
 
-type RenderFn = dyn FnOnce(&mut RenderInfo, &RenderPassCompiled);
+type RenderFn = dyn FnOnce(&mut CommandBuffer, &RenderPassCompiled);
