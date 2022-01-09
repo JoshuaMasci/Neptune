@@ -69,6 +69,7 @@ impl ImguiLayer {
                 usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 memory_location: MemoryLocation::GpuOnly,
             },
+            true,
         );
 
         let texture_sampler = unsafe {

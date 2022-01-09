@@ -46,7 +46,11 @@ impl Image {
         }
     }
 
-    pub(crate) fn new_2d(device: &RenderDevice, description: &ImageDescription) -> Self {
+    pub(crate) fn new_2d(
+        device: &RenderDevice,
+        description: &ImageDescription,
+        view: bool,
+    ) -> Self {
         let mut new_self = Self::new(
             device.base.clone(),
             device.allocator.clone(),
@@ -77,31 +81,33 @@ impl Image {
             vk::ImageAspectFlags::COLOR
         };
 
-        new_self.image_view = Some(
-            unsafe {
-                device.base.create_image_view(
-                    &vk::ImageViewCreateInfo::builder()
-                        .format(description.format)
-                        .image(new_self.image)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::IDENTITY,
-                            g: vk::ComponentSwizzle::IDENTITY,
-                            b: vk::ComponentSwizzle::IDENTITY,
-                            a: vk::ComponentSwizzle::IDENTITY,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        }),
-                    None,
-                )
-            }
-            .expect("Failed to create image view"),
-        );
+        if view {
+            new_self.image_view = Some(
+                unsafe {
+                    device.base.create_image_view(
+                        &vk::ImageViewCreateInfo::builder()
+                            .format(description.format)
+                            .image(new_self.image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .components(vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::IDENTITY,
+                                g: vk::ComponentSwizzle::IDENTITY,
+                                b: vk::ComponentSwizzle::IDENTITY,
+                                a: vk::ComponentSwizzle::IDENTITY,
+                            })
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            }),
+                        None,
+                    )
+                }
+                .expect("Failed to create image view"),
+            );
+        }
 
         new_self
     }

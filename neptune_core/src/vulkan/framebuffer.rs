@@ -156,6 +156,7 @@ impl Framebuffer {
                             | vk::ImageUsageFlags::TRANSFER_SRC,
                         memory_location: gpu_allocator::MemoryLocation::GpuOnly,
                     },
+                    true,
                 )
             })
             .collect();
@@ -169,6 +170,7 @@ impl Framebuffer {
                     usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                     memory_location: gpu_allocator::MemoryLocation::GpuOnly,
                 },
+                true,
             )
         });
 

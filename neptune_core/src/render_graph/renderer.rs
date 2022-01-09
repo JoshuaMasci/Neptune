@@ -103,7 +103,7 @@ fn create_resources(
                 swapchain_size,
             )),
             ImageResourceDescription::New(image_description) => {
-                Rc::new(Image::new_2d(device, image_description))
+                Rc::new(Image::new_2d(device, image_description, false))
             }
             ImageResourceDescription::Import(image) => image.clone(),
         })

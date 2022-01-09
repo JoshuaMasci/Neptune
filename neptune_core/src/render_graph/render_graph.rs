@@ -7,7 +7,7 @@ use ash::vk;
 
 //TODO: RayTracing Accesses
 //TODO: make flags?
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum BufferAccessType {
     Nothing,
 
@@ -25,7 +25,7 @@ pub enum BufferAccessType {
 }
 
 //TODO: RayTracing Accesses
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum ImageAccessType {
     Nothing,
 
