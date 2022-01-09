@@ -5,6 +5,9 @@ pub use winit::{
 };
 
 fn main() {
+    //Test Render Graph
+    neptune_core::render_graph::build_render_graph_test();
+
     let event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")

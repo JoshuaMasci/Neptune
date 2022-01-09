@@ -271,14 +271,7 @@ impl ImguiLayer {
         let ui = self.imgui_context.frame();
 
         //TODO: enable docking
-        unsafe {
-            let _ = imgui::sys::igDockSpaceOverViewport(
-                imgui::sys::igGetMainViewport(),
-                imgui::sys::ImGuiDockNodeFlags_PassthruCentralNode
-                    as imgui::sys::ImGuiDockNodeFlags,
-                null(),
-            );
-        }
+        crate::imgui_docking::enable_docking();
 
         if let Some(menu_bar) = ui.begin_main_menu_bar() {
             if let Some(menu) = ui.begin_menu("Options") {
@@ -287,6 +280,12 @@ impl ImguiLayer {
 
             menu_bar.end();
         }
+
+        ui.window("Example Window")
+            .size([100.0, 50.0], imgui::Condition::FirstUseEver)
+            .build(|| {
+                ui.text("An example");
+            });
 
         let mut run = true;
         ui.show_demo_window(&mut run);
