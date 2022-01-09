@@ -4,7 +4,7 @@ use crate::render_graph::render_graph::{
     BufferResourceDescription, ImageAccessType, ImageResourceDescription, RenderGraphDescription,
     RenderPassDescription,
 };
-use crate::vulkan::{Buffer, Image};
+use crate::vulkan::{Buffer, Image, ImageDescription};
 use ash::vk;
 use std::rc::Rc;
 
@@ -96,14 +96,17 @@ fn create_resources(
         .iter()
         .map(|image_resource| match image_resource {
             //TODO: this better
-            ImageResourceDescription::Swapchain => Rc::new(Image::from_existing_no_drop(
-                device.base.clone(),
-                device.allocator.clone(),
+            ImageResourceDescription::Swapchain => Rc::new(Image::from_existing(
+                ImageDescription {
+                    format: vk::Format::UNDEFINED,
+                    size: [swapchain_size.width, swapchain_size.height],
+                    usage: Default::default(),
+                    memory_location: gpu_allocator::MemoryLocation::Unknown,
+                },
                 swapchain_image,
-                swapchain_size,
             )),
             ImageResourceDescription::New(image_description) => {
-                Rc::new(Image::new_2d(device, image_description, false))
+                Rc::new(Image::new(device, image_description.clone()))
             }
             ImageResourceDescription::Import(image) => image.clone(),
         })
@@ -168,7 +171,7 @@ fn transition_images(
     for read_image in render_pass.read_images.iter() {
         image_barriers.push(
             vk::ImageMemoryBarrier2KHR::builder()
-                .image(read_image.image.image)
+                .image(read_image.image.handle)
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(temp_get_layout(read_image.access_type))
                 .src_access_mask(vk::AccessFlags2KHR::NONE)
@@ -193,7 +196,7 @@ fn transition_images(
     for write_image in render_pass.write_images.iter() {
         image_barriers.push(
             vk::ImageMemoryBarrier2KHR::builder()
-                .image(write_image.image.image)
+                .image(write_image.image.handle)
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(temp_get_layout(write_image.access_type))
                 .src_access_mask(vk::AccessFlags2KHR::NONE)

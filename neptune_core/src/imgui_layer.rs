@@ -61,16 +61,16 @@ impl ImguiLayer {
             buffer
         });
 
-        let texture_atlas = Image::new_2d(
+        let mut texture_atlas = Image::new(
             &device,
-            &ImageDescription {
+            ImageDescription {
                 format: vk::Format::R8_UNORM,
                 size: [image_data.width, image_data.height],
                 usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
                 memory_location: MemoryLocation::GpuOnly,
             },
-            true,
         );
+        texture_atlas.create_image_view();
 
         let texture_sampler = unsafe {
             device.base.create_sampler(
@@ -200,7 +200,7 @@ impl ImguiLayer {
                 .build();
 
             let image_barriers1 = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.texture_atlas.image)
+                .image(self.texture_atlas.handle)
                 .old_layout(vk::ImageLayout::UNDEFINED)
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .src_access_mask(vk::AccessFlags2KHR::NONE)
@@ -223,7 +223,7 @@ impl ImguiLayer {
                 self.device.base.cmd_copy_buffer_to_image(
                     command_buffer,
                     staging_buffer.buffer,
-                    self.texture_atlas.image,
+                    self.texture_atlas.handle,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[vk::BufferImageCopy {
                         buffer_offset: 0,
@@ -236,13 +236,17 @@ impl ImguiLayer {
                             layer_count: 1,
                         },
                         image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
-                        image_extent: self.texture_atlas.size,
+                        image_extent: vk::Extent3D {
+                            width: self.texture_atlas.description.size[0],
+                            height: self.texture_atlas.description.size[1],
+                            depth: 1,
+                        },
                     }],
                 );
             }
 
             let image_barriers2 = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.texture_atlas.image)
+                .image(self.texture_atlas.handle)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .src_access_mask(vk::AccessFlags2KHR::NONE)
@@ -408,7 +412,7 @@ impl ImguiLayer {
             //TODO: other textures
             let image_info = vk::DescriptorImageInfo::builder()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(self.texture_atlas.image_view.unwrap())
+                .image_view(self.texture_atlas.view)
                 .sampler(self.texture_sampler);
             let writes = &[vk::WriteDescriptorSet::builder()
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)

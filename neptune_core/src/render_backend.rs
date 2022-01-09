@@ -417,7 +417,7 @@ impl RenderBackend {
 
             self.device.base.cmd_blit_image(
                 self.command_buffer,
-                src_image.image,
+                src_image.handle,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.swapchain.images[self.swapchain_image_index as usize],
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -425,8 +425,8 @@ impl RenderBackend {
                     .src_offsets([
                         vk::Offset3D { x: 0, y: 0, z: 0 },
                         vk::Offset3D {
-                            x: src_image.size.width as i32,
-                            y: src_image.size.height as i32,
+                            x: src_image.description.size[0] as i32,
+                            y: src_image.description.size[1] as i32,
                             z: 1,
                         },
                     ])

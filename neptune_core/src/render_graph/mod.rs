@@ -78,10 +78,10 @@ pub fn build_color_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHand
     color_pass.render(move |command_buffer, compiled_pass| unsafe {
         command_buffer.device.cmd_clear_color_image(
             command_buffer.command_buffer,
-            compiled_pass.write_images[index].image.image,
+            compiled_pass.write_images[index].image.handle,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             &vk::ClearColorValue {
-                float32: [1.0, 0.75, 0.5, 1.0],
+                float32: [0.5, 0.75, 1.0, 1.0],
             },
             &[vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -118,24 +118,24 @@ pub fn build_blit_pass(
         unsafe {
             command_buffer.device.cmd_blit_image(
                 command_buffer.command_buffer,
-                src_image.image,
+                src_image.handle,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                dst_image.image,
+                dst_image.handle,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[vk::ImageBlit::builder()
                     .src_offsets([
                         vk::Offset3D { x: 0, y: 0, z: 0 },
                         vk::Offset3D {
-                            x: src_image.size.width as i32,
-                            y: src_image.size.height as i32,
+                            x: src_image.description.size[0] as i32,
+                            y: src_image.description.size[1] as i32,
                             z: 1,
                         },
                     ])
                     .dst_offsets([
                         vk::Offset3D { x: 0, y: 0, z: 0 },
                         vk::Offset3D {
-                            x: dst_image.size.width as i32,
-                            y: dst_image.size.height as i32,
+                            x: dst_image.description.size[0] as i32,
+                            y: dst_image.description.size[1] as i32,
                             z: 1,
                         },
                     ])

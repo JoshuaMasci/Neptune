@@ -3,8 +3,6 @@ use crate::vulkan::image::Image;
 use crate::vulkan::ImageDescription;
 use ash::vk;
 use ash::vk::AttachmentReference;
-use gpu_allocator::vulkan;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct FrameBufferSet {
@@ -147,40 +145,40 @@ impl Framebuffer {
         let color_attachments: Vec<Image> = color_formats
             .iter()
             .map(|&format| {
-                Image::new_2d(
+                let mut image = Image::new(
                     device,
-                    &ImageDescription {
+                    ImageDescription {
                         format,
                         size: [size.width, size.height],
                         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
                             | vk::ImageUsageFlags::TRANSFER_SRC,
                         memory_location: gpu_allocator::MemoryLocation::GpuOnly,
                     },
-                    true,
-                )
+                );
+                image.create_image_view();
+                image
             })
             .collect();
 
         let depth_attachment = depth_stencil_format.map(|depth_format| {
-            Image::new_2d(
+            let mut image = Image::new(
                 device,
-                &ImageDescription {
+                ImageDescription {
                     format: depth_format,
                     size: [size.width, size.height],
                     usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                     memory_location: gpu_allocator::MemoryLocation::GpuOnly,
                 },
-                true,
-            )
+            );
+            image.create_image_view();
+            image
         });
 
-        let mut image_views: Vec<vk::ImageView> = color_attachments
-            .iter()
-            .map(|image| image.image_view.unwrap())
-            .collect();
+        let mut image_views: Vec<vk::ImageView> =
+            color_attachments.iter().map(|image| image.view).collect();
 
         if let Some(depth_image) = &depth_attachment {
-            image_views.push(depth_image.image_view.unwrap());
+            image_views.push(depth_image.view);
         }
 
         let handle = unsafe {
