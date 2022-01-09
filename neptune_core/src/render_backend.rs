@@ -1,3 +1,4 @@
+use crate::render_graph::render_graph::RenderGraphDescription;
 use crate::vulkan::Image;
 use ash::vk;
 use std::cell::RefCell;
@@ -41,6 +42,7 @@ pub struct RenderBackend {
     image_ready_semaphore: vk::Semaphore,
     present_semaphore: vk::Semaphore,
     frame_done_fence: vk::Fence,
+    graph_renderer: crate::render_graph::Renderer,
 }
 
 impl RenderBackend {
@@ -256,6 +258,7 @@ impl RenderBackend {
             image_ready_semaphore,
             present_semaphore,
             frame_done_fence,
+            graph_renderer: crate::render_graph::Renderer::new(),
         }
     }
 
@@ -297,6 +300,82 @@ impl RenderBackend {
         self.swapchain_image_index = image_index;
 
         Some(self.command_buffer)
+    }
+
+    pub fn end_frame(&mut self, swapchain_image_layout: vk::ImageLayout) {
+        unsafe {
+            let image_barriers2 = &[vk::ImageMemoryBarrier2KHR::builder()
+                .image(self.swapchain.images[self.swapchain_image_index as usize])
+                .old_layout(swapchain_image_layout)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_access_mask(vk::AccessFlags2KHR::NONE)
+                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .base_mip_level(0)
+                        .level_count(1)
+                        .build(),
+                )
+                .build()];
+
+            self.device.synchronization2.cmd_pipeline_barrier2(
+                self.command_buffer,
+                &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers2),
+            );
+
+            self.device
+                .base
+                .end_command_buffer(self.command_buffer)
+                .expect("Failed to end command buffer recording");
+
+            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.image_ready_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
+                .command_buffer(self.command_buffer)
+                .device_mask(0)
+                .build()];
+
+            let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.present_semaphore)
+                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                .device_index(0)
+                .build()];
+
+            let submit_info = vk::SubmitInfo2KHR::builder()
+                .wait_semaphore_infos(wait_semaphore_infos)
+                .command_buffer_infos(command_buffer_infos)
+                .signal_semaphore_infos(signal_semaphore_infos)
+                .build();
+            self.device
+                .synchronization2
+                .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
+                .expect("Failed to queue command buffer");
+
+            //Present Image
+            let wait_semaphores = &[self.present_semaphore];
+            let swapchains = &[self.swapchain.handle];
+            let image_indices = &[self.swapchain_image_index];
+            let present_info = vk::PresentInfoKHR::builder()
+                .wait_semaphores(wait_semaphores)
+                .swapchains(swapchains)
+                .image_indices(image_indices);
+
+            let _ = self
+                .device
+                .swapchain
+                .queue_present(self.graphics_queue, &present_info);
+        }
     }
 
     pub fn end_frame_blit(&mut self, src_image: &Image) {
@@ -436,6 +515,19 @@ impl RenderBackend {
                 .device
                 .swapchain
                 .queue_present(self.graphics_queue, &present_info);
+        }
+    }
+
+    pub fn render_graph(&mut self, render_graph: RenderGraphDescription) {
+        if let Some(command_buffer) = self.begin_frame() {
+            self.graph_renderer.render(
+                &self.device,
+                command_buffer,
+                self.swapchain.images[self.swapchain_image_index as usize],
+                self.swapchain.size,
+                render_graph,
+            );
+            self.end_frame(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
         }
     }
 

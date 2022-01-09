@@ -24,16 +24,22 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) fn null(
+    pub(crate) fn from_existing_no_drop(
         device: Rc<ash::Device>,
         device_allocator: Rc<RefCell<vulkan::Allocator>>,
+        image: vk::Image,
+        size: vk::Extent2D,
     ) -> Self {
         Self {
             device,
             device_allocator,
             allocation: Default::default(),
-            image: Default::default(),
-            size: Default::default(),
+            image,
+            size: vk::Extent3D {
+                width: size.width,
+                height: size.height,
+                depth: 1,
+            },
             usage: Default::default(),
             memory_location: gpu_allocator::MemoryLocation::Unknown,
             image_view: None,
@@ -142,6 +148,11 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
+        //TEMP workaround
+        if self.memory_location == gpu_allocator::MemoryLocation::Unknown {
+            return;
+        }
+
         self.device_allocator
             .borrow_mut()
             .free(self.allocation.clone())

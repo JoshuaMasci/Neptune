@@ -2,11 +2,12 @@ use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
 use std::rc::Rc;
 
 use crate::render_graph::compiled_pass::RenderPassCompiled;
-use crate::render_graph::{BufferHandle, ImageHandle};
+use crate::render_graph::{BufferHandle, ImageHandle, RenderFn};
 use ash::vk;
 
 //TODO: RayTracing Accesses
 //TODO: make flags?
+#[derive(Copy, Clone)]
 pub enum BufferAccessType {
     Nothing,
 
@@ -24,6 +25,7 @@ pub enum BufferAccessType {
 }
 
 //TODO: RayTracing Accesses
+#[derive(Copy, Clone)]
 pub enum ImageAccessType {
     Nothing,
 
@@ -44,13 +46,13 @@ pub enum ImageAccessType {
     ShaderComputeWrite,
 }
 
-pub enum BufferResource {
+pub enum BufferResourceDescription {
     New(BufferDescription),
     Import(Rc<Buffer>),
 }
 
 //#[derive(PartialEq, Debug)]
-pub enum ImageResource {
+pub enum ImageResourceDescription {
     Swapchain, //Not valid in create_image function
     New(ImageDescription),
     Import(Rc<Image>),
@@ -68,20 +70,20 @@ impl RenderGraphBuilder {
     }
 
     pub fn get_swapchain_image_resource(&self) -> ImageHandle {
-        RenderGraphDescription::SWAPCHAIN_ID
+        RenderGraphDescription::SWAPCHAIN_HANDLE
     }
 
-    pub fn create_buffer(&mut self, buffer_description: BufferResource) -> BufferHandle {
+    pub fn create_buffer(&mut self, buffer_description: BufferResourceDescription) -> BufferHandle {
         let description = self
             .description
             .as_mut()
             .expect("Render Graph already built");
-        let new_id = description.buffers.len() as BufferHandle;
+        let new_handle = description.buffers.len() as BufferHandle;
         description.buffers.push(buffer_description);
-        new_id
+        new_handle
     }
 
-    pub fn create_image(&mut self, image_description: ImageResource) -> ImageHandle {
+    pub fn create_image(&mut self, image_description: ImageResourceDescription) -> ImageHandle {
         // assert_ne!(
         //     image_description,
         //     ImageResource::Swapchain,
@@ -91,9 +93,9 @@ impl RenderGraphBuilder {
             .description
             .as_mut()
             .expect("Render Graph already built");
-        let new_id = description.images.len() as ImageHandle;
+        let new_handle = description.images.len() as ImageHandle;
         description.images.push(image_description);
-        new_id
+        new_handle
     }
 
     pub fn create_pass(&mut self, name: &str) -> RenderPassBuilder {
@@ -129,7 +131,7 @@ impl<'rg> RenderPassBuilder<'rg> {
         let description = self.description.as_mut().unwrap();
         let index = description.read_buffers.len();
         description.read_buffers.push(BufferResourceAccess {
-            id: resource,
+            handle: resource,
             access_type: access,
         });
         index
@@ -139,7 +141,7 @@ impl<'rg> RenderPassBuilder<'rg> {
         let description = self.description.as_mut().unwrap();
         let index = description.write_buffers.len();
         description.write_buffers.push(BufferResourceAccess {
-            id: resource,
+            handle: resource,
             access_type: access,
         });
         index
@@ -149,7 +151,7 @@ impl<'rg> RenderPassBuilder<'rg> {
         let description = self.description.as_mut().unwrap();
         let index = description.read_images.len();
         description.read_images.push(ImageResourceAccess {
-            id: resource,
+            handle: resource,
             access_type: access,
         });
         index
@@ -159,9 +161,16 @@ impl<'rg> RenderPassBuilder<'rg> {
         let description = self.description.as_mut().unwrap();
         let index = description.write_images.len();
         description.write_images.push(ImageResourceAccess {
-            id: resource,
+            handle: resource,
             access_type: access,
         });
+        index
+    }
+
+    pub fn pipeline(&mut self, pipeline_description: PipelineDescription) -> usize {
+        let description = self.description.as_mut().unwrap();
+        let index = description.pipelines.len();
+        description.pipelines.push(pipeline_description);
         index
     }
 
@@ -175,11 +184,6 @@ impl<'rg> RenderPassBuilder<'rg> {
             color_attachments,
             depth_attachment,
         })
-    }
-
-    pub fn pipeline(&mut self, pipeline_description: PipelineDescription) {
-        let description = self.description.as_mut().unwrap();
-        description.pipelines.push(pipeline_description);
     }
 
     pub fn render(
@@ -198,31 +202,31 @@ impl<'rg> RenderPassBuilder<'rg> {
 }
 
 pub struct RenderGraphDescription {
-    passes: Vec<RenderPassDescription>,
-    pub(crate) buffers: Vec<BufferResource>,
-    pub(crate) images: Vec<ImageResource>,
+    pub(crate) passes: Vec<RenderPassDescription>,
+    pub(crate) buffers: Vec<BufferResourceDescription>,
+    pub(crate) images: Vec<ImageResourceDescription>,
 }
 
 impl RenderGraphDescription {
-    const SWAPCHAIN_ID: ImageHandle = 0;
+    const SWAPCHAIN_HANDLE: ImageHandle = 0;
 
     fn new() -> Self {
         Self {
             passes: Vec::new(),
             buffers: vec![],
-            images: vec![ImageResource::Swapchain],
+            images: vec![ImageResourceDescription::Swapchain],
         }
     }
 }
 
-struct BufferResourceAccess {
-    id: BufferHandle,
-    access_type: BufferAccessType,
+pub(crate) struct BufferResourceAccess {
+    pub(crate) handle: BufferHandle,
+    pub(crate) access_type: BufferAccessType,
 }
 
-struct ImageResourceAccess {
-    id: ImageHandle,
-    access_type: ImageAccessType,
+pub(crate) struct ImageResourceAccess {
+    pub(crate) handle: ImageHandle,
+    pub(crate) access_type: ImageAccessType,
 }
 
 pub enum PipelineDescription {
@@ -231,27 +235,29 @@ pub enum PipelineDescription {
     RayTracing,
 }
 
-struct FramebufferDescription {
+pub struct FramebufferDescription {
     //Render Pass's access type is known so doesn't need to be specified
     color_attachments: Vec<ImageHandle>,
     depth_attachment: Option<ImageHandle>,
 }
 
 pub struct RenderPassDescription {
-    name: String,
+    pub(crate) name: String,
 
     //Resources Description
-    read_buffers: Vec<BufferResourceAccess>,
-    write_buffers: Vec<BufferResourceAccess>,
-    read_images: Vec<ImageResourceAccess>,
-    write_images: Vec<ImageResourceAccess>,
-    framebuffer: Option<FramebufferDescription>,
+    pub(crate) read_buffers: Vec<BufferResourceAccess>,
+    pub(crate) write_buffers: Vec<BufferResourceAccess>,
+    pub(crate) read_images: Vec<ImageResourceAccess>,
+    pub(crate) write_images: Vec<ImageResourceAccess>,
 
     //Pipeline Description
-    pipelines: Vec<PipelineDescription>,
+    pub(crate) pipelines: Vec<PipelineDescription>,
+
+    //Framebuffer, might be replaced in favor of VkDynamicRendering
+    pub(crate) framebuffer: Option<FramebufferDescription>,
 
     //Render Function
-    render_fn: Option<Box<RenderFn>>,
+    pub(crate) render_fn: Option<Box<RenderFn>>,
 }
 
 impl RenderPassDescription {
@@ -262,8 +268,8 @@ impl RenderPassDescription {
             write_buffers: Vec::new(),
             read_images: Vec::new(),
             write_images: Vec::new(),
-            framebuffer: None,
             pipelines: Vec::new(),
+            framebuffer: None,
             render_fn: None,
         }
     }
@@ -274,5 +280,3 @@ pub struct CommandBuffer {
     pub(crate) device: Rc<ash::Device>,
     pub(crate) command_buffer: vk::CommandBuffer,
 }
-
-type RenderFn = dyn FnOnce(&mut CommandBuffer, &RenderPassCompiled);
