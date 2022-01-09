@@ -1,4 +1,4 @@
-use crate::image::Image;
+use crate::vulkan::Image;
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -24,14 +24,14 @@ pub struct RenderDevice {
 pub struct RenderBackend {
     entry: ash::Entry,
     instance: ash::Instance,
-    debug_messenger: crate::debug_messenger::DebugMessenger,
+    debug_messenger: crate::vulkan::debug_messenger::DebugMessenger,
 
     physical_device: vk::PhysicalDevice,
     graphics_queue: vk::Queue,
     pub device: RenderDevice,
 
     surface: vk::SurfaceKHR,
-    swapchain: crate::swapchain::Swapchain,
+    swapchain: crate::vulkan::swapchain::Swapchain,
 
     swapchain_image_index: u32,
 
@@ -87,7 +87,8 @@ impl RenderBackend {
         };
 
         //Validation Messages
-        let debug_messenger = crate::debug_messenger::DebugMessenger::new(&entry, &instance);
+        let debug_messenger =
+            crate::vulkan::debug_messenger::DebugMessenger::new(&entry, &instance);
 
         //Surface creation
         let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
@@ -192,7 +193,7 @@ impl RenderBackend {
         //});
 
         //Swapchain
-        let swapchain = crate::swapchain::Swapchain::new(&device, physical_device, surface);
+        let swapchain = crate::vulkan::swapchain::Swapchain::new(&device, physical_device, surface);
 
         //TEMP Device frame stuff
         let command_pool = unsafe {

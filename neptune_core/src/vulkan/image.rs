@@ -3,6 +3,14 @@ use gpu_allocator::vulkan;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(PartialEq, Debug)]
+pub struct ImageDescription {
+    pub format: vk::Format,
+    pub size: [u32; 2],
+    pub usage: vk::ImageUsageFlags,
+    pub memory_location: gpu_allocator::MemoryLocation,
+}
+
 pub struct Image {
     device: Rc<ash::Device>,
     device_allocator: Rc<RefCell<vulkan::Allocator>>,

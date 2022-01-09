@@ -1,5 +1,5 @@
-use crate::image::Image;
 use crate::render_backend::RenderDevice;
+use crate::vulkan::image::Image;
 use ash::vk;
 use ash::vk::AttachmentReference;
 use gpu_allocator::vulkan;

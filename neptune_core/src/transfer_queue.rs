@@ -1,4 +1,4 @@
-use crate::image::Image;
+use crate::vulkan::Image;
 use std::cell::RefCell;
 use std::rc::Rc;
 

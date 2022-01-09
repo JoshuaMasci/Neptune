@@ -4,10 +4,10 @@ use std::ptr::null;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::buffer::Buffer;
-use crate::framebuffer::FrameBufferSet;
-use crate::image::Image;
 use crate::render_backend::RenderDevice;
+use crate::vulkan::framebuffer::FrameBufferSet;
+use crate::vulkan::Buffer;
+use crate::vulkan::Image;
 use ash::vk;
 use ash::vk::Offset2D;
 use gpu_allocator::MemoryLocation;

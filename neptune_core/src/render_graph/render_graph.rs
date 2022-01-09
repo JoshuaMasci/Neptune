@@ -1,8 +1,9 @@
+use crate::vulkan::{BufferDescription, ImageDescription};
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 
-pub type BufferHandle = u32;
-pub type ImageHandle = u32;
+use crate::render_graph::{BufferHandle, ImageHandle};
+use ash::vk;
 
 //TODO: RayTracing Accesses
 //TODO: make flags?
@@ -43,15 +44,15 @@ pub enum ImageAccessType {
     ShaderComputeWrite,
 }
 
-pub enum BufferResourceDescription {
-    New(),
+pub enum BufferResource {
+    New(BufferDescription),
     Import(),
 }
 
 #[derive(PartialEq, Debug)]
-pub enum ImageResourceDescription {
-    Swapchain, //Not valid for creation
-    New(),
+pub enum ImageResource {
+    Swapchain, //Not valid in create_image function
+    New(ImageDescription),
     Import(),
 }
 
@@ -70,7 +71,7 @@ impl RenderGraphBuilder {
         RenderGraphDescription::SWAPCHAIN_ID
     }
 
-    pub fn create_buffer(&mut self, buffer_description: BufferResourceDescription) -> BufferHandle {
+    pub fn create_buffer(&mut self, buffer_description: BufferResource) -> BufferHandle {
         let description = self
             .description
             .as_mut()
@@ -80,10 +81,10 @@ impl RenderGraphBuilder {
         new_id
     }
 
-    pub fn create_image(&mut self, image_description: ImageResourceDescription) -> ImageHandle {
+    pub fn create_image(&mut self, image_description: ImageResource) -> ImageHandle {
         assert_ne!(
             image_description,
-            ImageResourceDescription::Swapchain,
+            ImageResource::Swapchain,
             "Cannot create image of ImageResourceDescription::Swapchain type"
         );
         let description = self
@@ -187,8 +188,8 @@ impl<'rg> RenderPassBuilder<'rg> {
 
 pub struct RenderGraphDescription {
     passes: Vec<RenderPassDescription>,
-    buffers: Vec<BufferResourceDescription>,
-    images2d: Vec<ImageResourceDescription>,
+    buffers: Vec<BufferResource>,
+    images2d: Vec<ImageResource>,
 }
 
 impl RenderGraphDescription {
@@ -198,7 +199,7 @@ impl RenderGraphDescription {
         Self {
             passes: Vec::new(),
             buffers: vec![],
-            images2d: vec![ImageResourceDescription::Swapchain],
+            images2d: vec![ImageResource::Swapchain],
         }
     }
 }
@@ -266,33 +267,3 @@ pub struct RenderPassCompiled {
 }
 
 type RenderFn = dyn FnOnce(&mut RenderInfo, &RenderPassCompiled);
-
-//Design for how the render_graph system might work
-pub fn build_render_graph_test() {
-    let mut rgb = RenderGraphBuilder::new();
-
-    let imgui_image = build_imgui_pass(&mut rgb);
-
-    let swapchain_image = rgb.get_swapchain_image_resource();
-    build_blit_pass(&mut rgb, imgui_image, swapchain_image);
-
-    let render_graph = rgb.build();
-}
-
-pub fn build_imgui_pass(rgb: &mut RenderGraphBuilder) -> ImageHandle {
-    let output_image = rgb.create_image(ImageResourceDescription::New()); //TODO: resource_description
-    let mut imgui_pass = rgb.create_pass("ImguiPass");
-
-    imgui_pass.raster(vec![output_image], None);
-    output_image
-}
-
-pub fn build_blit_pass(
-    rgb: &mut RenderGraphBuilder,
-    src_image: ImageHandle,
-    dst_image: ImageHandle,
-) {
-    let mut blit_pass = rgb.create_pass("SwapchainBlitPass");
-    blit_pass.read_image(src_image, ImageAccessType::BlitRead);
-    blit_pass.write_image(dst_image, ImageAccessType::BLitWrite);
-}

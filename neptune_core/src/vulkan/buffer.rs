@@ -3,6 +3,13 @@ use gpu_allocator::vulkan;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(PartialEq, Debug)]
+pub struct BufferDescription {
+    pub size: usize,
+    pub usage: vk::BufferUsageFlags,
+    pub memory_location: gpu_allocator::MemoryLocation,
+}
+
 pub struct Buffer {
     device: Rc<ash::Device>,
     device_allocator: Rc<RefCell<vulkan::Allocator>>,
