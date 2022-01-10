@@ -1,8 +1,9 @@
 use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
 use std::rc::Rc;
 
-use crate::render_graph::compiled_pass::RenderPassCompiled;
-use crate::render_graph::{BufferHandle, ImageHandle, RenderFn};
+use crate::render_graph::{
+    BufferHandle, ImageHandle, RenderApi, RenderFn, RenderGraphResources, RenderPassInfo,
+};
 use ash::vk;
 
 //TODO: RayTracing Accesses
@@ -123,44 +124,20 @@ impl<'s> Drop for RenderPassBuilder<'s> {
 }
 
 impl<'rg> RenderPassBuilder<'rg> {
-    pub fn read_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) -> usize {
+    pub fn buffer(&mut self, resource: BufferHandle, access: BufferAccessType) {
         let description = self.description.as_mut().unwrap();
-        let index = description.read_buffers.len();
-        description.read_buffers.push(BufferResourceAccess {
+        description.buffers_accesses.push(BufferResourceAccess {
             handle: resource,
             access_type: access,
         });
-        index
     }
 
-    pub fn write_buffer(&mut self, resource: BufferHandle, access: BufferAccessType) -> usize {
+    pub fn image(&mut self, resource: ImageHandle, access: ImageAccessType) {
         let description = self.description.as_mut().unwrap();
-        let index = description.write_buffers.len();
-        description.write_buffers.push(BufferResourceAccess {
+        description.images_dependencies.push(ImageResourceAccess {
             handle: resource,
             access_type: access,
         });
-        index
-    }
-
-    pub fn read_image(&mut self, resource: ImageHandle, access: ImageAccessType) -> usize {
-        let description = self.description.as_mut().unwrap();
-        let index = description.read_images.len();
-        description.read_images.push(ImageResourceAccess {
-            handle: resource,
-            access_type: access,
-        });
-        index
-    }
-
-    pub fn write_image(&mut self, resource: ImageHandle, access: ImageAccessType) -> usize {
-        let description = self.description.as_mut().unwrap();
-        let index = description.write_images.len();
-        description.write_images.push(ImageResourceAccess {
-            handle: resource,
-            access_type: access,
-        });
-        index
     }
 
     pub fn pipeline(&mut self, pipeline_description: PipelineDescription) -> usize {
@@ -184,7 +161,7 @@ impl<'rg> RenderPassBuilder<'rg> {
 
     pub fn render(
         mut self,
-        render: impl FnOnce(&mut CommandBuffer, &RenderPassCompiled) + 'static,
+        render: impl FnOnce(&mut RenderApi, &RenderPassInfo, &RenderGraphResources) + 'static,
     ) {
         let prev = self
             .description
@@ -242,10 +219,8 @@ pub struct RenderPassDescription {
 
     //TODO: remove separate read and write buffers, since AccessType specify if it is read or write
     //Resources Description
-    pub(crate) read_buffers: Vec<BufferResourceAccess>,
-    pub(crate) write_buffers: Vec<BufferResourceAccess>,
-    pub(crate) read_images: Vec<ImageResourceAccess>,
-    pub(crate) write_images: Vec<ImageResourceAccess>,
+    pub(crate) buffers_accesses: Vec<BufferResourceAccess>,
+    pub(crate) images_dependencies: Vec<ImageResourceAccess>,
 
     //Pipeline Description
     pub(crate) pipelines: Vec<PipelineDescription>,
@@ -261,19 +236,11 @@ impl RenderPassDescription {
     fn new(name: &str) -> Self {
         Self {
             name: String::from(name),
-            read_buffers: Vec::new(),
-            write_buffers: Vec::new(),
-            read_images: Vec::new(),
-            write_images: Vec::new(),
+            buffers_accesses: Vec::new(),
+            images_dependencies: Vec::new(),
             pipelines: Vec::new(),
             framebuffer: None,
             render_fn: None,
         }
     }
-}
-
-//Placeholder definitions, need to flesh out with vulkan primitives later
-pub struct CommandBuffer {
-    pub(crate) device: Rc<ash::Device>,
-    pub(crate) command_buffer: vk::CommandBuffer,
 }

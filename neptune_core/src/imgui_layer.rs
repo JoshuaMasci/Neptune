@@ -51,7 +51,7 @@ impl ImguiLayer {
         let texture_atlas_staging_buffer = Some({
             let mut buffer = Buffer::new(
                 &device,
-                &BufferDescription {
+                BufferDescription {
                     size: image_data.data.len(),
                     usage: vk::BufferUsageFlags::TRANSFER_SRC,
                     memory_location: MemoryLocation::CpuToGpu,
@@ -136,7 +136,7 @@ impl ImguiLayer {
         let frames = vec![Frame {
             vertex_buffer: Buffer::new(
                 &device,
-                &BufferDescription {
+                BufferDescription {
                     size: 16,
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     memory_location: MemoryLocation::CpuToGpu,
@@ -144,7 +144,7 @@ impl ImguiLayer {
             ),
             index_buffer: Buffer::new(
                 &device,
-                &BufferDescription {
+                BufferDescription {
                     size: 16,
                     usage: vk::BufferUsageFlags::INDEX_BUFFER,
                     memory_location: MemoryLocation::CpuToGpu,
@@ -222,7 +222,7 @@ impl ImguiLayer {
             unsafe {
                 self.device.base.cmd_copy_buffer_to_image(
                     command_buffer,
-                    staging_buffer.buffer,
+                    staging_buffer.handle,
                     self.texture_atlas.handle,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[vk::BufferImageCopy {
@@ -304,10 +304,10 @@ impl ImguiLayer {
         let frame = &mut self.frames[0];
 
         //Resize buffers
-        if frame.vertex_buffer.size < vertex_size as vk::DeviceSize {
+        if frame.vertex_buffer.description.size < vertex_size {
             frame.vertex_buffer = Buffer::new(
                 &self.device,
-                &BufferDescription {
+                BufferDescription {
                     size: vertex_size,
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                     memory_location: MemoryLocation::CpuToGpu,
@@ -315,10 +315,10 @@ impl ImguiLayer {
             );
         }
 
-        if frame.index_buffer.size < index_size as vk::DeviceSize {
+        if frame.index_buffer.description.size < index_size {
             frame.index_buffer = Buffer::new(
                 &self.device,
-                &BufferDescription {
+                BufferDescription {
                     size: index_size,
                     usage: vk::BufferUsageFlags::INDEX_BUFFER,
                     memory_location: MemoryLocation::CpuToGpu,
@@ -399,12 +399,12 @@ impl ImguiLayer {
             self.device.base.cmd_bind_vertex_buffers(
                 command_buffer,
                 0,
-                &[frame.vertex_buffer.buffer],
+                &[frame.vertex_buffer.handle],
                 &[0],
             );
             self.device.base.cmd_bind_index_buffer(
                 command_buffer,
-                frame.index_buffer.buffer,
+                frame.index_buffer.handle,
                 0,
                 vk::IndexType::UINT16,
             );

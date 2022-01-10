@@ -1,23 +1,23 @@
 use crate::render_backend::RenderDevice;
-use crate::render_graph::compiled_pass::{BufferResource, ImageResource, RenderPassCompiled};
 use crate::render_graph::render_graph::{
     BufferResourceDescription, ImageAccessType, ImageResourceDescription, RenderGraphDescription,
     RenderPassDescription,
 };
+use crate::render_graph::{RenderApi, RenderGraphResources, RenderPassInfo};
 use crate::vulkan::{Buffer, Image, ImageDescription};
 use ash::vk;
-use std::rc::Rc;
 
 pub struct Renderer {
-    buffer_resources: Vec<Rc<Buffer>>,
-    image_resources: Vec<Rc<Image>>,
+    resources: RenderGraphResources,
 }
 
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            buffer_resources: vec![],
-            image_resources: vec![],
+            resources: RenderGraphResources {
+                buffers: vec![],
+                images: vec![],
+            },
         }
     }
 
@@ -29,19 +29,13 @@ impl Renderer {
         swapchain_size: vk::Extent2D,
         mut render_graph: RenderGraphDescription,
     ) {
-        if self.buffer_resources.is_empty() {
-            calculate_sync_stuff(&render_graph);
-        }
-
-        let (buffers, images) = render_inline_temp(
+        self.resources = render_inline_temp(
             device,
             command_buffer,
             swapchain_image,
             swapchain_size,
             render_graph,
         );
-        self.buffer_resources = buffers;
-        self.image_resources = images;
     }
 }
 
@@ -58,31 +52,43 @@ pub fn render_inline_temp(
     swapchain_image: vk::Image,
     swapchain_size: vk::Extent2D,
     mut render_graph: RenderGraphDescription,
-) -> (Vec<Rc<Buffer>>, Vec<Rc<Image>>) {
+) -> RenderGraphResources {
     //Compile Render Graph
-    let (buffers, images) =
-        create_resources(device, &render_graph, swapchain_image, swapchain_size);
+    let resources = create_resources(device, &render_graph, swapchain_image, swapchain_size);
 
-    let mut compiled_passes: Vec<RenderPassCompiled> = render_graph
-        .passes
-        .iter_mut()
-        .map(|render_pass| compile_render_pass(render_pass, &buffers, &images))
-        .collect();
+    // let mut compiled_passes: Vec<RenderPassCompiled> = render_graph
+    //     .passes
+    //     .iter_mut()
+    //     .map(|render_pass| compile_render_pass(render_pass, &buffers, &images))
+    //     .collect();
+    //
+    // let mut command_buffer_struct = crate::render_graph::CommandBuffer {
+    //     device: device.base.clone(),
+    //     command_buffer,
+    // };
+    //
 
-    let mut command_buffer_struct = crate::render_graph::CommandBuffer {
-        device: device.base.clone(),
-        command_buffer,
+    let mut render_api = RenderApi {
+        device: device.clone(),
+        command_buffer: command_buffer.clone(),
     };
 
     //Execute Passes
-    for pass in compiled_passes.iter_mut() {
+    for pass in render_graph.passes.iter_mut() {
         block_all(device, command_buffer);
-        transition_images(device, command_buffer, pass);
+        transition_images(device, command_buffer, pass, &resources);
+
+        let render_pass_info = RenderPassInfo {
+            name: pass.name.clone(),
+            pipelines: vec![],
+            frame_buffer_size: None,
+        };
+
         if let Some(render_fn) = pass.render_fn.take() {
-            render_fn(&mut command_buffer_struct, pass);
+            render_fn(&mut render_api, &render_pass_info, &resources);
         }
     }
-    (buffers, images)
+    resources
 }
 
 fn calculate_sync_stuff(render_graph: &RenderGraphDescription) {
@@ -90,15 +96,9 @@ fn calculate_sync_stuff(render_graph: &RenderGraphDescription) {
 
     for pass in render_graph.passes.iter() {
         println!("Pass: {} -----------", pass.name);
-        for image_access in pass.read_images.iter() {
+        for image_access in pass.images_dependencies.iter() {
             println!(
-                "Read: {} {:?}",
-                image_access.handle, image_access.access_type
-            );
-        }
-        for image_access in pass.write_images.iter() {
-            println!(
-                "Write: {} {:?}",
+                "Use: {} {:?}",
                 image_access.handle, image_access.access_type
             );
         }
@@ -114,126 +114,101 @@ fn create_resources(
     render_graph: &RenderGraphDescription,
     swapchain_image: vk::Image,
     swapchain_size: vk::Extent2D,
-) -> (Vec<Rc<Buffer>>, Vec<Rc<Image>>) {
-    let buffers: Vec<Rc<Buffer>> = render_graph
-        .buffers
-        .iter()
-        .map(|buffer_resource| match buffer_resource {
-            BufferResourceDescription::New(buffer_description) => {
-                Rc::new(Buffer::new(device, buffer_description))
-            }
-            BufferResourceDescription::Import(buffer) => buffer.clone(),
-        })
-        .collect();
-
-    let images: Vec<Rc<Image>> = render_graph
-        .images
-        .iter()
-        .map(|image_resource| match image_resource {
-            //TODO: this better
-            ImageResourceDescription::Swapchain => Rc::new(Image::from_existing(
-                ImageDescription {
-                    format: vk::Format::UNDEFINED,
-                    size: [swapchain_size.width, swapchain_size.height],
-                    usage: Default::default(),
-                    memory_location: gpu_allocator::MemoryLocation::Unknown,
-                },
-                swapchain_image,
-            )),
-            ImageResourceDescription::New(image_description) => {
-                Rc::new(Image::new(device, image_description.clone()))
-            }
-            ImageResourceDescription::Import(image) => image.clone(),
-        })
-        .collect();
-
-    (buffers, images)
-}
-
-fn compile_render_pass(
-    render_pass: &mut RenderPassDescription,
-    buffer_resources: &Vec<Rc<Buffer>>,
-    image_resources: &Vec<Rc<Image>>,
-) -> RenderPassCompiled {
-    RenderPassCompiled {
-        name: render_pass.name.clone(),
-        read_buffers: render_pass
-            .read_buffers
+) -> RenderGraphResources {
+    RenderGraphResources {
+        buffers: render_graph
+            .buffers
             .iter()
-            .map(|buffer_access| BufferResource {
-                buffer: buffer_resources[buffer_access.handle as usize].clone(),
-                access_type: buffer_access.access_type,
+            .map(|buffer_resource| match buffer_resource {
+                BufferResourceDescription::New(buffer_description) => {
+                    Buffer::new(device, buffer_description.clone())
+                }
+                BufferResourceDescription::Import(buffer) => buffer.clone_no_drop(),
             })
             .collect(),
-        write_buffers: render_pass
-            .write_buffers
+        images: render_graph
+            .images
             .iter()
-            .map(|buffer_access| BufferResource {
-                buffer: buffer_resources[buffer_access.handle as usize].clone(),
-                access_type: buffer_access.access_type,
+            .map(|image_resource| match image_resource {
+                ImageResourceDescription::Swapchain => Image::from_existing(
+                    ImageDescription {
+                        format: vk::Format::UNDEFINED,
+                        size: [swapchain_size.width, swapchain_size.height],
+                        usage: Default::default(),
+                        memory_location: gpu_allocator::MemoryLocation::Unknown,
+                    },
+                    swapchain_image,
+                ),
+                ImageResourceDescription::New(image_description) => {
+                    Image::new(device, image_description.clone())
+                }
+                ImageResourceDescription::Import(image) => image.clone_no_drop(),
             })
             .collect(),
-        read_images: render_pass
-            .read_images
-            .iter()
-            .map(|image_access| ImageResource {
-                image: image_resources[image_access.handle as usize].clone(),
-                access_type: image_access.access_type,
-            })
-            .collect(),
-        write_images: render_pass
-            .write_images
-            .iter()
-            .map(|image_access| ImageResource {
-                image: image_resources[image_access.handle as usize].clone(),
-                access_type: image_access.access_type,
-            })
-            .collect(),
-        pipelines: vec![],
-        framebuffer: None,
-        render_fn: render_pass.render_fn.take(),
     }
 }
+
+// fn compile_render_pass(
+//     render_pass: &mut RenderPassDescription,
+//     buffer_resources: &Vec<Rc<Buffer>>,
+//     image_resources: &Vec<Rc<Image>>,
+// ) -> RenderPassCompiled {
+//     RenderPassCompiled {
+//         name: render_pass.name.clone(),
+//         read_buffers: render_pass
+//             .read_buffers
+//             .iter()
+//             .map(|buffer_access| BufferResource {
+//                 buffer: buffer_resources[buffer_access.handle as usize].clone(),
+//                 access_type: buffer_access.access_type,
+//             })
+//             .collect(),
+//         write_buffers: render_pass
+//             .write_buffers
+//             .iter()
+//             .map(|buffer_access| BufferResource {
+//                 buffer: buffer_resources[buffer_access.handle as usize].clone(),
+//                 access_type: buffer_access.access_type,
+//             })
+//             .collect(),
+//         read_images: render_pass
+//             .read_images
+//             .iter()
+//             .map(|image_access| ImageResource {
+//                 image: image_resources[image_access.handle as usize].clone(),
+//                 access_type: image_access.access_type,
+//             })
+//             .collect(),
+//         write_images: render_pass
+//             .write_images
+//             .iter()
+//             .map(|image_access| ImageResource {
+//                 image: image_resources[image_access.handle as usize].clone(),
+//                 access_type: image_access.access_type,
+//             })
+//             .collect(),
+//         pipelines: vec![],
+//         framebuffer: None,
+//         render_fn: render_pass.render_fn.take(),
+//     }
+// }
 
 //TODO: track previous layout and only transition when needed
 fn transition_images(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
-    render_pass: &RenderPassCompiled,
+    render_pass: &RenderPassDescription,
+    resources: &RenderGraphResources,
 ) {
     let mut image_barriers: Vec<vk::ImageMemoryBarrier2KHR> = Vec::new();
 
-    for read_image in render_pass.read_images.iter() {
+    for image in render_pass.images_dependencies.iter() {
+        let image_handle = resources.images[image.handle as usize].handle;
         image_barriers.push(
             vk::ImageMemoryBarrier2KHR::builder()
-                .image(read_image.image.handle)
+                .image(image_handle)
                 .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(temp_get_layout(read_image.access_type))
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .build(),
-                )
-                .build(),
-        );
-    }
-
-    for write_image in render_pass.write_images.iter() {
-        image_barriers.push(
-            vk::ImageMemoryBarrier2KHR::builder()
-                .image(write_image.image.handle)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(temp_get_layout(write_image.access_type))
+                .new_layout(temp_get_layout(image.access_type))
                 .src_access_mask(vk::AccessFlags2KHR::NONE)
                 .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)

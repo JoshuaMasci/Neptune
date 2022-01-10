@@ -1,20 +1,37 @@
-mod compiled_pass;
 pub mod render_graph;
 mod renderer;
 
-use crate::render_graph::compiled_pass::RenderPassCompiled;
-use crate::render_graph::render_graph::{CommandBuffer, ImageAccessType, RenderGraphDescription};
+use crate::render_backend::RenderDevice;
+use crate::render_graph::render_graph::{ImageAccessType, RenderGraphDescription};
 pub use crate::render_graph::renderer::Renderer;
+use crate::vulkan::{Buffer, Image};
+
+use ash::vk;
 
 pub type BufferHandle = u32;
 pub type ImageHandle = u32;
 
-pub type RenderFn = dyn FnOnce(&mut CommandBuffer, &RenderPassCompiled);
+pub type RenderFn = dyn FnOnce(&mut RenderApi, &RenderPassInfo, &RenderGraphResources);
+
+pub struct RenderApi {
+    pub device: RenderDevice,
+    pub command_buffer: vk::CommandBuffer,
+    //pub transfer_queue: vk::CommandBuffer,
+}
+
+pub struct RenderPassInfo {
+    pub name: String,
+    pub pipelines: Vec<vk::Pipeline>,
+    pub frame_buffer_size: Option<vk::Extent2D>,
+}
+
+pub struct RenderGraphResources {
+    buffers: Vec<Buffer>,
+    images: Vec<Image>,
+}
 
 //Design for how the render_graph system might work
 use crate::vulkan::{BufferDescription, ImageDescription};
-use ash::vk;
-
 pub fn build_render_graph_test() -> RenderGraphDescription {
     let mut rgb = render_graph::RenderGraphBuilder::new();
 
@@ -73,12 +90,12 @@ pub fn build_color_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHand
     ));
 
     let mut color_pass = rgb.create_pass("ImguiPass");
-    let index = color_pass.write_image(output_image, ImageAccessType::TransferWrite);
+    color_pass.image(output_image, ImageAccessType::TransferWrite);
 
-    color_pass.render(move |command_buffer, compiled_pass| unsafe {
-        command_buffer.device.cmd_clear_color_image(
-            command_buffer.command_buffer,
-            compiled_pass.write_images[index].image.handle,
+    color_pass.render(move |render_api, pass_info, resources| unsafe {
+        render_api.device.base.cmd_clear_color_image(
+            render_api.command_buffer,
+            resources.images[output_image as usize].handle,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             &vk::ClearColorValue {
                 float32: [0.5, 0.75, 1.0, 1.0],
@@ -101,10 +118,9 @@ pub fn build_blit_pass(
     dst_image: ImageHandle,
 ) {
     let mut blit_pass = rgb.create_pass("SwapchainBlitPass");
-    let src_index = blit_pass.read_image(src_image, render_graph::ImageAccessType::TransferRead);
-    let dst_index = blit_pass.write_image(dst_image, render_graph::ImageAccessType::TransferWrite);
-
-    blit_pass.render(move |command_buffer, compiled_pass| {
+    blit_pass.image(src_image, render_graph::ImageAccessType::TransferRead);
+    blit_pass.image(dst_image, render_graph::ImageAccessType::TransferWrite);
+    blit_pass.render(move |render_api, pass_info, resources| {
         let image_layers = vk::ImageSubresourceLayers::builder()
             .base_array_layer(0)
             .layer_count(1)
@@ -112,12 +128,12 @@ pub fn build_blit_pass(
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .build();
 
-        let src_image = &compiled_pass.read_images[src_index].image;
-        let dst_image = &compiled_pass.write_images[dst_index].image;
+        let src_image = &resources.images[src_image as usize];
+        let dst_image = &resources.images[dst_image as usize];
 
         unsafe {
-            command_buffer.device.cmd_blit_image(
-                command_buffer.command_buffer,
+            render_api.device.base.cmd_blit_image(
+                render_api.command_buffer,
                 src_image.handle,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 dst_image.handle,
