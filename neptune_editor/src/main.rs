@@ -40,14 +40,6 @@ fn main() {
             Event::MainEventsCleared => {
                 let render_graph = neptune_core::render_graph::build_render_graph_test();
                 render_backend.render_graph(render_graph);
-
-                // if let Some(command_buffer) = render_backend.begin_frame() {
-                //     imgui_layer.render_frame(&window, command_buffer);
-                //
-                //     render_backend.end_frame_blit(
-                //         &imgui_layer.framebuffer_set.framebuffers[0].color_attachments[0],
-                //     );
-                // }
             }
             Event::RedrawRequested(_) => {}
             event => {

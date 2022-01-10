@@ -1,5 +1,4 @@
 use crate::render_graph::render_graph::RenderGraphDescription;
-use crate::vulkan::Image;
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -262,7 +261,7 @@ impl RenderBackend {
         }
     }
 
-    pub fn begin_frame(&mut self) -> Option<vk::CommandBuffer> {
+    fn begin_frame(&mut self) -> Option<vk::CommandBuffer> {
         unsafe {
             self.device
                 .base
@@ -302,151 +301,11 @@ impl RenderBackend {
         Some(self.command_buffer)
     }
 
-    pub fn end_frame(&mut self, swapchain_image_layout: vk::ImageLayout) {
+    fn end_frame(&mut self, swapchain_image_layout: vk::ImageLayout) {
         unsafe {
             let image_barriers2 = &[vk::ImageMemoryBarrier2KHR::builder()
                 .image(self.swapchain.images[self.swapchain_image_index as usize])
                 .old_layout(swapchain_image_layout)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .build(),
-                )
-                .build()];
-
-            self.device.synchronization2.cmd_pipeline_barrier2(
-                self.command_buffer,
-                &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers2),
-            );
-
-            self.device
-                .base
-                .end_command_buffer(self.command_buffer)
-                .expect("Failed to end command buffer recording");
-
-            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.image_ready_semaphore)
-                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-                .device_index(0)
-                .build()];
-
-            let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
-                .command_buffer(self.command_buffer)
-                .device_mask(0)
-                .build()];
-
-            let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.present_semaphore)
-                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-                .device_index(0)
-                .build()];
-
-            let submit_info = vk::SubmitInfo2KHR::builder()
-                .wait_semaphore_infos(wait_semaphore_infos)
-                .command_buffer_infos(command_buffer_infos)
-                .signal_semaphore_infos(signal_semaphore_infos)
-                .build();
-            self.device
-                .synchronization2
-                .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
-                .expect("Failed to queue command buffer");
-
-            //Present Image
-            let wait_semaphores = &[self.present_semaphore];
-            let swapchains = &[self.swapchain.handle];
-            let image_indices = &[self.swapchain_image_index];
-            let present_info = vk::PresentInfoKHR::builder()
-                .wait_semaphores(wait_semaphores)
-                .swapchains(swapchains)
-                .image_indices(image_indices);
-
-            let _ = self
-                .device
-                .swapchain
-                .queue_present(self.graphics_queue, &present_info);
-        }
-    }
-
-    pub fn end_frame_blit(&mut self, src_image: &Image) {
-        unsafe {
-            let image_range = vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_array_layer(0)
-                .layer_count(1)
-                .base_mip_level(0)
-                .level_count(1)
-                .build();
-
-            let image_barriers1 = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.swapchain.images[self.swapchain_image_index as usize])
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .subresource_range(image_range)
-                .build()];
-
-            self.device.synchronization2.cmd_pipeline_barrier2(
-                self.command_buffer,
-                &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers1),
-            );
-
-            let image_layers = vk::ImageSubresourceLayers::builder()
-                .base_array_layer(0)
-                .layer_count(1)
-                .mip_level(0)
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .build();
-
-            let swapchain_size = self.swapchain.size;
-
-            self.device.base.cmd_blit_image(
-                self.command_buffer,
-                src_image.handle,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                self.swapchain.images[self.swapchain_image_index as usize],
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[vk::ImageBlit::builder()
-                    .src_offsets([
-                        vk::Offset3D { x: 0, y: 0, z: 0 },
-                        vk::Offset3D {
-                            x: src_image.description.size[0] as i32,
-                            y: src_image.description.size[1] as i32,
-                            z: 1,
-                        },
-                    ])
-                    .dst_offsets([
-                        vk::Offset3D { x: 0, y: 0, z: 0 },
-                        vk::Offset3D {
-                            x: swapchain_size.width as i32,
-                            y: swapchain_size.height as i32,
-                            z: 1,
-                        },
-                    ])
-                    .src_subresource(image_layers)
-                    .dst_subresource(image_layers)
-                    .build()],
-                vk::Filter::NEAREST,
-            );
-
-            let image_barriers2 = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.swapchain.images[self.swapchain_image_index as usize])
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .src_access_mask(vk::AccessFlags2KHR::NONE)
                 .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
@@ -528,116 +387,6 @@ impl RenderBackend {
                 render_graph,
             );
             self.end_frame(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-        }
-    }
-
-    pub fn draw_black(&mut self) {
-        unsafe {
-            self.device
-                .base
-                .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
-                .expect("Failed to wait for fence")
-        };
-
-        let image_index = self
-            .swapchain
-            .acquire_next_image(self.image_ready_semaphore);
-
-        if image_index.is_none() {
-            println!("No Image available, returning");
-            return;
-        }
-        let image_index = image_index.unwrap();
-
-        unsafe {
-            self.device
-                .base
-                .reset_fences(&[self.frame_done_fence])
-                .expect("Failed to reset fence")
-        };
-
-        unsafe {
-            self.device
-                .base
-                .begin_command_buffer(
-                    self.command_buffer,
-                    &vk::CommandBufferBeginInfo::builder().build(),
-                )
-                .expect("Failed to begin command buffer recording");
-
-            let image_barriers = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.swapchain.images[image_index as usize])
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .build(),
-                )
-                .build()];
-
-            let dependency = vk::DependencyInfoKHR::builder()
-                .image_memory_barriers(image_barriers)
-                .build();
-            self.device
-                .synchronization2
-                .cmd_pipeline_barrier2(self.command_buffer, &dependency);
-
-            self.device
-                .base
-                .end_command_buffer(self.command_buffer)
-                .expect("Failed to end command buffer recording");
-
-            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.image_ready_semaphore)
-                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-                .device_index(0)
-                .build()];
-
-            let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
-                .command_buffer(self.command_buffer)
-                .device_mask(0)
-                .build()];
-
-            let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.present_semaphore)
-                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-                .device_index(0)
-                .build()];
-
-            let submit_info = vk::SubmitInfo2KHR::builder()
-                .wait_semaphore_infos(wait_semaphore_infos)
-                .command_buffer_infos(command_buffer_infos)
-                .signal_semaphore_infos(signal_semaphore_infos)
-                .build();
-            self.device
-                .synchronization2
-                .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
-                .expect("Failed to queue command buffer");
-
-            //Present Image
-            let wait_semaphores = &[self.present_semaphore];
-            let swapchains = &[self.swapchain.handle];
-            let image_indices = &[image_index];
-            let present_info = vk::PresentInfoKHR::builder()
-                .wait_semaphores(wait_semaphores)
-                .swapchains(swapchains)
-                .image_indices(image_indices);
-
-            let _ = self
-                .device
-                .swapchain
-                .queue_present(self.graphics_queue, &present_info);
         }
     }
 }

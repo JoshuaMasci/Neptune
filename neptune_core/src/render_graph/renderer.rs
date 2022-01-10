@@ -29,6 +29,10 @@ impl Renderer {
         swapchain_size: vk::Extent2D,
         mut render_graph: RenderGraphDescription,
     ) {
+        if self.buffer_resources.is_empty() {
+            calculate_sync_stuff(&render_graph);
+        }
+
         let (buffers, images) = render_inline_temp(
             device,
             command_buffer,
@@ -41,6 +45,13 @@ impl Renderer {
     }
 }
 
+//Rendering A Render Graph
+//Step 1:
+//Step 2:
+//Step 3: Pipeline barriers
+//Step 4: Start RenderPass if needed
+//Step 5: Call pass render function
+
 pub fn render_inline_temp(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
@@ -51,6 +62,7 @@ pub fn render_inline_temp(
     //Compile Render Graph
     let (buffers, images) =
         create_resources(device, &render_graph, swapchain_image, swapchain_size);
+
     let mut compiled_passes: Vec<RenderPassCompiled> = render_graph
         .passes
         .iter_mut()
@@ -71,6 +83,29 @@ pub fn render_inline_temp(
         }
     }
     (buffers, images)
+}
+
+fn calculate_sync_stuff(render_graph: &RenderGraphDescription) {
+    println!("Graph Begin-----------");
+
+    for pass in render_graph.passes.iter() {
+        println!("Pass: {} -----------", pass.name);
+        for image_access in pass.read_images.iter() {
+            println!(
+                "Read: {} {:?}",
+                image_access.handle, image_access.access_type
+            );
+        }
+        for image_access in pass.write_images.iter() {
+            println!(
+                "Write: {} {:?}",
+                image_access.handle, image_access.access_type
+            );
+        }
+        println!("--------------\n")
+    }
+
+    println!("Graph End-----------");
 }
 
 //TODO: reuse resources
@@ -230,8 +265,6 @@ fn temp_get_layout(access_type: ImageAccessType) -> vk::ImageLayout {
     match access_type {
         ImageAccessType::TransferRead => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         ImageAccessType::TransferWrite => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        ImageAccessType::BlitRead => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        ImageAccessType::BLitWrite => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         ImageAccessType::ColorAttachmentRead => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         ImageAccessType::ColorAttachmentWrite => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         ImageAccessType::DepthStencilAttachmentRead => {

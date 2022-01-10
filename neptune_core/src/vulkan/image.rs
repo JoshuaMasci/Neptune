@@ -1,7 +1,6 @@
 use crate::render_backend::RenderDevice;
 use ash::vk;
 use gpu_allocator::vulkan;
-use std::cell::RefCell;
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub struct ImageDescription {
@@ -116,6 +115,16 @@ impl Image {
                 )
             }
             .expect("Failed to create image view");
+        }
+    }
+
+    pub(crate) fn clone_no_drop(&self) -> Self {
+        Self {
+            device: None,
+            description: self.description,
+            memory: self.memory.clone(),
+            handle: self.handle,
+            view: self.view,
         }
     }
 }

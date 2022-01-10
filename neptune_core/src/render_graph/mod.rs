@@ -101,8 +101,8 @@ pub fn build_blit_pass(
     dst_image: ImageHandle,
 ) {
     let mut blit_pass = rgb.create_pass("SwapchainBlitPass");
-    let src_index = blit_pass.read_image(src_image, render_graph::ImageAccessType::BlitRead);
-    let dst_index = blit_pass.write_image(dst_image, render_graph::ImageAccessType::BLitWrite);
+    let src_index = blit_pass.read_image(src_image, render_graph::ImageAccessType::TransferRead);
+    let dst_index = blit_pass.write_image(dst_image, render_graph::ImageAccessType::TransferWrite);
 
     blit_pass.render(move |command_buffer, compiled_pass| {
         let image_layers = vk::ImageSubresourceLayers::builder()

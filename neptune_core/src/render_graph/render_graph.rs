@@ -32,10 +32,6 @@ pub enum ImageAccessType {
     TransferRead,
     TransferWrite,
 
-    //TODO: not sure if these needs to exist
-    BlitRead,
-    BLitWrite,
-
     ColorAttachmentRead,
     ColorAttachmentWrite,
 
@@ -244,6 +240,7 @@ pub struct FramebufferDescription {
 pub struct RenderPassDescription {
     pub(crate) name: String,
 
+    //TODO: remove separate read and write buffers, since AccessType specify if it is read or write
     //Resources Description
     pub(crate) read_buffers: Vec<BufferResourceAccess>,
     pub(crate) write_buffers: Vec<BufferResourceAccess>,
