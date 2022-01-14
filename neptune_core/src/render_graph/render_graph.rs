@@ -10,7 +10,7 @@ use ash::vk;
 //TODO: make flags?
 #[derive(Copy, Clone, Debug)]
 pub enum BufferAccessType {
-    Nothing,
+    None,
 
     IndexBuffer,
     VertexBuffer,
@@ -18,17 +18,14 @@ pub enum BufferAccessType {
     TransferRead,
     TransferWrite,
 
-    ShaderVertexRead,
-    ShaderFragmentRead,
-
-    ShaderComputeRead,
-    ShaderComputeWrite,
+    ShaderRead,
+    ShaderWrite,
 }
 
 //TODO: RayTracing Accesses
 #[derive(Copy, Clone, Debug)]
 pub enum ImageAccessType {
-    Nothing,
+    None,
 
     TransferRead,
     TransferWrite,
@@ -39,8 +36,9 @@ pub enum ImageAccessType {
     DepthStencilAttachmentRead,
     DepthStencilAttachmentWrite,
 
-    ShaderComputeRead,
-    ShaderComputeWrite,
+    ShaderSampledRead,
+    ShaderStorageRead,
+    ShaderStorageWrite,
 }
 
 pub enum BufferResourceDescription {
@@ -126,7 +124,7 @@ impl<'s> Drop for RenderPassBuilder<'s> {
 impl<'rg> RenderPassBuilder<'rg> {
     pub fn buffer(&mut self, resource: BufferHandle, access: BufferAccessType) {
         let description = self.description.as_mut().unwrap();
-        description.buffers_accesses.push(BufferResourceAccess {
+        description.buffers_dependencies.push(BufferResourceAccess {
             handle: resource,
             access_type: access,
         });
@@ -217,9 +215,8 @@ pub struct FramebufferDescription {
 pub struct RenderPassDescription {
     pub(crate) name: String,
 
-    //TODO: remove separate read and write buffers, since AccessType specify if it is read or write
     //Resources Description
-    pub(crate) buffers_accesses: Vec<BufferResourceAccess>,
+    pub(crate) buffers_dependencies: Vec<BufferResourceAccess>,
     pub(crate) images_dependencies: Vec<ImageResourceAccess>,
 
     //Pipeline Description
@@ -236,7 +233,7 @@ impl RenderPassDescription {
     fn new(name: &str) -> Self {
         Self {
             name: String::from(name),
-            buffers_accesses: Vec::new(),
+            buffers_dependencies: Vec::new(),
             images_dependencies: Vec::new(),
             pipelines: Vec::new(),
             framebuffer: None,

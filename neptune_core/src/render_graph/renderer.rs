@@ -1,7 +1,7 @@
 use crate::render_backend::RenderDevice;
 use crate::render_graph::render_graph::{
-    BufferResourceDescription, ImageAccessType, ImageResourceDescription, RenderGraphDescription,
-    RenderPassDescription,
+    BufferAccessType, BufferResourceDescription, ImageAccessType, ImageResourceDescription,
+    RenderGraphDescription, RenderPassDescription,
 };
 use crate::render_graph::{RenderApi, RenderGraphResources, RenderPassInfo};
 use crate::vulkan::{Buffer, Image, ImageDescription};
@@ -39,13 +39,6 @@ impl Renderer {
     }
 }
 
-//Rendering A Render Graph
-//Step 1:
-//Step 2:
-//Step 3: Pipeline barriers
-//Step 4: Start RenderPass if needed
-//Step 5: Call pass render function
-
 pub fn render_inline_temp(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
@@ -53,20 +46,17 @@ pub fn render_inline_temp(
     swapchain_size: vk::Extent2D,
     mut render_graph: RenderGraphDescription,
 ) -> RenderGraphResources {
-    //Compile Render Graph
     let resources = create_resources(device, &render_graph, swapchain_image, swapchain_size);
-
-    // let mut compiled_passes: Vec<RenderPassCompiled> = render_graph
-    //     .passes
-    //     .iter_mut()
-    //     .map(|render_pass| compile_render_pass(render_pass, &buffers, &images))
-    //     .collect();
-    //
-    // let mut command_buffer_struct = crate::render_graph::CommandBuffer {
-    //     device: device.base.clone(),
-    //     command_buffer,
-    // };
-    //
+    let mut previous_buffer_state: Vec<BufferAccessType> = resources
+        .buffers
+        .iter()
+        .map(|_| BufferAccessType::None)
+        .collect();
+    let mut previous_image_state: Vec<ImageAccessType> = resources
+        .images
+        .iter()
+        .map(|_| ImageAccessType::None)
+        .collect();
 
     let mut render_api = RenderApi {
         device: device.clone(),
@@ -75,8 +65,21 @@ pub fn render_inline_temp(
 
     //Execute Passes
     for pass in render_graph.passes.iter_mut() {
-        block_all(device, command_buffer);
-        transition_images(device, command_buffer, pass, &resources);
+        buffer_barriers(
+            device,
+            command_buffer,
+            pass,
+            &resources,
+            &mut previous_buffer_state,
+        );
+
+        image_barriers(
+            device,
+            command_buffer,
+            pass,
+            &resources,
+            &mut previous_image_state,
+        );
 
         let render_pass_info = RenderPassInfo {
             name: pass.name.clone(),
@@ -89,23 +92,6 @@ pub fn render_inline_temp(
         }
     }
     resources
-}
-
-fn calculate_sync_stuff(render_graph: &RenderGraphDescription) {
-    println!("Graph Begin-----------");
-
-    for pass in render_graph.passes.iter() {
-        println!("Pass: {} -----------", pass.name);
-        for image_access in pass.images_dependencies.iter() {
-            println!(
-                "Use: {} {:?}",
-                image_access.handle, image_access.access_type
-            );
-        }
-        println!("--------------\n")
-    }
-
-    println!("Graph End-----------");
 }
 
 //TODO: reuse resources
@@ -148,72 +134,162 @@ fn create_resources(
     }
 }
 
-// fn compile_render_pass(
-//     render_pass: &mut RenderPassDescription,
-//     buffer_resources: &Vec<Rc<Buffer>>,
-//     image_resources: &Vec<Rc<Image>>,
-// ) -> RenderPassCompiled {
-//     RenderPassCompiled {
-//         name: render_pass.name.clone(),
-//         read_buffers: render_pass
-//             .read_buffers
-//             .iter()
-//             .map(|buffer_access| BufferResource {
-//                 buffer: buffer_resources[buffer_access.handle as usize].clone(),
-//                 access_type: buffer_access.access_type,
-//             })
-//             .collect(),
-//         write_buffers: render_pass
-//             .write_buffers
-//             .iter()
-//             .map(|buffer_access| BufferResource {
-//                 buffer: buffer_resources[buffer_access.handle as usize].clone(),
-//                 access_type: buffer_access.access_type,
-//             })
-//             .collect(),
-//         read_images: render_pass
-//             .read_images
-//             .iter()
-//             .map(|image_access| ImageResource {
-//                 image: image_resources[image_access.handle as usize].clone(),
-//                 access_type: image_access.access_type,
-//             })
-//             .collect(),
-//         write_images: render_pass
-//             .write_images
-//             .iter()
-//             .map(|image_access| ImageResource {
-//                 image: image_resources[image_access.handle as usize].clone(),
-//                 access_type: image_access.access_type,
-//             })
-//             .collect(),
-//         pipelines: vec![],
-//         framebuffer: None,
-//         render_fn: render_pass.render_fn.take(),
-//     }
-// }
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct BarrierFlags {
+    stage: vk::PipelineStageFlags2KHR,
+    access: vk::AccessFlags2KHR,
+}
 
-//TODO: track previous layout and only transition when needed
-fn transition_images(
+fn get_buffer_barrier_flags(buffer_access: BufferAccessType) -> BarrierFlags {
+    match buffer_access {
+        BufferAccessType::None => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::NONE,
+            access: vk::AccessFlags2KHR::NONE,
+        },
+        BufferAccessType::IndexBuffer => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::INDEX_INPUT,
+            access: vk::AccessFlags2KHR::MEMORY_READ,
+        },
+        BufferAccessType::VertexBuffer => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::VERTEX_INPUT,
+            access: vk::AccessFlags2KHR::MEMORY_READ,
+        },
+        BufferAccessType::TransferRead => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::TRANSFER,
+            access: vk::AccessFlags2KHR::TRANSFER_READ,
+        },
+        BufferAccessType::TransferWrite => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::TRANSFER,
+            access: vk::AccessFlags2KHR::TRANSFER_WRITE,
+        },
+        BufferAccessType::ShaderRead => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+            access: vk::AccessFlags2KHR::SHADER_STORAGE_READ,
+        },
+        BufferAccessType::ShaderWrite => BarrierFlags {
+            stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+            access: vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+        },
+    }
+}
+
+fn get_image_barrier_flags(image_access: ImageAccessType) -> (vk::ImageLayout, BarrierFlags) {
+    match image_access {
+        ImageAccessType::None => (
+            vk::ImageLayout::UNDEFINED,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::NONE,
+                access: vk::AccessFlags2KHR::NONE,
+            },
+        ),
+        ImageAccessType::TransferRead => (
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::TRANSFER,
+                access: vk::AccessFlags2KHR::TRANSFER_READ,
+            },
+        ),
+        ImageAccessType::TransferWrite => (
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::TRANSFER,
+                access: vk::AccessFlags2KHR::TRANSFER_WRITE,
+            },
+        ),
+        ImageAccessType::ShaderSampledRead => (
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+                access: vk::AccessFlags2KHR::SHADER_SAMPLED_READ,
+            },
+        ),
+        ImageAccessType::ShaderStorageRead => (
+            vk::ImageLayout::GENERAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+                access: vk::AccessFlags2KHR::SHADER_STORAGE_READ,
+            },
+        ),
+        ImageAccessType::ShaderStorageWrite => (
+            vk::ImageLayout::GENERAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+                access: vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+            },
+        ),
+        ImageAccessType::ColorAttachmentRead
+        | ImageAccessType::ColorAttachmentWrite
+        | ImageAccessType::DepthStencilAttachmentRead
+        | ImageAccessType::DepthStencilAttachmentWrite => {
+            panic!("Attachment Barrier/Transitions should be handled by the render-pass")
+        }
+    }
+}
+
+/// Waits on the last usage of the buffers before the next pass executes.
+/// This will be suboptimal as it will not allow parallel reads of a buffer.
+/// TODO: allow parallel reads!
+fn buffer_barriers(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
     render_pass: &RenderPassDescription,
     resources: &RenderGraphResources,
+    buffer_state: &mut Vec<BufferAccessType>,
 ) {
-    let mut image_barriers: Vec<vk::ImageMemoryBarrier2KHR> = Vec::new();
-
-    for image in render_pass.images_dependencies.iter() {
-        let image_handle = resources.images[image.handle as usize].handle;
-        image_barriers.push(
-            vk::ImageMemoryBarrier2KHR::builder()
-                .image(image_handle)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(temp_get_layout(image.access_type))
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+    let buffer_barriers: Vec<vk::BufferMemoryBarrier2KHR> = render_pass
+        .buffers_dependencies
+        .iter()
+        .map(|buffer_access| {
+            let src_flags = get_buffer_barrier_flags(buffer_state[buffer_access.handle as usize]);
+            let dst_flags = get_buffer_barrier_flags(buffer_access.access_type);
+            buffer_state[buffer_access.handle as usize] = buffer_access.access_type;
+            vk::BufferMemoryBarrier2KHR::builder()
+                .buffer(resources.buffers[buffer_access.handle as usize].handle)
+                .size(vk::WHOLE_SIZE)
+                .src_stage_mask(src_flags.stage)
+                .src_access_mask(src_flags.access)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                .dst_stage_mask(dst_flags.stage)
+                .dst_access_mask(dst_flags.access)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .build()
+        })
+        .collect();
+
+    unsafe {
+        device.synchronization2.cmd_pipeline_barrier2(
+            command_buffer,
+            &vk::DependencyInfoKHR::builder().buffer_memory_barriers(&buffer_barriers),
+        );
+    }
+}
+
+/// Waits on the last usage of the images before the next pass executes.
+/// This will be suboptimal as it will not allow parallel reads of a image.
+/// TODO: allow parallel reads!
+fn image_barriers(
+    device: &RenderDevice,
+    command_buffer: vk::CommandBuffer,
+    render_pass: &RenderPassDescription,
+    resources: &RenderGraphResources,
+    image_state: &mut Vec<ImageAccessType>,
+) {
+    let image_barriers: Vec<vk::ImageMemoryBarrier2KHR> = render_pass
+        .images_dependencies
+        .iter()
+        .map(|image_access| {
+            let src_flags = get_image_barrier_flags(image_state[image_access.handle as usize]);
+            let dst_flags = get_image_barrier_flags(image_access.access_type);
+            image_state[image_access.handle as usize] = image_access.access_type;
+            vk::ImageMemoryBarrier2KHR::builder()
+                .image(resources.images[image_access.handle as usize].handle)
+                .old_layout(src_flags.0)
+                .new_layout(dst_flags.0)
+                .src_stage_mask(src_flags.1.stage)
+                .src_access_mask(src_flags.1.access)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_stage_mask(dst_flags.1.stage)
+                .dst_access_mask(dst_flags.1.access)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .subresource_range(
                     vk::ImageSubresourceRange::builder()
@@ -224,9 +300,9 @@ fn transition_images(
                         .level_count(1)
                         .build(),
                 )
-                .build(),
-        );
-    }
+                .build()
+        })
+        .collect();
 
     unsafe {
         device.synchronization2.cmd_pipeline_barrier2(
@@ -235,46 +311,3 @@ fn transition_images(
         );
     }
 }
-
-fn temp_get_layout(access_type: ImageAccessType) -> vk::ImageLayout {
-    match access_type {
-        ImageAccessType::TransferRead => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        ImageAccessType::TransferWrite => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        ImageAccessType::ColorAttachmentRead => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        ImageAccessType::ColorAttachmentWrite => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        ImageAccessType::DepthStencilAttachmentRead => {
-            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-        }
-        ImageAccessType::DepthStencilAttachmentWrite => {
-            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-        }
-        ImageAccessType::ShaderComputeRead => vk::ImageLayout::GENERAL,
-        ImageAccessType::ShaderComputeWrite => vk::ImageLayout::GENERAL,
-        _ => vk::ImageLayout::GENERAL,
-    }
-}
-
-//Absolutely the worst way of doing this, DO NOT LEAVE THIS IN!!!
-//TODO: figure out correct syncing
-fn block_all(device: &RenderDevice, command_buffer: vk::CommandBuffer) {
-    unsafe {
-        device.base.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-            vk::DependencyFlags::DEVICE_GROUP,
-            &[],
-            &[],
-            &[],
-        );
-    }
-}
-
-//TODO: use?
-// struct RenderGraph {
-//     device: RenderDevice,
-//     buffer_resources: Vec<Rc<Buffer>>,
-//     image_resources: Vec<Rc<Image>>,
-//     passes: Vec<RenderPassCompiled>,
-// }
-// struct PipelineCache {}
