@@ -18,7 +18,11 @@ impl DebugMessenger {
                                 | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
                                 | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
                         )
-                        .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
+                        .message_type(
+                            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                        )
                         .pfn_user_callback(Some(vulkan_debug_callback)),
                     None,
                 )

@@ -51,7 +51,7 @@ impl RenderBackend {
         let engine_name: CString = CString::new("Neptune Engine").unwrap();
         let engine_version = vk::make_api_version(0, 0, 0, 0);
 
-        let entry = unsafe { ash::Entry::new().unwrap() };
+        let entry = unsafe { ash::Entry::new() };
 
         let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
         let layers_names_raw: Vec<*const i8> = layer_names
