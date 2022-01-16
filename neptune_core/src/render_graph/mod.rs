@@ -2,7 +2,7 @@ pub mod render_graph;
 mod renderer;
 
 use crate::render_backend::RenderDevice;
-use crate::render_graph::render_graph::{ImageAccessType, RenderGraphDescription};
+use crate::render_graph::render_graph::RenderGraphDescription;
 pub use crate::render_graph::renderer::Renderer;
 use crate::vulkan::{Buffer, Image};
 
@@ -35,8 +35,7 @@ use crate::vulkan::{BufferDescription, ImageDescription};
 pub fn build_render_graph_test() -> RenderGraphDescription {
     let mut rgb = render_graph::RenderGraphBuilder::new();
 
-    let imgui_image = build_color_pass(&mut rgb);
-    build_imgui_pass(&mut rgb, imgui_image);
+    let imgui_image = build_imgui_pass(&mut rgb);
 
     let swapchain_image = rgb.get_swapchain_image_resource();
     build_blit_pass(&mut rgb, imgui_image, swapchain_image);
@@ -44,7 +43,16 @@ pub fn build_render_graph_test() -> RenderGraphDescription {
     rgb.build()
 }
 
-pub fn build_imgui_pass(rgb: &mut render_graph::RenderGraphBuilder, output_image: ImageHandle) {
+pub fn build_imgui_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHandle {
+    let output_image = rgb.create_image(render_graph::ImageResourceDescription::New(
+        ImageDescription {
+            format: vk::Format::R8G8B8A8_UNORM,
+            size: [1920, 1080],
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            memory_location: gpu_allocator::MemoryLocation::GpuOnly,
+        },
+    ));
+
     const MAX_QUAD_COUNT: usize = u16::MAX as usize;
     const MAX_VERTEX_COUNT: usize = MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = MAX_QUAD_COUNT * 6;
@@ -68,38 +76,6 @@ pub fn build_imgui_pass(rgb: &mut render_graph::RenderGraphBuilder, output_image
     let _ = imgui_pass.buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
     let _ = imgui_pass.buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
     imgui_pass.raster(vec![output_image], None);
-}
-
-pub fn build_color_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHandle {
-    let output_image = rgb.create_image(render_graph::ImageResourceDescription::New(
-        ImageDescription {
-            format: vk::Format::R8G8B8A8_UNORM,
-            size: [1920, 1080],
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST,
-            memory_location: gpu_allocator::MemoryLocation::GpuOnly,
-        },
-    ));
-
-    let mut color_pass = rgb.create_pass("ImguiPass");
-    color_pass.image(output_image, ImageAccessType::TransferWrite);
-
-    color_pass.render(move |render_api, pass_info, resources| unsafe {
-        render_api.device.base.cmd_clear_color_image(
-            render_api.command_buffer,
-            resources.images[output_image as usize].handle,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &vk::ClearColorValue {
-                float32: [0.5, 0.75, 1.0, 1.0],
-            },
-            &[vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            }],
-        )
-    });
     output_image
 }
 

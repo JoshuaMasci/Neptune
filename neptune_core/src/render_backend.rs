@@ -17,6 +17,7 @@ pub struct RenderDevice {
     pub allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     pub surface: Rc<ash::extensions::khr::Surface>,
     pub swapchain: Rc<ash::extensions::khr::Swapchain>,
+    pub dynamic_rendering: Rc<ash::extensions::khr::DynamicRendering>,
     pub synchronization2: Rc<ash::extensions::khr::Synchronization2>,
     pub push_descriptor: Rc<ash::extensions::khr::PushDescriptor>,
 }
@@ -51,7 +52,7 @@ impl RenderBackend {
         let engine_name: CString = CString::new("Neptune Engine").unwrap();
         let engine_version = vk::make_api_version(0, 0, 0, 0);
 
-        let entry = unsafe { ash::Entry::new() };
+        let entry = ash::Entry::new();
 
         let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
         let layers_names_raw: Vec<*const i8> = layer_names
@@ -128,12 +129,18 @@ impl RenderBackend {
         let device_extension_names_raw = vec![
             ash::extensions::khr::Swapchain::name().as_ptr(),
             ash::extensions::khr::Synchronization2::name().as_ptr(),
-            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long term
+            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long ter
+            ash::extensions::khr::DynamicRendering::name().as_ptr(),
         ];
 
         let mut synchronization2_features =
             vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
                 .synchronization2(true)
+                .build();
+
+        let mut dynamic_renedering_features =
+            vk::PhysicalDeviceDynamicRenderingFeaturesKHR::builder()
+                .dynamic_rendering(true)
                 .build();
 
         let priorities = &[1.0];
@@ -149,7 +156,8 @@ impl RenderBackend {
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_info)
                     .enabled_extension_names(&device_extension_names_raw)
-                    .push_next(&mut synchronization2_features),
+                    .push_next(&mut synchronization2_features)
+                    .push_next(&mut dynamic_renedering_features),
                 None,
             )
         }
@@ -171,6 +179,9 @@ impl RenderBackend {
             allocator,
             surface: Rc::new(surface_loader),
             swapchain: Rc::new(ash::extensions::khr::Swapchain::new(&instance, &base)),
+            dynamic_rendering: Rc::new(ash::extensions::khr::DynamicRendering::new(
+                &instance, &base,
+            )),
             synchronization2: Rc::new(ash::extensions::khr::Synchronization2::new(
                 &instance, &base,
             )),

@@ -53,10 +53,25 @@ pub enum ImageResourceDescription {
     Import(Rc<Image>),
 }
 
+impl ImageResourceDescription {
+    pub fn get_size(&self) -> [u32; 2] {
+        match self {
+            ImageResourceDescription::Swapchain => todo!(),
+            ImageResourceDescription::New(image_description) => image_description.size,
+            ImageResourceDescription::Import(image) => image.description.size,
+        }
+    }
+
+    pub fn get_format(&self) {
+        todo!();
+    }
+}
+
 pub struct RenderGraphBuilder {
     description: Option<RenderGraphDescription>,
 }
 
+//TODO: get swapchain size and format
 impl RenderGraphBuilder {
     pub fn new() -> Self {
         Self {
@@ -145,13 +160,59 @@ impl<'rg> RenderPassBuilder<'rg> {
         index
     }
 
+    //TODO: clear values
     pub fn raster(
         &mut self,
         color_attachments: Vec<ImageHandle>,
         depth_attachment: Option<ImageHandle>,
     ) {
+        //Verify size and setup image transitions
+        let mut framebuffer_size: Option<[u32; 2]> = None;
+        for color_attachment_handle in color_attachments.iter() {
+            self.image(
+                *color_attachment_handle,
+                ImageAccessType::ColorAttachmentWrite,
+            );
+
+            let color_attachment =
+                &self.rgb.description.as_ref().unwrap().images[*color_attachment_handle as usize];
+            if let Some(size) = framebuffer_size {
+                if size != color_attachment.get_size() {
+                    panic!("Color attachment size doesn't match rest of framebuffer");
+                }
+            } else {
+                framebuffer_size = Some(color_attachment.get_size());
+            }
+        }
+
+        if let Some(depth_attachment_handle) = &depth_attachment {
+            self.image(
+                *depth_attachment_handle,
+                ImageAccessType::DepthStencilAttachmentWrite,
+            );
+
+            let depth_attachment =
+                &self.rgb.description.as_ref().unwrap().images[*depth_attachment_handle as usize];
+            if let Some(size) = framebuffer_size {
+                if size != depth_attachment.get_size() {
+                    panic!("Depth attachment size doesn't match rest of framebuffer");
+                }
+            } else {
+                framebuffer_size = Some(depth_attachment.get_size());
+            }
+        }
+
+        let framebuffer_size = framebuffer_size.expect("Framebuffer has no attachments");
+
         let description = self.description.as_mut().unwrap();
         description.framebuffer = Some(FramebufferDescription {
+            render_area: vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: framebuffer_size[0],
+                    height: framebuffer_size[1],
+                },
+            },
             color_attachments,
             depth_attachment,
         })
@@ -207,9 +268,9 @@ pub enum PipelineDescription {
 }
 
 pub struct FramebufferDescription {
-    //Render Pass's access type is known so doesn't need to be specified
-    color_attachments: Vec<ImageHandle>,
-    depth_attachment: Option<ImageHandle>,
+    pub(crate) render_area: vk::Rect2D,
+    pub(crate) color_attachments: Vec<ImageHandle>,
+    pub(crate) depth_attachment: Option<ImageHandle>,
 }
 
 pub struct RenderPassDescription {

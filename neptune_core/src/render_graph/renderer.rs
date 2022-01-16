@@ -27,7 +27,7 @@ impl Renderer {
         command_buffer: vk::CommandBuffer,
         swapchain_image: vk::Image,
         swapchain_size: vk::Extent2D,
-        mut render_graph: RenderGraphDescription,
+        render_graph: RenderGraphDescription,
     ) {
         self.resources = render_inline_temp(
             device,
@@ -81,6 +81,59 @@ pub fn render_inline_temp(
             &mut previous_image_state,
         );
 
+        if let Some(framebuffer) = &pass.framebuffer {
+            let color_attachments: Vec<vk::RenderingAttachmentInfoKHR> = framebuffer
+                .color_attachments
+                .iter()
+                .map(|color_attachment_handle| {
+                    let color_attachment = &resources.images[*color_attachment_handle as usize];
+
+                    vk::RenderingAttachmentInfoKHR::builder()
+                        .image_view(color_attachment.view)
+                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(vk::ClearValue {
+                            color: vk::ClearColorValue {
+                                float32: [0.0, 0.0, 0.0, 0.0],
+                            },
+                        })
+                        .build()
+                })
+                .collect();
+
+            let mut rendering_info = vk::RenderingInfoKHR::builder()
+                .render_area(framebuffer.render_area)
+                .layer_count(1)
+                .color_attachments(&color_attachments);
+
+            let mut depth_attachment_info = vk::RenderingAttachmentInfoKHR::builder();
+            if let Some(depth_attachment_handle) = framebuffer.depth_attachment {
+                let depth_attachment = &resources.images[depth_attachment_handle as usize];
+
+                depth_attachment_info = depth_attachment_info
+                    .image_view(depth_attachment.view)
+                    .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 0.0,
+                            stencil: 0,
+                        },
+                    });
+
+                rendering_info = rendering_info.depth_attachment(&depth_attachment_info);
+                rendering_info = rendering_info.stencil_attachment(&depth_attachment_info);
+            }
+
+            unsafe {
+                device
+                    .dynamic_rendering
+                    .cmd_begin_rendering(command_buffer, &rendering_info);
+            }
+        }
+
         let render_pass_info = RenderPassInfo {
             name: pass.name.clone(),
             pipelines: vec![],
@@ -89,6 +142,12 @@ pub fn render_inline_temp(
 
         if let Some(render_fn) = pass.render_fn.take() {
             render_fn(&mut render_api, &render_pass_info, &resources);
+        }
+
+        if pass.framebuffer.is_some() {
+            unsafe {
+                device.dynamic_rendering.cmd_end_rendering(command_buffer);
+            }
         }
     }
     resources
@@ -126,7 +185,9 @@ fn create_resources(
                     swapchain_image,
                 ),
                 ImageResourceDescription::New(image_description) => {
-                    Image::new(device, image_description.clone())
+                    let mut image = Image::new(device, image_description.clone());
+                    image.create_image_view();
+                    image
                 }
                 ImageResourceDescription::Import(image) => image.clone_no_drop(),
             })
@@ -217,12 +278,35 @@ fn get_image_barrier_flags(image_access: ImageAccessType) -> (vk::ImageLayout, B
                 access: vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
             },
         ),
-        ImageAccessType::ColorAttachmentRead
-        | ImageAccessType::ColorAttachmentWrite
-        | ImageAccessType::DepthStencilAttachmentRead
-        | ImageAccessType::DepthStencilAttachmentWrite => {
-            panic!("Attachment Barrier/Transitions should be handled by the render-pass")
-        }
+        ImageAccessType::ColorAttachmentRead => (
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+                access: vk::AccessFlags2KHR::COLOR_ATTACHMENT_READ,
+            },
+        ),
+        ImageAccessType::ColorAttachmentWrite => (
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
+                access: vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+            },
+        ),
+        ImageAccessType::DepthStencilAttachmentRead => (
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_GRAPHICS,
+                access: vk::AccessFlags2KHR::DEPTH_STENCIL_ATTACHMENT_READ,
+            },
+        ),
+        ImageAccessType::DepthStencilAttachmentWrite => (
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags2KHR::LATE_FRAGMENT_TESTS,
+                access: vk::AccessFlags2KHR::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            },
+        ),
     }
 }
 

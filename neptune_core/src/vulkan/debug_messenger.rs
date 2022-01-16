@@ -1,6 +1,7 @@
 use ash::vk;
 use std::ffi::CStr;
 
+#[allow(dead_code)]
 pub(crate) struct DebugMessenger {
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_call_back: vk::DebugUtilsMessengerEXT,
