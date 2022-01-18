@@ -1,4 +1,5 @@
 use crate::render_graph::render_graph::RenderGraphDescription;
+use crate::vulkan::{Image, ImageDescription};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -388,13 +389,20 @@ impl RenderBackend {
         }
     }
 
-    pub fn render_graph(&mut self, render_graph: RenderGraphDescription) {
+    pub fn submit_render_graph(&mut self, render_graph: RenderGraphDescription) {
         if let Some(command_buffer) = self.begin_frame() {
             self.graph_renderer.render(
                 &self.device,
                 command_buffer,
-                self.swapchain.images[self.swapchain_image_index as usize],
-                self.swapchain.size,
+                Image::from_existing(
+                    ImageDescription {
+                        format: self.swapchain.format,
+                        size: [self.swapchain.size.width, self.swapchain.size.height],
+                        usage: Default::default(),
+                        memory_location: gpu_allocator::MemoryLocation::Unknown,
+                    },
+                    self.swapchain.images[self.swapchain_image_index as usize],
+                ),
                 render_graph,
             );
             self.end_frame(vk::ImageLayout::TRANSFER_DST_OPTIMAL);

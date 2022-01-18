@@ -75,7 +75,7 @@ pub fn build_imgui_pass(rgb: &mut render_graph::RenderGraphBuilder) -> ImageHand
     let mut imgui_pass = rgb.create_pass("ImguiPass");
     let _ = imgui_pass.buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
     let _ = imgui_pass.buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
-    imgui_pass.raster(vec![output_image], None);
+    imgui_pass.raster(vec![(output_image, [0.0, 0.5, 1.0, 0.0])], None);
     output_image
 }
 

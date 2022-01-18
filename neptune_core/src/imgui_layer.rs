@@ -49,7 +49,7 @@ impl ImguiLayer {
 
         let image_data = imgui_context.fonts().build_alpha8_texture();
         let texture_atlas_staging_buffer = Some({
-            let mut buffer = Buffer::new(
+            let buffer = Buffer::new(
                 &device,
                 BufferDescription {
                     size: image_data.data.len(),

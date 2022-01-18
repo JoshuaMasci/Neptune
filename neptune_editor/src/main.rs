@@ -39,7 +39,7 @@ fn main() {
             }
             Event::MainEventsCleared => {
                 let render_graph = neptune_core::render_graph::build_render_graph_test();
-                render_backend.render_graph(render_graph);
+                render_backend.submit_render_graph(render_graph);
             }
             Event::RedrawRequested(_) => {}
             event => {

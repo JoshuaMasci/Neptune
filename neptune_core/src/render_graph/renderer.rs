@@ -4,7 +4,7 @@ use crate::render_graph::render_graph::{
     RenderGraphDescription, RenderPassDescription,
 };
 use crate::render_graph::{RenderApi, RenderGraphResources, RenderPassInfo};
-use crate::vulkan::{Buffer, Image, ImageDescription};
+use crate::vulkan::{Buffer, Image};
 use ash::vk;
 
 pub struct Renderer {
@@ -25,28 +25,20 @@ impl Renderer {
         &mut self,
         device: &RenderDevice,
         command_buffer: vk::CommandBuffer,
-        swapchain_image: vk::Image,
-        swapchain_size: vk::Extent2D,
+        swapchain_image: Image,
         render_graph: RenderGraphDescription,
     ) {
-        self.resources = render_inline_temp(
-            device,
-            command_buffer,
-            swapchain_image,
-            swapchain_size,
-            render_graph,
-        );
+        self.resources = render_inline_temp(device, command_buffer, swapchain_image, render_graph);
     }
 }
 
 pub fn render_inline_temp(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
-    swapchain_image: vk::Image,
-    swapchain_size: vk::Extent2D,
+    swapchain_image: Image,
     mut render_graph: RenderGraphDescription,
 ) -> RenderGraphResources {
-    let resources = create_resources(device, &render_graph, swapchain_image, swapchain_size);
+    let resources = create_resources(device, &render_graph, swapchain_image);
     let mut previous_buffer_state: Vec<BufferAccessType> = resources
         .buffers
         .iter()
@@ -81,12 +73,50 @@ pub fn render_inline_temp(
             &mut previous_image_state,
         );
 
+        let mut frame_buffer_size: Option<vk::Extent2D> = None;
+
         if let Some(framebuffer) = &pass.framebuffer {
+            let framebuffer_size: [u32; 2] = {
+                //Verify size
+                let mut framebuffer_size: Option<[u32; 2]> = None;
+                for color_attachment_description in framebuffer.color_attachments.iter() {
+                    let color_attachment =
+                        &resources.images[color_attachment_description.0 as usize];
+                    if let Some(size) = framebuffer_size {
+                        if size != color_attachment.description.size {
+                            panic!("Color attachment size doesn't match rest of framebuffer");
+                        }
+                    } else {
+                        framebuffer_size = Some(color_attachment.description.size);
+                    }
+                }
+
+                if let Some(depth_attachment_description) = &framebuffer.depth_attachment {
+                    let depth_attachment =
+                        &resources.images[depth_attachment_description.0 as usize];
+                    if let Some(size) = framebuffer_size {
+                        if size != depth_attachment.description.size {
+                            panic!("Depth attachment size doesn't match rest of framebuffer");
+                        }
+                    } else {
+                        framebuffer_size = Some(depth_attachment.description.size);
+                    }
+                }
+
+                framebuffer_size.expect("Framebuffer has no attachments")
+            };
+
+            frame_buffer_size = Some(vk::Extent2D {
+                width: framebuffer_size[0],
+                height: framebuffer_size[1],
+            });
+
             let color_attachments: Vec<vk::RenderingAttachmentInfoKHR> = framebuffer
                 .color_attachments
                 .iter()
-                .map(|color_attachment_handle| {
-                    let color_attachment = &resources.images[*color_attachment_handle as usize];
+                .map(|color_attachment_description| {
+                    let color_attachment =
+                        &resources.images[color_attachment_description.0 as usize];
 
                     vk::RenderingAttachmentInfoKHR::builder()
                         .image_view(color_attachment.view)
@@ -95,7 +125,7 @@ pub fn render_inline_temp(
                         .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
-                                float32: [0.0, 0.0, 0.0, 0.0],
+                                float32: color_attachment_description.1,
                             },
                         })
                         .build()
@@ -103,13 +133,19 @@ pub fn render_inline_temp(
                 .collect();
 
             let mut rendering_info = vk::RenderingInfoKHR::builder()
-                .render_area(framebuffer.render_area)
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: vk::Extent2D {
+                        width: framebuffer_size[0],
+                        height: framebuffer_size[1],
+                    },
+                })
                 .layer_count(1)
                 .color_attachments(&color_attachments);
 
             let mut depth_attachment_info = vk::RenderingAttachmentInfoKHR::builder();
-            if let Some(depth_attachment_handle) = framebuffer.depth_attachment {
-                let depth_attachment = &resources.images[depth_attachment_handle as usize];
+            if let Some(depth_attachment_description) = framebuffer.depth_attachment {
+                let depth_attachment = &resources.images[depth_attachment_description.0 as usize];
 
                 depth_attachment_info = depth_attachment_info
                     .image_view(depth_attachment.view)
@@ -118,7 +154,7 @@ pub fn render_inline_temp(
                     .store_op(vk::AttachmentStoreOp::STORE)
                     .clear_value(vk::ClearValue {
                         depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 0.0,
+                            depth: depth_attachment_description.1,
                             stencil: 0,
                         },
                     });
@@ -137,7 +173,7 @@ pub fn render_inline_temp(
         let render_pass_info = RenderPassInfo {
             name: pass.name.clone(),
             pipelines: vec![],
-            frame_buffer_size: None,
+            frame_buffer_size,
         };
 
         if let Some(render_fn) = pass.render_fn.take() {
@@ -157,8 +193,7 @@ pub fn render_inline_temp(
 fn create_resources(
     device: &RenderDevice,
     render_graph: &RenderGraphDescription,
-    swapchain_image: vk::Image,
-    swapchain_size: vk::Extent2D,
+    swapchain_image: Image,
 ) -> RenderGraphResources {
     RenderGraphResources {
         buffers: render_graph
@@ -175,15 +210,7 @@ fn create_resources(
             .images
             .iter()
             .map(|image_resource| match image_resource {
-                ImageResourceDescription::Swapchain => Image::from_existing(
-                    ImageDescription {
-                        format: vk::Format::UNDEFINED,
-                        size: [swapchain_size.width, swapchain_size.height],
-                        usage: Default::default(),
-                        memory_location: gpu_allocator::MemoryLocation::Unknown,
-                    },
-                    swapchain_image,
-                ),
+                ImageResourceDescription::Swapchain => swapchain_image.clone_no_drop(),
                 ImageResourceDescription::New(image_description) => {
                     let mut image = Image::new(device, image_description.clone());
                     image.create_image_view();
