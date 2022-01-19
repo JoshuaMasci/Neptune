@@ -186,6 +186,40 @@ pub fn render_inline_temp(
             }
         }
     }
+
+    //Transition swapchain image to present layout
+    {
+        let swapchain_image_handle = 0usize;
+        let src_flags = get_image_barrier_flags(previous_image_state[swapchain_image_handle]);
+        unsafe {
+            device.synchronization2.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfoKHR::builder().image_memory_barriers(&[
+                    vk::ImageMemoryBarrier2KHR::builder()
+                        .image(resources.images[swapchain_image_handle].handle)
+                        .old_layout(src_flags.0)
+                        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                        .src_stage_mask(src_flags.1.stage)
+                        .src_access_mask(src_flags.1.access)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                        .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .subresource_range(
+                            vk::ImageSubresourceRange::builder()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .base_array_layer(0)
+                                .layer_count(1)
+                                .base_mip_level(0)
+                                .level_count(1)
+                                .build(),
+                        )
+                        .build(),
+                ]),
+            );
+        }
+    }
+
     resources
 }
 

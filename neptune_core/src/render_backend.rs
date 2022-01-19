@@ -313,34 +313,8 @@ impl RenderBackend {
         Some(self.command_buffer)
     }
 
-    fn end_frame(&mut self, swapchain_image_layout: vk::ImageLayout) {
+    fn end_frame(&mut self) {
         unsafe {
-            let image_barriers2 = &[vk::ImageMemoryBarrier2KHR::builder()
-                .image(self.swapchain.images[self.swapchain_image_index as usize])
-                .old_layout(swapchain_image_layout)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .src_access_mask(vk::AccessFlags2KHR::NONE)
-                .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_access_mask(vk::AccessFlags2KHR::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .build(),
-                )
-                .build()];
-
-            self.device.synchronization2.cmd_pipeline_barrier2(
-                self.command_buffer,
-                &vk::DependencyInfoKHR::builder().image_memory_barriers(image_barriers2),
-            );
-
             self.device
                 .base
                 .end_command_buffer(self.command_buffer)
@@ -407,7 +381,7 @@ impl RenderBackend {
                 ),
                 render_graph,
             );
-            self.end_frame(vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+            self.end_frame();
         }
     }
 }
