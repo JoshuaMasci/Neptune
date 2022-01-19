@@ -70,13 +70,17 @@ impl Image {
         }
     }
 
-    pub(crate) fn from_existing(description: ImageDescription, image: vk::Image) -> Self {
+    pub(crate) fn from_existing(
+        description: ImageDescription,
+        image: vk::Image,
+        image_view: vk::ImageView,
+    ) -> Self {
         Self {
             device: None,
             description,
             memory: Default::default(),
             handle: image,
-            view: vk::ImageView::null(),
+            view: image_view,
         }
     }
 

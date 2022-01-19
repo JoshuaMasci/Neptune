@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::render_backend::RenderDevice;
+use crate::render_graph::{render_graph, ImageHandle};
 use crate::vulkan::framebuffer::FrameBufferSet;
 use crate::vulkan::{Buffer, BufferDescription};
 use crate::vulkan::{Image, ImageDescription};
@@ -181,6 +182,14 @@ impl ImguiLayer {
     ) {
         self.winit_platform
             .handle_event(self.imgui_context.io_mut(), window, event);
+    }
+
+    pub fn build_render_pass(
+        &mut self,
+        window: &winit::window::Window,
+        rgb: &mut render_graph::RenderGraphBuilder,
+    ) -> ImageHandle {
+        0
     }
 
     pub fn render_frame(

@@ -391,6 +391,7 @@ impl RenderBackend {
 
     pub fn submit_render_graph(&mut self, render_graph: RenderGraphDescription) {
         if let Some(command_buffer) = self.begin_frame() {
+            let swapchain_image_index: usize = self.swapchain_image_index as usize;
             self.graph_renderer.render(
                 &self.device,
                 command_buffer,
@@ -401,7 +402,8 @@ impl RenderBackend {
                         usage: Default::default(),
                         memory_location: gpu_allocator::MemoryLocation::Unknown,
                     },
-                    self.swapchain.images[self.swapchain_image_index as usize],
+                    self.swapchain.images[swapchain_image_index],
+                    self.swapchain.image_views[swapchain_image_index],
                 ),
                 render_graph,
             );

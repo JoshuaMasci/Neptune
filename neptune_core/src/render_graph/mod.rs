@@ -1,3 +1,4 @@
+mod pipeline_cache;
 pub mod render_graph;
 mod renderer;
 

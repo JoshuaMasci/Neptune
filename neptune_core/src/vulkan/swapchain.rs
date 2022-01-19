@@ -87,6 +87,7 @@ pub struct Swapchain {
     invalid: bool,
     physical_device: vk::PhysicalDevice,
 
+    device: Rc<ash::Device>,
     surface_loader: Rc<ash::extensions::khr::Surface>,
     swapchain_loader: Rc<ash::extensions::khr::Swapchain>,
 
@@ -97,6 +98,7 @@ pub struct Swapchain {
     pub(crate) size: vk::Extent2D,
     pub(crate) mode: vk::PresentModeKHR,
     pub(crate) images: Vec<vk::Image>,
+    pub(crate) image_views: Vec<vk::ImageView>,
 }
 
 impl Swapchain {
@@ -114,10 +116,12 @@ impl Swapchain {
         let size = vk::Extent2D::builder().build();
         let mode = vk::PresentModeKHR::FIFO;
         let images = Vec::new();
+        let image_views = Vec::new();
 
         let mut new = Self {
             invalid: true,
             physical_device,
+            device: device.base.clone(),
             surface_loader,
             swapchain_loader,
             surface,
@@ -126,12 +130,19 @@ impl Swapchain {
             size,
             mode,
             images,
+            image_views,
         };
         new.rebuild();
         new
     }
 
     fn rebuild(&mut self) {
+        unsafe {
+            for image_view in self.image_views.drain(..) {
+                self.device.destroy_image_view(image_view, None)
+            }
+        }
+
         let swapchain_support =
             SwapchainSupportDetails::new(self.physical_device, self.surface, &self.surface_loader);
 
@@ -169,6 +180,35 @@ impl Swapchain {
 
         self.images = unsafe { self.swapchain_loader.get_swapchain_images(self.handle) }
             .expect("Failed to get swapchain images");
+
+        self.image_views = self
+            .images
+            .iter()
+            .map(|image| unsafe {
+                self.device
+                    .create_image_view(
+                        &vk::ImageViewCreateInfo::builder()
+                            .format(self.format)
+                            .image(*image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .components(vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::IDENTITY,
+                                g: vk::ComponentSwizzle::IDENTITY,
+                                b: vk::ComponentSwizzle::IDENTITY,
+                                a: vk::ComponentSwizzle::IDENTITY,
+                            })
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            }),
+                        None,
+                    )
+                    .expect("Failed to create swapchain image views")
+            })
+            .collect();
 
         unsafe {
             self.swapchain_loader.destroy_swapchain(old_swapchain, None);
