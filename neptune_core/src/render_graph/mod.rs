@@ -23,11 +23,11 @@ pub struct RenderApi {
 pub struct RenderPassInfo {
     pub name: String,
     pub pipelines: Vec<vk::Pipeline>,
-    pub frame_buffer_size: Option<vk::Extent2D>,
+    pub framebuffer_size: Option<vk::Extent2D>,
 }
 
 pub struct RenderGraphResources {
-    buffers: Vec<Buffer>,
+    pub(crate) buffers: Vec<Buffer>,
     images: Vec<Image>,
 }
 

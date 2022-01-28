@@ -173,7 +173,7 @@ pub fn render_inline_temp(
         let render_pass_info = RenderPassInfo {
             name: pass.name.clone(),
             pipelines: vec![],
-            frame_buffer_size,
+            framebuffer_size: frame_buffer_size,
         };
 
         if let Some(render_fn) = pass.render_fn.take() {

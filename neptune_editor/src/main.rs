@@ -1,3 +1,4 @@
+use neptune_core::render_graph::render_graph::RenderGraphBuilder;
 use std::time::Instant;
 pub use winit::{
     event::{Event, WindowEvent},
@@ -38,8 +39,14 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                let render_graph = neptune_core::render_graph::build_render_graph_test();
-                render_backend.submit_render_graph(render_graph);
+                let ui = imgui_layer.build_frame(&window, move |ui| {
+                    ui.show_demo_window(&mut true);
+                });
+
+                let mut render_graph = RenderGraphBuilder::new();
+                let output_image = imgui_layer.build_render_pass(&mut render_graph);
+
+                render_backend.submit_render_graph(render_graph.build());
             }
             Event::RedrawRequested(_) => {}
             event => {
