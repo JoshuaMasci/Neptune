@@ -1,13 +1,141 @@
-use crate::vulkan::Image;
+use crate::render_backend::RenderDevice;
+use crate::vulkan::{Buffer, BufferDescription, Image};
+use ash::vk;
+use gpu_allocator::MemoryLocation;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+struct ImageTransfer {
+    src_buffer: Buffer,
+    dst_image: Image,
+    final_layout: vk::ImageLayout,
+}
+
 pub struct TransferQueue {
-    device: ash::Device,
-    device_allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-    synchronization2: ash::extensions::khr::Synchronization2,
+    device: RenderDevice,
+    image_transfers: Vec<ImageTransfer>,
+    old_image_transfers: Vec<ImageTransfer>,
 }
 
 impl TransferQueue {
-    pub(crate) fn copy_to_image<T>(&mut self, image: &Image, data: &[T]) {}
+    pub fn new(device: RenderDevice) -> Self {
+        Self {
+            device,
+            image_transfers: vec![],
+            old_image_transfers: vec![],
+        }
+    }
+
+    pub fn copy_to_image<T: std::marker::Copy>(
+        &mut self,
+        image: &Image,
+        final_layout: vk::ImageLayout,
+        data: &[T],
+    ) {
+        let staging_buffer = Buffer::new(
+            &self.device,
+            BufferDescription {
+                size: data.len(),
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                memory_location: MemoryLocation::CpuToGpu,
+            },
+        );
+        staging_buffer.fill(data);
+        self.image_transfers.push(ImageTransfer {
+            src_buffer: staging_buffer,
+            dst_image: image.clone_no_drop(),
+            final_layout,
+        });
+    }
+
+    pub fn commit_transfers(&mut self, command_buffer: vk::CommandBuffer) {
+        let image_range = vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_array_layer(0)
+            .layer_count(1)
+            .base_mip_level(0)
+            .level_count(1)
+            .build();
+
+        let image_barriers1: Vec<vk::ImageMemoryBarrier2KHR> = self
+            .image_transfers
+            .iter()
+            .map(|transfer| {
+                vk::ImageMemoryBarrier2KHR::builder()
+                    .image(transfer.dst_image.handle)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags2KHR::NONE)
+                    .src_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_access_mask(vk::AccessFlags2KHR::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2KHR::TRANSFER)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .subresource_range(image_range)
+                    .build()
+            })
+            .collect();
+        let image_barriers2: Vec<vk::ImageMemoryBarrier2KHR> = self
+            .image_transfers
+            .iter()
+            .map(|transfer| {
+                vk::ImageMemoryBarrier2KHR::builder()
+                    .image(transfer.dst_image.handle)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(transfer.final_layout)
+                    .src_access_mask(vk::AccessFlags2KHR::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2KHR::TRANSFER)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2KHR::NONE)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .subresource_range(image_range)
+                    .build()
+            })
+            .collect();
+
+        unsafe {
+            self.device.synchronization2.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfoKHR::builder().image_memory_barriers(&image_barriers1),
+            );
+        }
+
+        for transfer in self.image_transfers.iter() {
+            unsafe {
+                self.device.base.cmd_copy_buffer_to_image(
+                    command_buffer,
+                    transfer.src_buffer.handle,
+                    transfer.dst_image.handle,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[vk::BufferImageCopy {
+                        buffer_offset: 0,
+                        buffer_row_length: 0,
+                        buffer_image_height: 0,
+                        image_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+                        image_extent: vk::Extent3D {
+                            width: transfer.dst_image.description.size[0],
+                            height: transfer.dst_image.description.size[1],
+                            depth: 1,
+                        },
+                    }],
+                );
+            }
+        }
+
+        unsafe {
+            self.device.synchronization2.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfoKHR::builder().image_memory_barriers(&image_barriers2),
+            );
+        }
+
+        self.old_image_transfers = self.image_transfers.drain(..).collect();
+    }
 }

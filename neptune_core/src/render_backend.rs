@@ -39,10 +39,15 @@ pub struct RenderBackend {
 
     //Temp Device Frame Objects
     command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
+    transfer_command_buffer: vk::CommandBuffer,
+    graphics_command_buffer: vk::CommandBuffer,
+
+    transfer_done_semaphore: vk::Semaphore,
     image_ready_semaphore: vk::Semaphore,
     present_semaphore: vk::Semaphore,
     frame_done_fence: vk::Fence,
+
+    transfer_queue: crate::transfer_queue::TransferQueue,
     graph_renderer: crate::render_graph::Renderer,
 }
 
@@ -220,16 +225,16 @@ impl RenderBackend {
         }
         .expect("Failed to create command pool");
 
-        let command_buffer = unsafe {
+        let command_buffers = unsafe {
             device.base.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
                     .command_pool(command_pool)
-                    .command_buffer_count(1)
+                    .command_buffer_count(2)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .build(),
             )
         }
-        .expect("Failed to allocate command_buffers")[0];
+        .expect("Failed to allocate command_buffers");
 
         let frame_done_fence = unsafe {
             device.base.create_fence(
@@ -240,6 +245,12 @@ impl RenderBackend {
             )
         }
         .expect("Failed to create fence");
+        let transfer_done_semaphore = unsafe {
+            device
+                .base
+                .create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None)
+        }
+        .expect("Failed to create semaphore");
         let image_ready_semaphore = unsafe {
             device
                 .base
@@ -253,6 +264,8 @@ impl RenderBackend {
         }
         .expect("Failed to create semaphore");
 
+        let transfer_queue = crate::transfer_queue::TransferQueue::new(device.clone());
+
         Self {
             entry,
             instance,
@@ -265,10 +278,13 @@ impl RenderBackend {
             swapchain_image_index: 0,
 
             command_pool,
-            command_buffer,
+            transfer_command_buffer: command_buffers[0],
+            graphics_command_buffer: command_buffers[1],
+            transfer_done_semaphore,
             image_ready_semaphore,
             present_semaphore,
             frame_done_fence,
+            transfer_queue,
             graph_renderer: crate::render_graph::Renderer::new(),
         }
     }
@@ -302,7 +318,7 @@ impl RenderBackend {
             self.device
                 .base
                 .begin_command_buffer(
-                    self.command_buffer,
+                    self.graphics_command_buffer,
                     &vk::CommandBufferBeginInfo::builder().build(),
                 )
                 .expect("Failed to begin command buffer recording");
@@ -310,24 +326,68 @@ impl RenderBackend {
 
         self.swapchain_image_index = image_index;
 
-        Some(self.command_buffer)
+        Some(self.graphics_command_buffer)
     }
 
     fn end_frame(&mut self) {
         unsafe {
             self.device
                 .base
-                .end_command_buffer(self.command_buffer)
+                .end_command_buffer(self.graphics_command_buffer)
                 .expect("Failed to end command buffer recording");
 
-            let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.image_ready_semaphore)
-                .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-                .device_index(0)
-                .build()];
+            //Build transfer command buffer
+            {
+                self.device
+                    .base
+                    .begin_command_buffer(
+                        self.transfer_command_buffer,
+                        &vk::CommandBufferBeginInfo::builder().build(),
+                    )
+                    .expect("Failed to begin command buffer recording");
+                self.transfer_queue
+                    .commit_transfers(self.transfer_command_buffer);
+                self.device
+                    .base
+                    .end_command_buffer(self.transfer_command_buffer)
+                    .expect("Failed to end command buffer recording");
+
+                let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
+                    .command_buffer(self.transfer_command_buffer)
+                    .device_mask(0)
+                    .build()];
+
+                let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+                    .semaphore(self.transfer_done_semaphore)
+                    .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                    .device_index(0)
+                    .build()];
+
+                let submit_info = vk::SubmitInfo2KHR::builder()
+                    .command_buffer_infos(command_buffer_infos)
+                    .signal_semaphore_infos(signal_semaphore_infos)
+                    .build();
+                self.device
+                    .synchronization2
+                    .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())
+                    .expect("Failed to queue command buffer");
+            }
+
+            let wait_semaphore_infos = &[
+                vk::SemaphoreSubmitInfoKHR::builder()
+                    .semaphore(self.image_ready_semaphore)
+                    .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                    .device_index(0)
+                    .build(),
+                vk::SemaphoreSubmitInfoKHR::builder()
+                    .semaphore(self.transfer_done_semaphore)
+                    .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+                    .device_index(0)
+                    .build(),
+            ];
 
             let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
-                .command_buffer(self.command_buffer)
+                .command_buffer(self.graphics_command_buffer)
                 .device_mask(0)
                 .build()];
 
@@ -363,7 +423,7 @@ impl RenderBackend {
         }
     }
 
-    pub fn submit_render_graph(&mut self, render_graph: RenderGraphDescription) {
+    pub fn submit_render_graph(&mut self, render_graph: RenderGraphDescription) -> bool {
         if let Some(command_buffer) = self.begin_frame() {
             let swapchain_image_index: usize = self.swapchain_image_index as usize;
             self.graph_renderer.render(
@@ -380,8 +440,12 @@ impl RenderBackend {
                     self.swapchain.image_views[swapchain_image_index],
                 ),
                 render_graph,
+                &mut self.transfer_queue,
             );
             self.end_frame();
+            true
+        } else {
+            false
         }
     }
 }
@@ -394,7 +458,7 @@ impl Drop for RenderBackend {
             let _ = self
                 .device
                 .base
-                .free_command_buffers(self.command_pool, &[self.command_buffer]);
+                .free_command_buffers(self.command_pool, &[self.graphics_command_buffer]);
             let _ = self
                 .device
                 .base

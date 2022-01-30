@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::render_graph::{
     BufferHandle, ImageHandle, RenderApi, RenderFn, RenderGraphResources, RenderPassInfo,
 };
+use crate::transfer_queue::TransferQueue;
 use ash::vk;
 
 //TODO: RayTracing Accesses
@@ -176,7 +177,8 @@ impl<'rg> RenderPassBuilder<'rg> {
 
     pub fn render(
         mut self,
-        render: impl FnOnce(&mut RenderApi, &RenderPassInfo, &RenderGraphResources) + 'static,
+        render: impl FnOnce(&mut RenderApi, &mut TransferQueue, &RenderPassInfo, &RenderGraphResources)
+            + 'static,
     ) {
         let prev = self
             .description

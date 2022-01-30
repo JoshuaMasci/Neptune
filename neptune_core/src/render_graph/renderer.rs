@@ -4,6 +4,7 @@ use crate::render_graph::render_graph::{
     RenderGraphDescription, RenderPassDescription,
 };
 use crate::render_graph::{RenderApi, RenderGraphResources, RenderPassInfo};
+use crate::transfer_queue::TransferQueue;
 use crate::vulkan::{Buffer, Image};
 use ash::vk;
 
@@ -27,8 +28,15 @@ impl Renderer {
         command_buffer: vk::CommandBuffer,
         swapchain_image: Image,
         render_graph: RenderGraphDescription,
+        transfer_queue: &mut crate::transfer_queue::TransferQueue,
     ) {
-        self.resources = render_inline_temp(device, command_buffer, swapchain_image, render_graph);
+        self.resources = render_inline_temp(
+            device,
+            command_buffer,
+            swapchain_image,
+            render_graph,
+            transfer_queue,
+        );
     }
 }
 
@@ -37,6 +45,7 @@ pub fn render_inline_temp(
     command_buffer: vk::CommandBuffer,
     swapchain_image: Image,
     mut render_graph: RenderGraphDescription,
+    mut transfer_queue: &mut crate::transfer_queue::TransferQueue,
 ) -> RenderGraphResources {
     let resources = create_resources(device, &render_graph, swapchain_image);
     let mut previous_buffer_state: Vec<BufferAccessType> = resources
@@ -177,7 +186,12 @@ pub fn render_inline_temp(
         };
 
         if let Some(render_fn) = pass.render_fn.take() {
-            render_fn(&mut render_api, &render_pass_info, &resources);
+            render_fn(
+                &mut render_api,
+                &mut transfer_queue,
+                &render_pass_info,
+                &resources,
+            );
         }
 
         if pass.framebuffer.is_some() {

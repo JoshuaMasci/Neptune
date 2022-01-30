@@ -6,9 +6,6 @@ pub use winit::{
 };
 
 fn main() {
-    //Test Render Graph
-    neptune_core::render_graph::build_render_graph_test();
-
     let event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
@@ -44,9 +41,10 @@ fn main() {
                 });
 
                 let mut render_graph = RenderGraphBuilder::new();
-                let output_image = imgui_layer.build_render_pass(&mut render_graph);
-
-                render_backend.submit_render_graph(render_graph.build());
+                imgui_layer.build_render_pass(&mut render_graph);
+                if !render_backend.submit_render_graph(render_graph.build()) {
+                    imgui_layer.end_frame_no_render();
+                }
             }
             Event::RedrawRequested(_) => {}
             event => {
