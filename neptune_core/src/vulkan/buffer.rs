@@ -54,21 +54,18 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn fill<T: Copy>(&self, data: &[T]) {
-        let buffer_ptr = self
-            .memory
-            .mapped_ptr()
-            .expect("Failed to map buffer memory")
-            .as_ptr();
-
-        let mut align = unsafe {
-            ash::util::Align::new(
-                buffer_ptr,
-                std::mem::align_of::<T>() as _,
-                self.description.size as vk::DeviceSize,
+    pub(crate) fn fill<T>(&self, data: &[T]) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                self.memory
+                    .mapped_ptr()
+                    .expect("Failed to map buffer memory")
+                    .cast()
+                    .as_ptr(),
+                data.len(),
             )
         };
-        align.copy_from_slice(data);
     }
 
     pub(crate) fn clone_no_drop(&self) -> Self {

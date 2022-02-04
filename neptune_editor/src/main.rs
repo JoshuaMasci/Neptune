@@ -17,6 +17,7 @@ fn main() {
     let mut render_backend = neptune_core::render_backend::RenderBackend::new(&window);
     let mut imgui_layer =
         neptune_core::imgui_layer::ImguiLayer::new(&window, render_backend.device.clone());
+    let mut scene_layer = neptune_core::scene_layer::SceneLayer::new(render_backend.device.clone());
 
     let mut last_frame = Instant::now();
 
@@ -36,12 +37,34 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                let ui = imgui_layer.build_frame(&window, move |ui| {
-                    ui.show_demo_window(&mut true);
+                imgui_layer.build_frame(&window, move |ui| {
+                    let _dock_space_id = neptune_core::imgui_docking::enable_docking();
+
+                    ui.window("Hello World1").build(|| {
+                        ui.text("Hello world!");
+                        ui.text("こんにちは世界！");
+                        ui.text("This...is...imgui-rs!");
+                        ui.separator();
+                        let mouse_pos = ui.io().mouse_pos;
+                        ui.text(format!(
+                            "Mouse Position: ({:.1},{:.1})",
+                            mouse_pos[0], mouse_pos[1]
+                        ));
+                    });
+
+                    ui.window("Hello World2").build(|| {
+                        ui.text("Hello world!");
+                    });
+
+                    ui.window("Goodbye World").build(|| {
+                        ui.text("Goodbye World");
+                    });
                 });
 
                 let mut render_graph = RenderGraphBuilder::new();
-                imgui_layer.build_render_pass(&mut render_graph);
+                let swapchain_image = render_graph.get_swapchain_image_resource();
+                imgui_layer.build_render_pass(&mut render_graph, swapchain_image);
+                scene_layer.build_render_pass(&mut render_graph, swapchain_image);
                 if !render_backend.submit_render_graph(render_graph.build()) {
                     imgui_layer.end_frame_no_render();
                 }

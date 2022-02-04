@@ -128,7 +128,7 @@ pub fn render_inline_temp(
                         &resources.images[color_attachment_description.0 as usize];
 
                     vk::RenderingAttachmentInfoKHR::builder()
-                        .image_view(color_attachment.view)
+                        .image_view(color_attachment.view.unwrap())
                         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                         .load_op(vk::AttachmentLoadOp::CLEAR)
                         .store_op(vk::AttachmentStoreOp::STORE)
@@ -157,7 +157,7 @@ pub fn render_inline_temp(
                 let depth_attachment = &resources.images[depth_attachment_description.0 as usize];
 
                 depth_attachment_info = depth_attachment_info
-                    .image_view(depth_attachment.view)
+                    .image_view(depth_attachment.view.unwrap())
                     .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::STORE)

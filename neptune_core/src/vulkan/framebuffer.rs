@@ -174,11 +174,13 @@ impl Framebuffer {
             image
         });
 
-        let mut image_views: Vec<vk::ImageView> =
-            color_attachments.iter().map(|image| image.view).collect();
+        let mut image_views: Vec<vk::ImageView> = color_attachments
+            .iter()
+            .map(|image| image.view.unwrap())
+            .collect();
 
         if let Some(depth_image) = &depth_attachment {
-            image_views.push(depth_image.view);
+            image_views.push(depth_image.view.unwrap());
         }
 
         let handle = unsafe {

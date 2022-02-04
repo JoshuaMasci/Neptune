@@ -222,7 +222,6 @@ pub(crate) struct ImageResourceAccess {
 pub enum PipelineDescription {
     Raster,
     Compute,
-    RayTracing,
 }
 
 pub struct FramebufferDescription {

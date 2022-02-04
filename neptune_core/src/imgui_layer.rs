@@ -37,7 +37,7 @@ impl ImguiLayer {
 
         //Config imgui
         imgui_context.io_mut().config_flags |= imgui::ConfigFlags::DOCKING_ENABLE;
-        imgui_context.set_ini_filename(None);
+        //imgui_context.set_ini_filename(None);
         imgui_context.set_renderer_name(Some(String::from("Neptune Renderer")));
 
         let image_data = imgui_context.fonts().build_alpha8_texture();
@@ -143,10 +143,7 @@ impl ImguiLayer {
             .prepare_frame(imgui_context.io_mut(), window)
             .expect("Failed to prepare frame");
         let ui = imgui_context.frame();
-        crate::imgui_docking::enable_docking();
 
-        // let mut run = true;
-        // ui.show_demo_window(&mut run);
         callback(ui);
 
         self.winit_platform.prepare_render(ui, window);
@@ -157,9 +154,11 @@ impl ImguiLayer {
         let _ = imgui_context.render();
     }
 
-    pub fn build_render_pass(&mut self, rgb: &mut render_graph::RenderGraphBuilder) -> ImageHandle {
-        let output_image = rgb.get_swapchain_image_resource();
-
+    pub fn build_render_pass(
+        &mut self,
+        rgb: &mut render_graph::RenderGraphBuilder,
+        target_image: ImageHandle,
+    ) {
         const MAX_QUAD_COUNT: usize = u16::MAX as usize;
         const MAX_VERTEX_COUNT: usize = MAX_QUAD_COUNT * 4;
         const MAX_INDEX_COUNT: usize = MAX_QUAD_COUNT * 6;
@@ -190,7 +189,7 @@ impl ImguiLayer {
         let mut imgui_pass = rgb.create_pass("ImguiPass");
         imgui_pass.buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
         imgui_pass.buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
-        imgui_pass.raster(vec![(output_image, [0.0, 0.5, 1.0, 0.0])], None);
+        imgui_pass.raster(vec![(target_image, [0.0, 0.5, 1.0, 0.0])], None);
         imgui_pass.render(move |render_api, transfer_queue, pass_info, resources| {
             if let Some(image_data) = texture_atlas_data {
                 transfer_queue.copy_to_image(
@@ -230,7 +229,7 @@ impl ImguiLayer {
                 //TODO: other textures
                 let image_info = vk::DescriptorImageInfo::builder()
                     .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(texture_atlas.view)
+                    .image_view(texture_atlas.view.unwrap())
                     .sampler(texture_atlas_sampler);
                 let writes = &[vk::WriteDescriptorSet::builder()
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -358,8 +357,6 @@ impl ImguiLayer {
                 }
             }
         });
-
-        output_image
     }
 }
 

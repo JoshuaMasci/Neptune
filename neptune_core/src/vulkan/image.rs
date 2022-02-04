@@ -15,7 +15,7 @@ pub struct Image {
     pub description: ImageDescription,
     pub memory: gpu_allocator::vulkan::Allocation,
     pub handle: vk::Image,
-    pub view: vk::ImageView,
+    pub view: Option<vk::ImageView>,
 }
 
 impl Image {
@@ -66,14 +66,14 @@ impl Image {
             description,
             memory,
             handle,
-            view: vk::ImageView::null(),
+            view: None,
         }
     }
 
     pub(crate) fn from_existing(
         description: ImageDescription,
         image: vk::Image,
-        image_view: vk::ImageView,
+        image_view: Option<vk::ImageView>,
     ) -> Self {
         Self {
             device: None,
@@ -96,29 +96,31 @@ impl Image {
                 vk::ImageAspectFlags::COLOR
             };
 
-            self.view = unsafe {
-                device.base.create_image_view(
-                    &vk::ImageViewCreateInfo::builder()
-                        .format(self.description.format)
-                        .image(self.handle)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::IDENTITY,
-                            g: vk::ComponentSwizzle::IDENTITY,
-                            b: vk::ComponentSwizzle::IDENTITY,
-                            a: vk::ComponentSwizzle::IDENTITY,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        }),
-                    None,
-                )
-            }
-            .expect("Failed to create image view");
+            self.view = Some(
+                unsafe {
+                    device.base.create_image_view(
+                        &vk::ImageViewCreateInfo::builder()
+                            .format(self.description.format)
+                            .image(self.handle)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .components(vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::IDENTITY,
+                                g: vk::ComponentSwizzle::IDENTITY,
+                                b: vk::ComponentSwizzle::IDENTITY,
+                                a: vk::ComponentSwizzle::IDENTITY,
+                            })
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            }),
+                        None,
+                    )
+                }
+                .expect("Failed to create image view"),
+            );
         }
     }
 
@@ -142,7 +144,9 @@ impl Drop for Image {
                 .free(self.memory.clone())
                 .expect("Failed to free image memory");
             unsafe {
-                device.base.destroy_image_view(self.view, None);
+                if let Some(view) = self.view {
+                    device.base.destroy_image_view(view, None);
+                }
                 device.base.destroy_image(self.handle, None);
             }
         }

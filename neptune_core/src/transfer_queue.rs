@@ -5,6 +5,11 @@ use gpu_allocator::MemoryLocation;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+struct BufferTransfer {
+    src_buffer: Buffer,
+    dst_buffer: Buffer,
+}
+
 struct ImageTransfer {
     src_buffer: Buffer,
     dst_image: Image,
@@ -13,6 +18,10 @@ struct ImageTransfer {
 
 pub struct TransferQueue {
     device: RenderDevice,
+
+    buffer_transfers: Vec<BufferTransfer>,
+    old_buffer_transfers: Vec<BufferTransfer>,
+
     image_transfers: Vec<ImageTransfer>,
     old_image_transfers: Vec<ImageTransfer>,
 }
@@ -21,9 +30,35 @@ impl TransferQueue {
     pub fn new(device: RenderDevice) -> Self {
         Self {
             device,
+            buffer_transfers: vec![],
+            old_buffer_transfers: vec![],
             image_transfers: vec![],
             old_image_transfers: vec![],
         }
+    }
+
+    pub fn copy_to_buffer<T: std::marker::Copy>(&mut self, buffer: &Buffer, data: &[T]) {
+        if !buffer
+            .description
+            .usage
+            .contains(vk::BufferUsageFlags::TRANSFER_DST)
+        {
+            panic!("Buffer must include vk::BufferUsageFlags::TRANSFER_DST to write to it");
+        }
+
+        let staging_buffer = Buffer::new(
+            &self.device,
+            BufferDescription {
+                size: data.len(),
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                memory_location: MemoryLocation::CpuToGpu,
+            },
+        );
+        staging_buffer.fill(data);
+        self.buffer_transfers.push(BufferTransfer {
+            src_buffer: staging_buffer,
+            dst_buffer: buffer.clone_no_drop(),
+        });
     }
 
     pub fn copy_to_image<T: std::marker::Copy>(
@@ -32,6 +67,14 @@ impl TransferQueue {
         final_layout: vk::ImageLayout,
         data: &[T],
     ) {
+        if !image
+            .description
+            .usage
+            .contains(vk::ImageUsageFlags::TRANSFER_DST)
+        {
+            panic!("Image must include vk::ImageUsageFlags::TRANSFER_DST to write to it");
+        }
+
         let staging_buffer = Buffer::new(
             &self.device,
             BufferDescription {
@@ -49,6 +92,28 @@ impl TransferQueue {
     }
 
     pub fn commit_transfers(&mut self, command_buffer: vk::CommandBuffer) {
+        for buffer_transfer in self.buffer_transfers.iter() {
+            let copy_size = buffer_transfer
+                .dst_buffer
+                .description
+                .size
+                .min(buffer_transfer.src_buffer.description.size)
+                as vk::DeviceSize;
+
+            unsafe {
+                self.device.base.cmd_copy_buffer(
+                    command_buffer,
+                    buffer_transfer.src_buffer.handle,
+                    buffer_transfer.dst_buffer.handle,
+                    &[vk::BufferCopy {
+                        src_offset: 0,
+                        dst_offset: 0,
+                        size: copy_size,
+                    }],
+                );
+            }
+        }
+
         let image_range = vk::ImageSubresourceRange::builder()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .base_array_layer(0)
@@ -137,5 +202,6 @@ impl TransferQueue {
         }
 
         self.old_image_transfers = self.image_transfers.drain(..).collect();
+        self.old_buffer_transfers = self.buffer_transfers.drain(..).collect();
     }
 }

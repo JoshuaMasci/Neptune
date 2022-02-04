@@ -22,7 +22,7 @@ pub struct RenderDevice {
     pub synchronization2: Rc<ash::extensions::khr::Synchronization2>,
     pub push_descriptor: Rc<ash::extensions::khr::PushDescriptor>,
 }
-
+#[allow(dead_code)]
 pub struct RenderBackend {
     entry: ash::Entry,
     instance: ash::Instance,
@@ -34,8 +34,9 @@ pub struct RenderBackend {
 
     surface: vk::SurfaceKHR,
     swapchain: crate::vulkan::swapchain::Swapchain,
-
     swapchain_image_index: u32,
+
+    descriptor_set: crate::vulkan::StaticDescriptorSet,
 
     //Temp Device Frame Objects
     command_pool: vk::CommandPool,
@@ -213,6 +214,8 @@ impl RenderBackend {
         //Swapchain
         let swapchain = crate::vulkan::swapchain::Swapchain::new(&device, physical_device, surface);
 
+        let descriptor_set = crate::vulkan::StaticDescriptorSet::new(device.clone(), 2048, 2048);
+
         //TEMP Device frame stuff
         let command_pool = unsafe {
             device.base.create_command_pool(
@@ -277,6 +280,8 @@ impl RenderBackend {
             swapchain,
             swapchain_image_index: 0,
 
+            descriptor_set,
+
             command_pool,
             transfer_command_buffer: command_buffers[0],
             graphics_command_buffer: command_buffers[1],
@@ -296,6 +301,8 @@ impl RenderBackend {
                 .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
                 .expect("Failed to wait for fence")
         };
+
+        self.descriptor_set.commit_changes();
 
         let image_index = self
             .swapchain
@@ -437,7 +444,7 @@ impl RenderBackend {
                         memory_location: gpu_allocator::MemoryLocation::Unknown,
                     },
                     self.swapchain.images[swapchain_image_index],
-                    self.swapchain.image_views[swapchain_image_index],
+                    Some(self.swapchain.image_views[swapchain_image_index]),
                 ),
                 render_graph,
                 &mut self.transfer_queue,
@@ -474,3 +481,5 @@ impl Drop for RenderBackend {
         }
     }
 }
+
+
