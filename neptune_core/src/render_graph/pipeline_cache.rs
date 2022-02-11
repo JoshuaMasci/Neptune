@@ -25,8 +25,12 @@ impl PipelineCache {
         if let Some(&pipeline) = self.graphics_pipelines.get(pipeline_description) {
             pipeline
         } else {
-            //TODO: build pipline
-            vk::Pipeline::null()
+            //TODO: build pipeline
+            let new_pipeline = self.create_graphics_pipeline(pipeline_description, layout);
+            // let _ = self
+            //     .graphics_pipelines
+            //     .insert((*pipeline_description).clone(), pipeline);
+            new_pipeline
         }
     }
 
@@ -34,7 +38,7 @@ impl PipelineCache {
         &mut self,
         pipeline_description: &GraphicsPipelineDescription,
         layout: &FramebufferLayout,
-    ) {
+    ) -> vk::Pipeline {
         let entry_point_name = CString::new("main").unwrap();
 
         let mut shader_states_infos: Vec<vk::PipelineShaderStageCreateInfo> =
@@ -159,14 +163,14 @@ impl PipelineCache {
             .push_next(&mut dynamic_rendering_info)
             .build()];
 
-        let pipeline = unsafe {
+        unsafe {
             self.device.base.create_graphics_pipelines(
                 vk::PipelineCache::null(),
                 pipeline_info,
                 None,
             )
         }
-        .expect("Failed to create pipeline")[0];
+        .expect("Failed to create pipeline")[0]
     }
 }
 

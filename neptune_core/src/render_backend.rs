@@ -36,7 +36,7 @@ pub struct RenderBackend {
     swapchain: crate::vulkan::swapchain::Swapchain,
     swapchain_image_index: u32,
 
-    descriptor_set: crate::vulkan::StaticDescriptorSet,
+    descriptor_set: crate::vulkan::DescriptorSet,
 
     //Temp Device Frame Objects
     command_pool: vk::CommandPool,
@@ -214,7 +214,8 @@ impl RenderBackend {
         //Swapchain
         let swapchain = crate::vulkan::swapchain::Swapchain::new(&device, physical_device, surface);
 
-        let descriptor_set = crate::vulkan::StaticDescriptorSet::new(device.clone(), 2048, 2048);
+        let descriptor_set =
+            crate::vulkan::DescriptorSet::new(device.clone(), 2048, 2048, 2048, 128);
 
         //TEMP Device frame stuff
         let command_pool = unsafe {
@@ -481,5 +482,3 @@ impl Drop for RenderBackend {
         }
     }
 }
-
-
