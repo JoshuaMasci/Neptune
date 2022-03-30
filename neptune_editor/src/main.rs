@@ -1,4 +1,3 @@
-use neptune_core::render_graph::render_graph::RenderGraphBuilder;
 use std::time::Instant;
 pub use winit::{
     event::{Event, WindowEvent},
@@ -61,13 +60,13 @@ fn main() {
                     });
                 });
 
-                let mut render_graph = RenderGraphBuilder::new();
-                let swapchain_image = render_graph.get_swapchain_image_resource();
-                imgui_layer.build_render_pass(&mut render_graph, swapchain_image);
-                scene_layer.build_render_pass(&mut render_graph, swapchain_image);
-                if !render_backend.submit_render_graph(render_graph.build()) {
-                    imgui_layer.end_frame_no_render();
+                if !render_backend.render(|render_graph| {
+                    scene_layer.build_render_pass(render_graph, 0);
+                }) {
+                    //imgui_layer.end_frame_no_render();
                 }
+
+                imgui_layer.end_frame_no_render();
             }
             Event::RedrawRequested(_) => {}
             event => {

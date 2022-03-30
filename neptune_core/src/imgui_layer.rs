@@ -100,7 +100,7 @@ impl ImguiLayer {
         }
         .expect("Failed to create pipeline layout");
 
-        let pipeline = create_pipeline(&device.base, pipeline_layout);
+        //let pipeline = create_pipeline(&device.base, pipeline_layout);
 
         Self {
             imgui_context: Rc::new(RefCell::new(imgui_context)),
@@ -110,7 +110,7 @@ impl ImguiLayer {
             texture_sampler,
             descriptor_layout,
             pipeline_layout,
-            pipeline,
+            pipeline: vk::Pipeline::null(),
             texture_atlas_data: Some(image_data),
         }
     }
@@ -154,210 +154,210 @@ impl ImguiLayer {
         let _ = imgui_context.render();
     }
 
-    pub fn build_render_pass(
-        &mut self,
-        rgb: &mut render_graph::RenderGraphBuilder,
-        target_image: ImageHandle,
-    ) {
-        const MAX_QUAD_COUNT: usize = u16::MAX as usize;
-        const MAX_VERTEX_COUNT: usize = MAX_QUAD_COUNT * 4;
-        const MAX_INDEX_COUNT: usize = MAX_QUAD_COUNT * 6;
-        let vertex_buffer = rgb.create_buffer(render_graph::BufferResourceDescription::New(
-            BufferDescription {
-                size: MAX_VERTEX_COUNT * 20, //TODO: size of vertex
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-                memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
-            },
-        ));
-
-        let index_buffer = rgb.create_buffer(render_graph::BufferResourceDescription::New(
-            BufferDescription {
-                size: MAX_INDEX_COUNT * std::mem::size_of::<u16>(),
-                usage: vk::BufferUsageFlags::INDEX_BUFFER,
-                memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
-            },
-        ));
-
-        let pipeline_layout = self.pipeline_layout.clone();
-        let pipeline = self.pipeline.clone();
-        let imgui_context = self.imgui_context.clone();
-
-        let texture_atlas = self.texture_atlas.clone_no_drop();
-        let texture_atlas_sampler = self.texture_sampler.clone();
-        let texture_atlas_data = self.texture_atlas_data.take();
-
-        let mut imgui_pass = rgb.create_pass("ImguiPass");
-        imgui_pass.buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
-        imgui_pass.buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
-        imgui_pass.raster(vec![(target_image, [0.0, 0.5, 1.0, 0.0])], None);
-        imgui_pass.render(move |render_api, transfer_queue, pass_info, resources| {
-            if let Some(image_data) = texture_atlas_data {
-                transfer_queue.copy_to_image(
-                    &texture_atlas,
-                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    &image_data,
-                );
-            }
-
-            //Get ref to imgui context
-            let mut imgui_context = imgui_context.borrow_mut();
-
-            let vertex_buffer = &resources.buffers[vertex_buffer as usize];
-            let index_buffer = &resources.buffers[index_buffer as usize];
-
-            //Prepare to draw frame
-            let draw_data = imgui_context.render();
-
-            // //Fill Buffers
-            let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
-            vertex_buffer.fill(&vertices);
-            index_buffer.fill(&indices);
-
-            let i = 0;
-            let framebuffer_size = pass_info.framebuffer_size.unwrap();
-
-            let framebuffer_width = draw_data.framebuffer_scale[0] * draw_data.display_size[0];
-            let framebuffer_height = draw_data.framebuffer_scale[1] * draw_data.display_size[1];
-
-            unsafe {
-                render_api.device.base.cmd_bind_pipeline(
-                    render_api.command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline,
-                );
-
-                //TODO: other textures
-                let image_info = vk::DescriptorImageInfo::builder()
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .image_view(texture_atlas.view.unwrap())
-                    .sampler(texture_atlas_sampler);
-                let writes = &[vk::WriteDescriptorSet::builder()
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_binding(0)
-                    .dst_array_element(0)
-                    .image_info(&[*image_info])
-                    .build()];
-                render_api.device.push_descriptor.cmd_push_descriptor_set(
-                    render_api.command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline_layout,
-                    0,
-                    writes,
-                );
-
-                render_api.device.base.cmd_set_viewport(
-                    render_api.command_buffer,
-                    0,
-                    &[vk::Viewport {
-                        x: 0.0,
-                        y: 0.0,
-                        width: framebuffer_size.width as f32,
-                        height: framebuffer_size.height as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0,
-                    }],
-                );
-
-                //Push data
-                let mut push_data = [0f32; 4];
-                //Scale
-                push_data[0] = 2.0 / draw_data.display_size[0];
-                push_data[1] = 2.0 / draw_data.display_size[1];
-                //Translate
-                push_data[2] = -1.0 - (draw_data.display_pos[0] * push_data[0]);
-                push_data[3] = -1.0 - (draw_data.display_pos[1] * push_data[1]);
-                render_api.device.base.cmd_push_constants(
-                    render_api.command_buffer,
-                    pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    any_as_u8_slice(&push_data),
-                );
-
-                //Bind buffers
-                render_api.device.base.cmd_bind_vertex_buffers(
-                    render_api.command_buffer,
-                    0,
-                    &[vertex_buffer.handle],
-                    &[0],
-                );
-                render_api.device.base.cmd_bind_index_buffer(
-                    render_api.command_buffer,
-                    index_buffer.handle,
-                    0,
-                    vk::IndexType::UINT16,
-                );
-
-                let clip_offset = draw_data.display_pos;
-                let clip_scale = draw_data.framebuffer_scale;
-
-                let mut draw_index = 0;
-                for draw_list in draw_data.draw_lists() {
-                    for command in draw_list.commands() {
-                        match command {
-                            DrawCmd::Elements {
-                                count,
-                                cmd_params:
-                                    DrawCmdParams {
-                                        clip_rect,
-                                        texture_id,
-                                        vtx_offset,
-                                        idx_offset,
-                                    },
-                            } => {
-                                //TODO: texture_id
-                                let mut clip_rect: [f32; 4] = [
-                                    (clip_rect[0] - clip_offset[0]) * clip_scale[0],
-                                    (clip_rect[1] - clip_offset[1]) * clip_scale[1],
-                                    (clip_rect[2] - clip_offset[0]) * clip_scale[0],
-                                    (clip_rect[3] - clip_offset[1]) * clip_scale[1],
-                                ];
-
-                                if (clip_rect[0] < framebuffer_width)
-                                    && (clip_rect[1] < framebuffer_height)
-                                    && (clip_rect[2] >= 0.0)
-                                    && (clip_rect[3] >= 0.0)
-                                {
-                                    clip_rect[0] = clip_rect[0].max(0.0);
-                                    clip_rect[1] = clip_rect[1].max(0.0);
-
-                                    let scissors = [vk::Rect2D {
-                                        offset: vk::Offset2D {
-                                            x: clip_rect[0] as i32,
-                                            y: clip_rect[1] as i32,
-                                        },
-                                        extent: vk::Extent2D {
-                                            width: (clip_rect[2] - clip_rect[0]) as u32,
-                                            height: (clip_rect[3] - clip_rect[1]) as u32,
-                                        },
-                                    }];
-                                    render_api.device.base.cmd_set_scissor(
-                                        render_api.command_buffer,
-                                        0,
-                                        &scissors,
-                                    );
-
-                                    let (vertex_offset, index_offset) = offsets[draw_index];
-
-                                    render_api.device.base.cmd_draw_indexed(
-                                        render_api.command_buffer,
-                                        count as _,
-                                        1,
-                                        index_offset + idx_offset as u32,
-                                        vertex_offset + vtx_offset as i32,
-                                        0,
-                                    )
-                                }
-                            }
-                            DrawCmd::ResetRenderState => {}
-                            DrawCmd::RawCallback { .. } => {}
-                        }
-                    }
-                    draw_index += 1;
-                }
-            }
-        });
-    }
+    // pub fn build_render_pass(
+    //     &mut self,
+    //     rgb: &mut render_graph::RenderGraphBuilder,
+    //     target_image: ImageHandle,
+    // ) {
+    //     const MAX_QUAD_COUNT: usize = u16::MAX as usize;
+    //     const MAX_VERTEX_COUNT: usize = MAX_QUAD_COUNT * 4;
+    //     const MAX_INDEX_COUNT: usize = MAX_QUAD_COUNT * 6;
+    //     let vertex_buffer = rgb.create_buffer(render_graph::BufferResourceDescription::New(
+    //         BufferDescription {
+    //             size: MAX_VERTEX_COUNT * 20, //TODO: size of vertex
+    //             usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+    //             memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
+    //         },
+    //     ));
+    //
+    //     let index_buffer = rgb.create_buffer(render_graph::BufferResourceDescription::New(
+    //         BufferDescription {
+    //             size: MAX_INDEX_COUNT * std::mem::size_of::<u16>(),
+    //             usage: vk::BufferUsageFlags::INDEX_BUFFER,
+    //             memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
+    //         },
+    //     ));
+    //
+    //     let pipeline_layout = self.pipeline_layout.clone();
+    //     let pipeline = self.pipeline.clone();
+    //     let imgui_context = self.imgui_context.clone();
+    //
+    //     let texture_atlas = self.texture_atlas.clone_no_drop();
+    //     let texture_atlas_sampler = self.texture_sampler.clone();
+    //     let texture_atlas_data = self.texture_atlas_data.take();
+    //
+    //     let mut imgui_pass = rgb.create_pass("ImguiPass");
+    //     imgui_pass.buffer(vertex_buffer, render_graph::BufferAccessType::VertexBuffer);
+    //     imgui_pass.buffer(index_buffer, render_graph::BufferAccessType::IndexBuffer);
+    //     imgui_pass.raster(vec![(target_image, [0.0, 0.5, 1.0, 0.0])], None);
+    //     imgui_pass.render(move |render_api, transfer_queue, pass_info, resources| {
+    //         if let Some(image_data) = texture_atlas_data {
+    //             transfer_queue.copy_to_image(
+    //                 &texture_atlas,
+    //                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    //                 &image_data,
+    //             );
+    //         }
+    //
+    //         //Get ref to imgui context
+    //         let mut imgui_context = imgui_context.borrow_mut();
+    //
+    //         let vertex_buffer = &resources.buffers[vertex_buffer as usize];
+    //         let index_buffer = &resources.buffers[index_buffer as usize];
+    //
+    //         //Prepare to draw frame
+    //         let draw_data = imgui_context.render();
+    //
+    //         // //Fill Buffers
+    //         let (vertices, indices, offsets) = collect_mesh_buffers(&draw_data);
+    //         vertex_buffer.fill(&vertices);
+    //         index_buffer.fill(&indices);
+    //
+    //         let i = 0;
+    //         let framebuffer_size = pass_info.framebuffer_size.unwrap();
+    //
+    //         let framebuffer_width = draw_data.framebuffer_scale[0] * draw_data.display_size[0];
+    //         let framebuffer_height = draw_data.framebuffer_scale[1] * draw_data.display_size[1];
+    //
+    //         unsafe {
+    //             render_api.device.base.cmd_bind_pipeline(
+    //                 render_api.command_buffer,
+    //                 vk::PipelineBindPoint::GRAPHICS,
+    //                 pipeline,
+    //             );
+    //
+    //             //TODO: other textures
+    //             let image_info = vk::DescriptorImageInfo::builder()
+    //                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    //                 .image_view(texture_atlas.view.unwrap())
+    //                 .sampler(texture_atlas_sampler);
+    //             let writes = &[vk::WriteDescriptorSet::builder()
+    //                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+    //                 .dst_binding(0)
+    //                 .dst_array_element(0)
+    //                 .image_info(&[*image_info])
+    //                 .build()];
+    //             render_api.device.push_descriptor.cmd_push_descriptor_set(
+    //                 render_api.command_buffer,
+    //                 vk::PipelineBindPoint::GRAPHICS,
+    //                 pipeline_layout,
+    //                 0,
+    //                 writes,
+    //             );
+    //
+    //             render_api.device.base.cmd_set_viewport(
+    //                 render_api.command_buffer,
+    //                 0,
+    //                 &[vk::Viewport {
+    //                     x: 0.0,
+    //                     y: 0.0,
+    //                     width: framebuffer_size.width as f32,
+    //                     height: framebuffer_size.height as f32,
+    //                     min_depth: 0.0,
+    //                     max_depth: 1.0,
+    //                 }],
+    //             );
+    //
+    //             //Push data
+    //             let mut push_data = [0f32; 4];
+    //             //Scale
+    //             push_data[0] = 2.0 / draw_data.display_size[0];
+    //             push_data[1] = 2.0 / draw_data.display_size[1];
+    //             //Translate
+    //             push_data[2] = -1.0 - (draw_data.display_pos[0] * push_data[0]);
+    //             push_data[3] = -1.0 - (draw_data.display_pos[1] * push_data[1]);
+    //             render_api.device.base.cmd_push_constants(
+    //                 render_api.command_buffer,
+    //                 pipeline_layout,
+    //                 vk::ShaderStageFlags::VERTEX,
+    //                 0,
+    //                 any_as_u8_slice(&push_data),
+    //             );
+    //
+    //             //Bind buffers
+    //             render_api.device.base.cmd_bind_vertex_buffers(
+    //                 render_api.command_buffer,
+    //                 0,
+    //                 &[vertex_buffer.handle],
+    //                 &[0],
+    //             );
+    //             render_api.device.base.cmd_bind_index_buffer(
+    //                 render_api.command_buffer,
+    //                 index_buffer.handle,
+    //                 0,
+    //                 vk::IndexType::UINT16,
+    //             );
+    //
+    //             let clip_offset = draw_data.display_pos;
+    //             let clip_scale = draw_data.framebuffer_scale;
+    //
+    //             let mut draw_index = 0;
+    //             for draw_list in draw_data.draw_lists() {
+    //                 for command in draw_list.commands() {
+    //                     match command {
+    //                         DrawCmd::Elements {
+    //                             count,
+    //                             cmd_params:
+    //                                 DrawCmdParams {
+    //                                     clip_rect,
+    //                                     texture_id,
+    //                                     vtx_offset,
+    //                                     idx_offset,
+    //                                 },
+    //                         } => {
+    //                             //TODO: texture_id
+    //                             let mut clip_rect: [f32; 4] = [
+    //                                 (clip_rect[0] - clip_offset[0]) * clip_scale[0],
+    //                                 (clip_rect[1] - clip_offset[1]) * clip_scale[1],
+    //                                 (clip_rect[2] - clip_offset[0]) * clip_scale[0],
+    //                                 (clip_rect[3] - clip_offset[1]) * clip_scale[1],
+    //                             ];
+    //
+    //                             if (clip_rect[0] < framebuffer_width)
+    //                                 && (clip_rect[1] < framebuffer_height)
+    //                                 && (clip_rect[2] >= 0.0)
+    //                                 && (clip_rect[3] >= 0.0)
+    //                             {
+    //                                 clip_rect[0] = clip_rect[0].max(0.0);
+    //                                 clip_rect[1] = clip_rect[1].max(0.0);
+    //
+    //                                 let scissors = [vk::Rect2D {
+    //                                     offset: vk::Offset2D {
+    //                                         x: clip_rect[0] as i32,
+    //                                         y: clip_rect[1] as i32,
+    //                                     },
+    //                                     extent: vk::Extent2D {
+    //                                         width: (clip_rect[2] - clip_rect[0]) as u32,
+    //                                         height: (clip_rect[3] - clip_rect[1]) as u32,
+    //                                     },
+    //                                 }];
+    //                                 render_api.device.base.cmd_set_scissor(
+    //                                     render_api.command_buffer,
+    //                                     0,
+    //                                     &scissors,
+    //                                 );
+    //
+    //                                 let (vertex_offset, index_offset) = offsets[draw_index];
+    //
+    //                                 render_api.device.base.cmd_draw_indexed(
+    //                                     render_api.command_buffer,
+    //                                     count as _,
+    //                                     1,
+    //                                     index_offset + idx_offset as u32,
+    //                                     vertex_offset + vtx_offset as i32,
+    //                                     0,
+    //                                 )
+    //                             }
+    //                         }
+    //                         DrawCmd::ResetRenderState => {}
+    //                         DrawCmd::RawCallback { .. } => {}
+    //                     }
+    //                 }
+    //                 draw_index += 1;
+    //             }
+    //         }
+    //     });
+    // }
 }
 
 impl Drop for ImguiLayer {

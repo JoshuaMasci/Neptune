@@ -37,6 +37,19 @@ impl TransferQueue {
         }
     }
 
+    fn create_staging_buffer<T: std::marker::Copy>(&mut self, data: &[T]) -> Buffer {
+        let staging_buffer = Buffer::new(
+            &self.device,
+            BufferDescription {
+                size: std::mem::size_of::<T>() * data.len(),
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                memory_location: MemoryLocation::CpuToGpu,
+            },
+        );
+        staging_buffer.fill(data);
+        staging_buffer
+    }
+
     pub fn copy_to_buffer<T: std::marker::Copy>(&mut self, buffer: &Buffer, data: &[T]) {
         if !buffer
             .description
@@ -46,15 +59,8 @@ impl TransferQueue {
             panic!("Buffer must include vk::BufferUsageFlags::TRANSFER_DST to write to it");
         }
 
-        let staging_buffer = Buffer::new(
-            &self.device,
-            BufferDescription {
-                size: data.len(),
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                memory_location: MemoryLocation::CpuToGpu,
-            },
-        );
-        staging_buffer.fill(data);
+        let staging_buffer = self.create_staging_buffer(data);
+
         self.buffer_transfers.push(BufferTransfer {
             src_buffer: staging_buffer,
             dst_buffer: buffer.clone_no_drop(),
@@ -75,15 +81,8 @@ impl TransferQueue {
             panic!("Image must include vk::ImageUsageFlags::TRANSFER_DST to write to it");
         }
 
-        let staging_buffer = Buffer::new(
-            &self.device,
-            BufferDescription {
-                size: data.len(),
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                memory_location: MemoryLocation::CpuToGpu,
-            },
-        );
-        staging_buffer.fill(data);
+        let staging_buffer = self.create_staging_buffer(data);
+
         self.image_transfers.push(ImageTransfer {
             src_buffer: staging_buffer,
             dst_image: image.clone_no_drop(),

@@ -1,5 +1,6 @@
 use crate::render_backend::RenderDevice;
 use ash::vk;
+use ash::vk::ImageView;
 use gpu_allocator::vulkan;
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -72,15 +73,15 @@ impl Image {
 
     pub(crate) fn from_existing(
         description: ImageDescription,
-        image: vk::Image,
-        image_view: Option<vk::ImageView>,
+        handle: vk::Image,
+        view: Option<vk::ImageView>,
     ) -> Self {
         Self {
             device: None,
             description,
             memory: Default::default(),
-            handle: image,
-            view: image_view,
+            handle,
+            view,
         }
     }
 

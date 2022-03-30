@@ -1,5 +1,10 @@
-use crate::render_graph::render_graph::RenderGraphDescription;
-use crate::vulkan::{Image, ImageDescription};
+use crate::render_graph::pipeline_cache::PipelineCache;
+use crate::render_graph::render_graph::{ImageAccessType, RenderGraph, RenderPassBuilder};
+use crate::render_graph::Renderer;
+use crate::transfer_queue::TransferQueue;
+use crate::vulkan::debug_messenger::DebugMessenger;
+use crate::vulkan::swapchain::Swapchain;
+use crate::vulkan::{DescriptorSet, Image, ImageDescription};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -26,17 +31,18 @@ pub struct RenderDevice {
 pub struct RenderBackend {
     entry: ash::Entry,
     instance: ash::Instance,
-    debug_messenger: crate::vulkan::debug_messenger::DebugMessenger,
+    debug_messenger: DebugMessenger,
 
     physical_device: vk::PhysicalDevice,
     graphics_queue: vk::Queue,
     pub device: RenderDevice,
 
     surface: vk::SurfaceKHR,
-    swapchain: crate::vulkan::swapchain::Swapchain,
+    swapchain: Swapchain,
     swapchain_image_index: u32,
 
-    descriptor_set: crate::vulkan::DescriptorSet,
+    descriptor_set: DescriptorSet,
+    pipeline_layout: vk::PipelineLayout,
 
     //Temp Device Frame Objects
     command_pool: vk::CommandPool,
@@ -48,7 +54,8 @@ pub struct RenderBackend {
     present_semaphore: vk::Semaphore,
     frame_done_fence: vk::Fence,
 
-    transfer_queue: crate::transfer_queue::TransferQueue,
+    pipeline_cache: PipelineCache,
+    transfer_queue: TransferQueue,
     graph_renderer: crate::render_graph::Renderer,
 }
 
@@ -136,7 +143,7 @@ impl RenderBackend {
         let device_extension_names_raw = vec![
             ash::extensions::khr::Swapchain::name().as_ptr(),
             ash::extensions::khr::Synchronization2::name().as_ptr(),
-            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long ter
+            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long term
             ash::extensions::khr::DynamicRendering::name().as_ptr(),
         ];
 
@@ -145,7 +152,7 @@ impl RenderBackend {
                 .synchronization2(true)
                 .build();
 
-        let mut dynamic_renedering_features =
+        let mut dynamic_rendering_features =
             vk::PhysicalDeviceDynamicRenderingFeaturesKHR::builder()
                 .dynamic_rendering(true)
                 .build();
@@ -164,7 +171,7 @@ impl RenderBackend {
                     .queue_create_infos(&queue_info)
                     .enabled_extension_names(&device_extension_names_raw)
                     .push_next(&mut synchronization2_features)
-                    .push_next(&mut dynamic_renedering_features),
+                    .push_next(&mut dynamic_rendering_features),
                 None,
             )
         }
@@ -198,24 +205,22 @@ impl RenderBackend {
         let graphics_queue =
             unsafe { device.base.get_device_queue(graphics_queue_family_index, 0) };
 
-        //TODO: calculate swapchain details beforehand
-        // let swapchain_support =
-        //     SwapchainSupportDetails::new(physical_device, surface, &surface_loader);
-        // let swapchain_present_mode =
-        //     swapchain_support.get_present_mode(vk::PresentModeKHR::MAILBOX);
-        //let swapchain_format = swapchain_support.get_format(vk::Format::B8G8R8A8_UNORM);
-        // let swapchain_image_count = swapchain_support.get_image_count(3);
-        // let window_size = window.inner_size();
-        // let swapchain_size = swapchain_support.get_size(vk::Extent2D {
-        //     width: window_size.width,
-        //     height: window_size.height,
-        //});
-
         //Swapchain
         let swapchain = crate::vulkan::swapchain::Swapchain::new(&device, physical_device, surface);
 
-        let descriptor_set =
-            crate::vulkan::DescriptorSet::new(device.clone(), 2048, 2048, 2048, 128);
+        let descriptor_set = DescriptorSet::new(device.clone(), 2048, 2048, 2048, 128);
+        let pipeline_layout = unsafe {
+            device.base.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&[descriptor_set.get_layout()])
+                    .push_constant_ranges(&[vk::PushConstantRange::builder()
+                        .size(128)
+                        .stage_flags(vk::ShaderStageFlags::ALL)
+                        .build()]),
+                None,
+            )
+        }
+        .expect("Failed to create pipeline layout");
 
         //TEMP Device frame stuff
         let command_pool = unsafe {
@@ -268,7 +273,9 @@ impl RenderBackend {
         }
         .expect("Failed to create semaphore");
 
-        let transfer_queue = crate::transfer_queue::TransferQueue::new(device.clone());
+        let pipeline_cache = PipelineCache::new(device.clone(), pipeline_layout);
+        let transfer_queue = TransferQueue::new(device.clone());
+        let graph_renderer = Renderer::new();
 
         Self {
             entry,
@@ -282,6 +289,7 @@ impl RenderBackend {
             swapchain_image_index: 0,
 
             descriptor_set,
+            pipeline_layout,
 
             command_pool,
             transfer_command_buffer: command_buffers[0],
@@ -290,8 +298,9 @@ impl RenderBackend {
             image_ready_semaphore,
             present_semaphore,
             frame_done_fence,
+            pipeline_cache,
             transfer_queue,
-            graph_renderer: crate::render_graph::Renderer::new(),
+            graph_renderer,
         }
     }
 
@@ -431,25 +440,38 @@ impl RenderBackend {
         }
     }
 
-    pub fn submit_render_graph(&mut self, render_graph: RenderGraphDescription) -> bool {
+    pub fn render(&mut self, render: impl FnOnce(&mut RenderGraph)) -> bool {
         if let Some(command_buffer) = self.begin_frame() {
-            let swapchain_image_index: usize = self.swapchain_image_index as usize;
+            let mut render_graph = RenderGraph {
+                passes: vec![],
+                buffers: vec![],
+                images: vec![],
+            };
+
+            //Add swapchain image
+            let swapchain_image_handle = render_graph.import_image(
+                self.swapchain.images[self.swapchain_image_index as usize].clone(),
+                ImageAccessType::None,
+            );
+
+            render(&mut render_graph);
+
+            //Transition swapchain image to present
+            render_graph.add_render_pass(
+                RenderPassBuilder::new("PresentTransition")
+                    .image(swapchain_image_handle, ImageAccessType::Present),
+            );
+
+            //TODO: submit render_graph
             self.graph_renderer.render(
                 &self.device,
                 command_buffer,
-                Image::from_existing(
-                    ImageDescription {
-                        format: self.swapchain.format,
-                        size: [self.swapchain.size.width, self.swapchain.size.height],
-                        usage: Default::default(),
-                        memory_location: gpu_allocator::MemoryLocation::Unknown,
-                    },
-                    self.swapchain.images[swapchain_image_index],
-                    Some(self.swapchain.image_views[swapchain_image_index]),
-                ),
+                self.descriptor_set.get_set(),
                 render_graph,
+                &mut self.pipeline_cache,
                 &mut self.transfer_queue,
             );
+
             self.end_frame();
             true
         } else {
@@ -479,6 +501,10 @@ impl Drop for RenderBackend {
             self.device
                 .base
                 .destroy_semaphore(self.present_semaphore, None);
+
+            self.device
+                .base
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

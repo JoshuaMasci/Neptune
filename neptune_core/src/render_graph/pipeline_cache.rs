@@ -3,20 +3,53 @@ use ash::vk;
 use std::collections::HashMap;
 use std::ffi::CString;
 
+//TODO: Allow more complicated vertex layouts
+#[derive(Hash, Eq, PartialEq)]
+pub struct VertexLayout {
+    vertex_elements: Vec<VertexElement>,
+}
+
+//TODO: Better blending and stencil settings
+#[derive(Hash, Eq, PartialEq)]
+pub struct PipelineState {
+    cull_mode: CullMode,
+    depth_mode: DepthTestMode,
+    depth_op: DepthTestOp,
+
+    src_factor: BlendFactor,
+    dst_factor: BlendFactor,
+    blend_op: BlendOp,
+}
+
 #[derive(Hash, Eq, PartialEq)]
 pub struct FramebufferLayout {
-    color_attachments: Vec<vk::Format>,
-    depth_attachment: Option<vk::Format>,
+    pub color_attachments: Vec<vk::Format>,
+    pub depth_stencil_attachment: Option<vk::Format>,
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct GraphicsPipelineHash {
+    vertex_layout: VertexLayout,
+    framebuffer_layout: FramebufferLayout,
+    state: PipelineState,
 }
 
 pub struct PipelineCache {
     device: RenderDevice,
-    pipeline_layout: vk::PipelineLayout,
+    pub(crate) pipeline_layout: vk::PipelineLayout,
 
     graphics_pipelines: HashMap<GraphicsPipelineDescription, vk::Pipeline>,
 }
 
 impl PipelineCache {
+    pub fn new(device: RenderDevice, pipeline_layout: vk::PipelineLayout) -> Self {
+        Self {
+            device,
+            pipeline_layout,
+            graphics_pipelines: HashMap::new(),
+        }
+    }
+
     pub fn get_graphics(
         &mut self,
         pipeline_description: &GraphicsPipelineDescription,
@@ -27,9 +60,9 @@ impl PipelineCache {
         } else {
             //TODO: build pipeline
             let new_pipeline = self.create_graphics_pipeline(pipeline_description, layout);
-            // let _ = self
-            //     .graphics_pipelines
-            //     .insert((*pipeline_description).clone(), pipeline);
+            let _ = self
+                .graphics_pipelines
+                .insert((*pipeline_description).clone(), new_pipeline);
             new_pipeline
         }
     }
@@ -139,12 +172,11 @@ impl PipelineCache {
         let dynamic_states_info =
             vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
 
-        let color_formats = &[vk::Format::B8G8R8A8_UNORM];
         let mut dynamic_rendering_info = vk::PipelineRenderingCreateInfoKHR::builder()
-            .view_mask(1)
+            .view_mask(0)
             .color_attachment_formats(&layout.color_attachments);
 
-        if let Some(depth_format) = layout.depth_attachment {
+        if let Some(depth_format) = layout.depth_stencil_attachment {
             dynamic_rendering_info = dynamic_rendering_info.depth_attachment_format(depth_format);
         }
 
@@ -174,7 +206,17 @@ impl PipelineCache {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+impl Drop for PipelineCache {
+    fn drop(&mut self) {
+        for (_, pipeline) in self.graphics_pipelines.drain() {
+            unsafe {
+                self.device.base.destroy_pipeline(pipeline, None);
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum CullMode {
     None,
     Front,
@@ -193,14 +235,14 @@ impl CullMode {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum DepthTestMode {
     None,
     TestOnly,
     TestAndWrite,
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum DepthTestOp {
     Never,
     Less,
@@ -218,7 +260,7 @@ impl DepthTestOp {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum BlendFactor {
     Zero,
     One,
@@ -249,7 +291,7 @@ impl BlendFactor {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum BlendOp {
     None,
     Add,
@@ -272,7 +314,7 @@ impl BlendOp {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum VertexElement {
     float,
     float2,
@@ -301,15 +343,15 @@ impl VertexElement {
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub struct GraphicsPipelineDescription {
-    vertex_module: vk::ShaderModule,
-    fragment_shader: Option<vk::ShaderModule>,
-    cull_mode: CullMode,
-    depth_mode: DepthTestMode,
-    depth_op: DepthTestOp,
-    src_factor: BlendFactor,
-    dst_factor: BlendFactor,
-    blend_op: BlendOp, //TODO: add alpha channel blending
-    vertex_elements: Vec<VertexElement>,
+    pub(crate) vertex_module: vk::ShaderModule,
+    pub(crate) fragment_shader: Option<vk::ShaderModule>,
+    pub(crate) cull_mode: CullMode,
+    pub(crate) depth_mode: DepthTestMode,
+    pub(crate) depth_op: DepthTestOp,
+    pub(crate) src_factor: BlendFactor,
+    pub(crate) dst_factor: BlendFactor,
+    pub(crate) blend_op: BlendOp, //TODO: add alpha channel blending
+    pub(crate) vertex_elements: Vec<VertexElement>,
 }

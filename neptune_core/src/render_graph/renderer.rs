@@ -1,9 +1,10 @@
 use crate::render_backend::RenderDevice;
+use crate::render_graph::pipeline_cache::{FramebufferLayout, PipelineCache};
 use crate::render_graph::render_graph::{
     BufferAccessType, BufferResourceDescription, ImageAccessType, ImageResourceDescription,
-    RenderGraphDescription, RenderPassDescription,
+    RenderGraph, RenderPass,
 };
-use crate::render_graph::{RenderApi, RenderGraphResources, RenderPassInfo};
+use crate::render_graph::{FramebufferInfo, RenderApi, RenderGraphResources, RenderPassInfo};
 use crate::transfer_queue::TransferQueue;
 use crate::vulkan::{Buffer, Image};
 use ash::vk;
@@ -16,8 +17,8 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             resources: RenderGraphResources {
-                buffers: vec![],
-                images: vec![],
+                buffers: Vec::new(),
+                images: Vec::new(),
             },
         }
     }
@@ -26,15 +27,17 @@ impl Renderer {
         &mut self,
         device: &RenderDevice,
         command_buffer: vk::CommandBuffer,
-        swapchain_image: Image,
-        render_graph: RenderGraphDescription,
-        transfer_queue: &mut crate::transfer_queue::TransferQueue,
+        descriptor_set: vk::DescriptorSet,
+        render_graph: RenderGraph,
+        pipeline_cache: &mut PipelineCache,
+        transfer_queue: &mut TransferQueue,
     ) {
         self.resources = render_inline_temp(
             device,
             command_buffer,
-            swapchain_image,
+            descriptor_set,
             render_graph,
+            pipeline_cache,
             transfer_queue,
         );
     }
@@ -43,11 +46,12 @@ impl Renderer {
 pub fn render_inline_temp(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
-    swapchain_image: Image,
-    mut render_graph: RenderGraphDescription,
-    mut transfer_queue: &mut crate::transfer_queue::TransferQueue,
+    descriptor_set: vk::DescriptorSet,
+    mut render_graph: RenderGraph,
+    mut pipeline_cache: &mut PipelineCache,
+    mut transfer_queue: &mut TransferQueue,
 ) -> RenderGraphResources {
-    let resources = create_resources(device, &render_graph, swapchain_image);
+    let resources = create_resources(device, &render_graph);
     let mut previous_buffer_state: Vec<BufferAccessType> = resources
         .buffers
         .iter()
@@ -61,7 +65,9 @@ pub fn render_inline_temp(
 
     let mut render_api = RenderApi {
         device: device.clone(),
-        command_buffer: command_buffer.clone(),
+        command_buffer,
+        pipeline_layout: pipeline_cache.pipeline_layout,
+        descriptor_set,
     };
 
     //Execute Passes
@@ -82,7 +88,10 @@ pub fn render_inline_temp(
             &mut previous_image_state,
         );
 
-        let mut frame_buffer_size: Option<vk::Extent2D> = None;
+        let mut render_pass_info = RenderPassInfo {
+            name: pass.name.clone(),
+            framebuffer: None,
+        };
 
         if let Some(framebuffer) = &pass.framebuffer {
             let framebuffer_size: [u32; 2] = {
@@ -115,10 +124,10 @@ pub fn render_inline_temp(
                 framebuffer_size.expect("Framebuffer has no attachments")
             };
 
-            frame_buffer_size = Some(vk::Extent2D {
-                width: framebuffer_size[0],
-                height: framebuffer_size[1],
-            });
+            let mut framebuffer_layout = FramebufferLayout {
+                color_attachments: vec![],
+                depth_stencil_attachment: None,
+            };
 
             let color_attachments: Vec<vk::RenderingAttachmentInfoKHR> = framebuffer
                 .color_attachments
@@ -126,6 +135,9 @@ pub fn render_inline_temp(
                 .map(|color_attachment_description| {
                     let color_attachment =
                         &resources.images[color_attachment_description.0 as usize];
+                    framebuffer_layout
+                        .color_attachments
+                        .push(color_attachment.description.format);
 
                     vk::RenderingAttachmentInfoKHR::builder()
                         .image_view(color_attachment.view.unwrap())
@@ -156,6 +168,9 @@ pub fn render_inline_temp(
             if let Some(depth_attachment_description) = framebuffer.depth_attachment {
                 let depth_attachment = &resources.images[depth_attachment_description.0 as usize];
 
+                framebuffer_layout.depth_stencil_attachment =
+                    Some(depth_attachment.description.format);
+
                 depth_attachment_info = depth_attachment_info
                     .image_view(depth_attachment.view.unwrap())
                     .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
@@ -177,19 +192,22 @@ pub fn render_inline_temp(
                     .dynamic_rendering
                     .cmd_begin_rendering(command_buffer, &rendering_info);
             }
-        }
 
-        let render_pass_info = RenderPassInfo {
-            name: pass.name.clone(),
-            pipelines: vec![],
-            framebuffer_size: frame_buffer_size,
-        };
+            render_pass_info.framebuffer = Some(FramebufferInfo {
+                size: vk::Extent2D {
+                    width: framebuffer_size[0],
+                    height: framebuffer_size[1],
+                },
+                layout: framebuffer_layout,
+            });
+        }
 
         if let Some(render_fn) = pass.render_fn.take() {
             render_fn(
                 &mut render_api,
+                &mut pipeline_cache,
                 &mut transfer_queue,
-                &render_pass_info,
+                &mut &render_pass_info,
                 &resources,
             );
         }
@@ -238,33 +256,28 @@ pub fn render_inline_temp(
 }
 
 //TODO: reuse resources
-fn create_resources(
-    device: &RenderDevice,
-    render_graph: &RenderGraphDescription,
-    swapchain_image: Image,
-) -> RenderGraphResources {
+fn create_resources(device: &RenderDevice, render_graph: &RenderGraph) -> RenderGraphResources {
     RenderGraphResources {
         buffers: render_graph
             .buffers
             .iter()
-            .map(|buffer_resource| match buffer_resource {
+            .map(|buffer_resource| match &buffer_resource.description {
                 BufferResourceDescription::New(buffer_description) => {
-                    Buffer::new(device, buffer_description.clone())
+                    Buffer::new(device, *buffer_description)
                 }
-                BufferResourceDescription::Import(buffer) => buffer.clone_no_drop(),
+                BufferResourceDescription::Import(buffer, _) => buffer.clone_no_drop(),
             })
             .collect(),
         images: render_graph
             .images
             .iter()
-            .map(|image_resource| match image_resource {
-                ImageResourceDescription::Swapchain => swapchain_image.clone_no_drop(),
+            .map(|image_resource| match &image_resource.description {
                 ImageResourceDescription::New(image_description) => {
-                    let mut image = Image::new(device, image_description.clone());
+                    let mut image = Image::new(device, *image_description);
                     image.create_image_view();
                     image
                 }
-                ImageResourceDescription::Import(image) => image.clone_no_drop(),
+                ImageResourceDescription::Import(image, _) => image.clone_no_drop(),
             })
             .collect(),
     }
@@ -382,6 +395,13 @@ fn get_image_barrier_flags(image_access: ImageAccessType) -> (vk::ImageLayout, B
                 access: vk::AccessFlags2KHR::DEPTH_STENCIL_ATTACHMENT_WRITE,
             },
         ),
+        ImageAccessType::Present => (
+            vk::ImageLayout::PRESENT_SRC_KHR,
+            BarrierFlags {
+                stage: vk::PipelineStageFlags2KHR::ALL_COMMANDS,
+                access: vk::AccessFlags2KHR::NONE,
+            },
+        ),
     }
 }
 
@@ -391,7 +411,7 @@ fn get_image_barrier_flags(image_access: ImageAccessType) -> (vk::ImageLayout, B
 fn buffer_barriers(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
-    render_pass: &RenderPassDescription,
+    render_pass: &RenderPass,
     resources: &RenderGraphResources,
     buffer_state: &mut Vec<BufferAccessType>,
 ) {
@@ -429,7 +449,7 @@ fn buffer_barriers(
 fn image_barriers(
     device: &RenderDevice,
     command_buffer: vk::CommandBuffer,
-    render_pass: &RenderPassDescription,
+    render_pass: &RenderPass,
     resources: &RenderGraphResources,
     image_state: &mut Vec<ImageAccessType>,
 ) {

@@ -1,5 +1,7 @@
 use crate::render_backend::RenderDevice;
+use crate::vulkan::{Image, ImageDescription};
 use ash::*;
+use gpu_allocator::MemoryLocation;
 use std::rc::Rc;
 
 pub struct SwapchainSupportDetails {
@@ -93,12 +95,8 @@ pub struct Swapchain {
 
     surface: vk::SurfaceKHR,
     pub(crate) handle: vk::SwapchainKHR,
-
-    pub(crate) format: vk::Format,
-    pub(crate) size: vk::Extent2D,
     pub(crate) mode: vk::PresentModeKHR,
-    pub(crate) images: Vec<vk::Image>,
-    pub(crate) image_views: Vec<vk::ImageView>,
+    pub(crate) images: Vec<Rc<Image>>,
 }
 
 impl Swapchain {
@@ -112,11 +110,8 @@ impl Swapchain {
 
         //Temp values
         let handle = vk::SwapchainKHR::null();
-        let format = vk::Format::UNDEFINED;
-        let size = vk::Extent2D::builder().build();
         let mode = vk::PresentModeKHR::FIFO;
         let images = Vec::new();
-        let image_views = Vec::new();
 
         let mut new = Self {
             invalid: true,
@@ -126,11 +121,8 @@ impl Swapchain {
             swapchain_loader,
             surface,
             handle,
-            format,
-            size,
             mode,
             images,
-            image_views,
         };
         new.rebuild();
         new
@@ -138,15 +130,15 @@ impl Swapchain {
 
     fn rebuild(&mut self) {
         unsafe {
-            for image_view in self.image_views.drain(..) {
-                self.device.destroy_image_view(image_view, None)
+            for image in self.images.drain(..) {
+                self.device.destroy_image_view(image.view.unwrap(), None)
             }
         }
 
         let swapchain_support =
             SwapchainSupportDetails::new(self.physical_device, self.surface, &self.surface_loader);
 
-        let present_mode = swapchain_support.get_present_mode(vk::PresentModeKHR::FIFO);
+        self.mode = swapchain_support.get_present_mode(vk::PresentModeKHR::FIFO);
         let surface_format = swapchain_support.get_format(vk::Format::B8G8R8A8_UNORM);
         let image_count = swapchain_support.get_image_count(3);
 
@@ -155,6 +147,8 @@ impl Swapchain {
 
         let old_swapchain = self.handle;
 
+        let image_usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::COLOR_ATTACHMENT;
+
         let create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(self.surface)
             .min_image_count(image_count)
@@ -162,11 +156,11 @@ impl Swapchain {
             .image_format(surface_format.format)
             .image_extent(surface_size)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(image_usage)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(swapchain_support.capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(present_mode)
+            .present_mode(self.mode)
             .clipped(true)
             .old_swapchain(old_swapchain)
             .build();
@@ -174,22 +168,18 @@ impl Swapchain {
         self.handle = unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }
             .expect("Failed to create swapchain!");
 
-        self.format = surface_format.format;
-        self.size = surface_size;
-        self.mode = present_mode;
+        let images: Vec<vk::Image> =
+            unsafe { self.swapchain_loader.get_swapchain_images(self.handle) }
+                .expect("Failed to get swapchain images");
 
-        self.images = unsafe { self.swapchain_loader.get_swapchain_images(self.handle) }
-            .expect("Failed to get swapchain images");
-
-        self.image_views = self
-            .images
+        let views: Vec<vk::ImageView> = images
             .iter()
-            .map(|image| unsafe {
+            .map(|&image| unsafe {
                 self.device
                     .create_image_view(
                         &vk::ImageViewCreateInfo::builder()
-                            .format(self.format)
-                            .image(*image)
+                            .format(surface_format.format)
+                            .image(image)
                             .view_type(vk::ImageViewType::TYPE_2D)
                             .components(vk::ComponentMapping {
                                 r: vk::ComponentSwizzle::IDENTITY,
@@ -207,6 +197,21 @@ impl Swapchain {
                         None,
                     )
                     .expect("Failed to create swapchain image views")
+            })
+            .collect();
+
+        let image_description = ImageDescription {
+            format: surface_format.format,
+            size: [surface_size.width, surface_size.height],
+            usage: image_usage,
+            memory_location: MemoryLocation::GpuOnly,
+        };
+
+        self.images = images
+            .iter()
+            .zip(views.iter())
+            .map(|(&image, &view)| {
+                Rc::new(Image::from_existing(image_description, image, Some(view)))
             })
             .collect();
 
@@ -254,6 +259,12 @@ impl Swapchain {
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
+        unsafe {
+            for image in self.images.drain(..) {
+                self.device.destroy_image_view(image.view.unwrap(), None)
+            }
+        }
+
         unsafe {
             self.swapchain_loader.destroy_swapchain(self.handle, None);
         }

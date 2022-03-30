@@ -1,6 +1,7 @@
 use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
 use std::rc::Rc;
 
+use crate::render_graph::pipeline_cache::PipelineCache;
 use crate::render_graph::{
     BufferHandle, ImageHandle, RenderApi, RenderFn, RenderGraphResources, RenderPassInfo,
 };
@@ -40,172 +41,108 @@ pub enum ImageAccessType {
     ShaderSampledRead,
     ShaderStorageRead,
     ShaderStorageWrite,
+
+    Present,
 }
 
 pub enum BufferResourceDescription {
     New(BufferDescription),
-    Import(Rc<Buffer>),
+    Import(Rc<Buffer>, BufferAccessType),
+}
+
+pub struct BufferResource {
+    access_count: u16,
+    pub(crate) description: BufferResourceDescription,
 }
 
 //#[derive(PartialEq, Debug)]
 pub enum ImageResourceDescription {
-    Swapchain, //Not valid in create_image function
     New(ImageDescription),
-    Import(Rc<Image>),
+    Import(Rc<Image>, ImageAccessType),
 }
 
-pub struct RenderGraphBuilder {
-    description: Option<RenderGraphDescription>,
+pub struct ImageResource {
+    access_count: u16,
+    pub(crate) description: ImageResourceDescription,
 }
 
-//TODO: get swapchain size and format
-impl RenderGraphBuilder {
-    pub fn new() -> Self {
-        Self {
-            description: Some(RenderGraphDescription::new()),
-        }
+pub struct RenderGraph {
+    pub(crate) passes: Vec<RenderPass>,
+    pub(crate) buffers: Vec<BufferResource>,
+    pub(crate) images: Vec<ImageResource>,
+}
+
+impl RenderGraph {
+    pub fn get_swapchain_handle() -> ImageHandle {
+        0 //TODO: this
     }
 
-    pub fn get_swapchain_image_resource(&self) -> ImageHandle {
-        RenderGraphDescription::SWAPCHAIN_HANDLE
-    }
-
-    pub fn create_buffer(&mut self, buffer_description: BufferResourceDescription) -> BufferHandle {
-        let description = self
-            .description
-            .as_mut()
-            .expect("Render Graph already built");
-        let new_handle = description.buffers.len() as BufferHandle;
-        description.buffers.push(buffer_description);
+    pub fn create_buffer(&mut self, buffer_description: BufferDescription) -> BufferHandle {
+        let new_handle = self.buffers.len() as BufferHandle;
+        self.buffers.push(BufferResource {
+            access_count: 0,
+            description: BufferResourceDescription::New(buffer_description),
+        });
         new_handle
     }
 
-    pub fn create_image(&mut self, image_description: ImageResourceDescription) -> ImageHandle {
-        // assert_ne!(
-        //     image_description,
-        //     ImageResource::Swapchain,
-        //     "Cannot create image of ImageResourceDescription::Swapchain type"
-        // );
-        let description = self
-            .description
-            .as_mut()
-            .expect("Render Graph already built");
-        let new_handle = description.images.len() as ImageHandle;
-        description.images.push(image_description);
-        new_handle
-    }
-
-    pub fn create_pass(&mut self, name: &str) -> RenderPassBuilder {
-        RenderPassBuilder {
-            rgb: self,
-            description: Some(RenderPassDescription::new(name)),
-        }
-    }
-
-    pub fn build(&mut self) -> RenderGraphDescription {
-        self.description.take().expect("Render Graph already built")
-    }
-}
-
-pub struct RenderPassBuilder<'rgb> {
-    rgb: &'rgb mut RenderGraphBuilder,
-    description: Option<RenderPassDescription>,
-}
-
-impl<'s> Drop for RenderPassBuilder<'s> {
-    fn drop(&mut self) {
-        self.rgb
-            .description
-            .as_mut()
-            .unwrap()
-            .passes
-            .push(self.description.take().unwrap());
-    }
-}
-
-impl<'rg> RenderPassBuilder<'rg> {
-    pub fn buffer(&mut self, resource: BufferHandle, access: BufferAccessType) {
-        let description = self.description.as_mut().unwrap();
-        description.buffers_dependencies.push(BufferResourceAccess {
-            handle: resource,
-            access_type: access,
-        });
-    }
-
-    pub fn image(&mut self, resource: ImageHandle, access: ImageAccessType) {
-        let description = self.description.as_mut().unwrap();
-        description.images_dependencies.push(ImageResourceAccess {
-            handle: resource,
-            access_type: access,
-        });
-    }
-
-    pub fn pipeline(&mut self, pipeline_description: PipelineDescription) -> usize {
-        let description = self.description.as_mut().unwrap();
-        let index = description.pipelines.len();
-        description.pipelines.push(pipeline_description);
-        index
-    }
-
-    //TODO: clear values
-    pub fn raster(
+    pub fn import_buffer(
         &mut self,
-        color_attachments: Vec<(ImageHandle, [f32; 4])>,
-        depth_attachment: Option<(ImageHandle, f32)>,
-    ) {
-        //Setup image transitions
-        for color_attachment_description in color_attachments.iter() {
-            self.image(
-                color_attachment_description.0,
-                ImageAccessType::ColorAttachmentWrite,
-            );
-        }
-
-        if let Some(depth_attachment_description) = &depth_attachment {
-            self.image(
-                depth_attachment_description.0,
-                ImageAccessType::DepthStencilAttachmentWrite,
-            );
-        }
-
-        let description = self.description.as_mut().unwrap();
-        description.framebuffer = Some(FramebufferDescription {
-            color_attachments,
-            depth_attachment,
-        })
+        buffer: Rc<Buffer>,
+        last_access: BufferAccessType,
+    ) -> BufferHandle {
+        let new_handle = self.buffers.len() as BufferHandle;
+        self.buffers.push(BufferResource {
+            access_count: 0,
+            description: BufferResourceDescription::Import(buffer, last_access),
+        });
+        new_handle
     }
 
-    pub fn render(
-        mut self,
-        render: impl FnOnce(&mut RenderApi, &mut TransferQueue, &RenderPassInfo, &RenderGraphResources)
-            + 'static,
-    ) {
-        let prev = self
-            .description
-            .as_mut()
-            .unwrap()
-            .render_fn
-            .replace(Box::new(render));
-
-        assert!(prev.is_none(), "Already set render function");
-    }
-}
-
-pub struct RenderGraphDescription {
-    pub(crate) passes: Vec<RenderPassDescription>,
-    pub(crate) buffers: Vec<BufferResourceDescription>,
-    pub(crate) images: Vec<ImageResourceDescription>,
-}
-
-impl RenderGraphDescription {
-    const SWAPCHAIN_HANDLE: ImageHandle = 0;
-
-    fn new() -> Self {
-        Self {
-            passes: Vec::new(),
-            buffers: vec![],
-            images: vec![ImageResourceDescription::Swapchain],
+    pub fn get_buffer_description(&mut self, handle: BufferHandle) -> BufferDescription {
+        match &self.buffers[handle as usize].description {
+            BufferResourceDescription::New(description) => *description,
+            BufferResourceDescription::Import(buffer, _) => buffer.description,
         }
+    }
+
+    pub fn create_image(&mut self, image_description: ImageDescription) -> ImageHandle {
+        let new_handle = self.images.len() as ImageHandle;
+        self.images.push(ImageResource {
+            access_count: 0,
+            description: ImageResourceDescription::New(image_description),
+        });
+        new_handle
+    }
+
+    pub fn import_image(&mut self, image: Rc<Image>, last_access: ImageAccessType) -> ImageHandle {
+        let new_handle = self.images.len() as ImageHandle;
+        self.images.push(ImageResource {
+            access_count: 0,
+            description: ImageResourceDescription::Import(image, last_access),
+        });
+        new_handle
+    }
+
+    pub fn get_image_description(&mut self, handle: ImageHandle) -> ImageDescription {
+        match &self.images[handle as usize].description {
+            ImageResourceDescription::New(description) => *description,
+            ImageResourceDescription::Import(image, _) => image.description,
+        }
+    }
+
+    pub fn add_render_pass(&mut self, mut render_pass_builder: RenderPassBuilder) {
+        let render_pass = render_pass_builder.description.take().unwrap();
+
+        for buffer_accesses in render_pass.buffers_dependencies.iter() {
+            self.buffers[buffer_accesses.handle as usize].access_count += 1;
+        }
+
+        for image_accesses in render_pass.images_dependencies.iter() {
+            self.images[image_accesses.handle as usize].access_count += 1;
+        }
+
+        self.passes.push(render_pass);
     }
 }
 
@@ -219,42 +156,101 @@ pub(crate) struct ImageResourceAccess {
     pub(crate) access_type: ImageAccessType,
 }
 
-pub enum PipelineDescription {
-    Raster,
-    Compute,
-}
-
+//TODO: use AttachmentLoadOp and #[derive(Eq, PartialEq)]
 pub struct FramebufferDescription {
     pub(crate) color_attachments: Vec<(ImageHandle, [f32; 4])>,
     pub(crate) depth_attachment: Option<(ImageHandle, f32)>,
 }
 
-pub struct RenderPassDescription {
+pub struct RenderPass {
     pub(crate) name: String,
-
-    //Resources Description
     pub(crate) buffers_dependencies: Vec<BufferResourceAccess>,
     pub(crate) images_dependencies: Vec<ImageResourceAccess>,
-
-    //Pipeline Description
-    pub(crate) pipelines: Vec<PipelineDescription>,
-
-    //Framebuffer Description
     pub(crate) framebuffer: Option<FramebufferDescription>,
-
-    //Render Function
     pub(crate) render_fn: Option<Box<RenderFn>>,
 }
 
-impl RenderPassDescription {
-    fn new(name: &str) -> Self {
+pub struct RenderPassBuilder {
+    description: Option<RenderPass>,
+}
+
+impl RenderPassBuilder {
+    pub fn new(name: &str) -> Self {
         Self {
-            name: String::from(name),
-            buffers_dependencies: Vec::new(),
-            images_dependencies: Vec::new(),
-            pipelines: Vec::new(),
-            framebuffer: None,
-            render_fn: None,
+            description: Some(RenderPass {
+                name: String::from(name),
+                buffers_dependencies: vec![],
+                images_dependencies: vec![],
+                framebuffer: None,
+                render_fn: None,
+            }),
         }
+    }
+
+    pub fn buffer(mut self, resource: BufferHandle, access: BufferAccessType) -> Self {
+        let description = self.description.as_mut().unwrap();
+        description.buffers_dependencies.push(BufferResourceAccess {
+            handle: resource,
+            access_type: access,
+        });
+        self
+    }
+
+    pub fn image(mut self, resource: ImageHandle, access: ImageAccessType) -> Self {
+        let description = self.description.as_mut().unwrap();
+        description.images_dependencies.push(ImageResourceAccess {
+            handle: resource,
+            access_type: access,
+        });
+        self
+    }
+
+    pub fn raster(
+        mut self,
+        color_attachments: Vec<(ImageHandle, [f32; 4])>,
+        depth_attachment: Option<(ImageHandle, f32)>,
+    ) -> Self {
+        let description = self.description.as_mut().unwrap();
+
+        //Setup image transitions
+        for color_attachment_description in color_attachments.iter() {
+            description.images_dependencies.push(ImageResourceAccess {
+                handle: color_attachment_description.0,
+                access_type: ImageAccessType::ColorAttachmentWrite,
+            });
+        }
+        if let Some(depth_attachment_description) = &depth_attachment {
+            description.images_dependencies.push(ImageResourceAccess {
+                handle: depth_attachment_description.0,
+                access_type: ImageAccessType::DepthStencilAttachmentWrite,
+            });
+        }
+
+        description.framebuffer = Some(FramebufferDescription {
+            color_attachments,
+            depth_attachment,
+        });
+        self
+    }
+
+    pub fn render(
+        mut self,
+        render: impl FnOnce(
+                &mut RenderApi,
+                &mut PipelineCache,
+                &mut TransferQueue,
+                &RenderPassInfo,
+                &RenderGraphResources,
+            ) + 'static,
+    ) -> Self {
+        let prev = self
+            .description
+            .as_mut()
+            .unwrap()
+            .render_fn
+            .replace(Box::new(render));
+
+        assert!(prev.is_none(), "Already set render function");
+        self
     }
 }

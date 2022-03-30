@@ -175,6 +175,14 @@ impl DescriptorSet {
         new_self
     }
 
+    pub(crate) fn get_layout(&self) -> vk::DescriptorSetLayout {
+        self.layout
+    }
+
+    pub(crate) fn get_set(&self) -> vk::DescriptorSet {
+        self.set
+    }
+
     pub(crate) fn bind_storage_buffer(&mut self, buffer: &Buffer) -> u32 {
         let index = self.storage_buffer_indexes.get();
         let _ = self.storage_buffer_changes.insert(
