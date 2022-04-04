@@ -6,9 +6,9 @@ edition = "2018"
 
 [dependencies]
 winit = "0.25.0"
-ash = "0.34"
-ash-window = "0.8.0"
-gpu-allocator = "0.12.0"
+ash = "0.36"
+ash-window = "0.10.0"
+gpu-allocator = "0.17.0"
 
 cgmath = "0.18.0"
 image = "0.23.14"

@@ -66,7 +66,7 @@ impl RenderBackend {
         let engine_name: CString = CString::new("Neptune Engine").unwrap();
         let engine_version = vk::make_api_version(0, 0, 0, 0);
 
-        let entry = ash::Entry::new();
+        let entry = unsafe { ash::Entry::load() }.expect("Failed to create Vulkan Entry!");
 
         let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
         let layers_names_raw: Vec<*const i8> = layer_names
@@ -76,13 +76,9 @@ impl RenderBackend {
 
         let surface_extensions = ash_window::enumerate_required_extensions(window)
             .expect("Failed to get required surface extensions");
-        let mut extension_names_raw = surface_extensions
-            .iter()
-            .map(|ext| ext.as_ptr())
-            .collect::<Vec<_>>();
-        extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
-        extension_names_raw
-            .push(ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr());
+        let mut extension_names_raw = surface_extensions.iter().map(|ext| ext).collect::<Vec<_>>();
+        extension_names_raw.push(ash::extensions::ext::DebugUtils::name());
+        extension_names_raw.push(ash::extensions::khr::GetPhysicalDeviceProperties2::name());
 
         let app_info = vk::ApplicationInfo::builder()
             .application_name(app_name.as_c_str())
@@ -138,7 +134,11 @@ impl RenderBackend {
         let device_name = unsafe { CStr::from_ptr(device_properties.device_name.as_ptr()) }
             .to_str()
             .expect("Failed to convert CStr to string");
-        println!("Using Device:\n{}", device_name);
+
+        println!(
+            "Device: \n\tName: {}\n\tDriver: {:?}\n\tType: {:?}",
+            device_name, device_properties.driver_version, device_properties.device_type,
+        );
 
         let device_extension_names_raw = vec![
             ash::extensions::khr::Swapchain::name().as_ptr(),
