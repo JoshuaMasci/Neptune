@@ -40,7 +40,7 @@ impl Image {
                 None,
             )
         }
-        .expect("Failed to create iamge");
+        .expect("Failed to create image");
 
         let requirements = unsafe { device.base.get_image_memory_requirements(handle) };
 
@@ -129,7 +129,7 @@ impl Image {
         Self {
             device: None,
             description: self.description,
-            memory: self.memory.clone(),
+            memory: gpu_allocator::vulkan::Allocation::default(),
             handle: self.handle,
             view: self.view,
         }
@@ -139,10 +139,15 @@ impl Image {
 impl Drop for Image {
     fn drop(&mut self) {
         if let Some(device) = &self.device {
+            let allocation = std::mem::replace(
+                &mut self.memory,
+                gpu_allocator::vulkan::Allocation::default(),
+            );
+
             device
                 .allocator
                 .borrow_mut()
-                .free(self.memory.clone())
+                .free(allocation)
                 .expect("Failed to free image memory");
             unsafe {
                 if let Some(view) = self.view {

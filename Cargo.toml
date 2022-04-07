@@ -2,5 +2,6 @@
 
 members = [
     "neptune_core",
+    "neptune_graphics",
     "neptune_editor",
 ]

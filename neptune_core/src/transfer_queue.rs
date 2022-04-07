@@ -1,18 +1,18 @@
 use crate::render_backend::RenderDevice;
-use crate::vulkan::{Buffer, BufferDescription, Image};
+use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
 use ash::vk;
 use gpu_allocator::MemoryLocation;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 struct BufferTransfer {
     src_buffer: Buffer,
-    dst_buffer: Buffer,
+    dst_buffer: vk::Buffer,
+    dst_description: BufferDescription,
 }
 
 struct ImageTransfer {
     src_buffer: Buffer,
-    dst_image: Image,
+    dst_image: vk::Image,
+    dst_description: ImageDescription,
     final_layout: vk::ImageLayout,
 }
 
@@ -63,7 +63,8 @@ impl TransferQueue {
 
         self.buffer_transfers.push(BufferTransfer {
             src_buffer: staging_buffer,
-            dst_buffer: buffer.clone_no_drop(),
+            dst_buffer: buffer.handle,
+            dst_description: buffer.description,
         });
     }
 
@@ -85,7 +86,8 @@ impl TransferQueue {
 
         self.image_transfers.push(ImageTransfer {
             src_buffer: staging_buffer,
-            dst_image: image.clone_no_drop(),
+            dst_image: image.handle,
+            dst_description: image.description,
             final_layout,
         });
     }
@@ -93,8 +95,7 @@ impl TransferQueue {
     pub fn commit_transfers(&mut self, command_buffer: vk::CommandBuffer) {
         for buffer_transfer in self.buffer_transfers.iter() {
             let copy_size = buffer_transfer
-                .dst_buffer
-                .description
+                .dst_description
                 .size
                 .min(buffer_transfer.src_buffer.description.size)
                 as vk::DeviceSize;
@@ -103,7 +104,7 @@ impl TransferQueue {
                 self.device.base.cmd_copy_buffer(
                     command_buffer,
                     buffer_transfer.src_buffer.handle,
-                    buffer_transfer.dst_buffer.handle,
+                    buffer_transfer.dst_buffer,
                     &[vk::BufferCopy {
                         src_offset: 0,
                         dst_offset: 0,
@@ -126,7 +127,7 @@ impl TransferQueue {
             .iter()
             .map(|transfer| {
                 vk::ImageMemoryBarrier2KHR::builder()
-                    .image(transfer.dst_image.handle)
+                    .image(transfer.dst_image)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .src_access_mask(vk::AccessFlags2KHR::NONE)
@@ -144,7 +145,7 @@ impl TransferQueue {
             .iter()
             .map(|transfer| {
                 vk::ImageMemoryBarrier2KHR::builder()
-                    .image(transfer.dst_image.handle)
+                    .image(transfer.dst_image)
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(transfer.final_layout)
                     .src_access_mask(vk::AccessFlags2KHR::TRANSFER_WRITE)
@@ -159,7 +160,7 @@ impl TransferQueue {
             .collect();
 
         unsafe {
-            self.device.synchronization2.cmd_pipeline_barrier2(
+            self.device.base.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfoKHR::builder().image_memory_barriers(&image_barriers1),
             );
@@ -170,7 +171,7 @@ impl TransferQueue {
                 self.device.base.cmd_copy_buffer_to_image(
                     command_buffer,
                     transfer.src_buffer.handle,
-                    transfer.dst_image.handle,
+                    transfer.dst_image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &[vk::BufferImageCopy {
                         buffer_offset: 0,
@@ -184,8 +185,8 @@ impl TransferQueue {
                         },
                         image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
                         image_extent: vk::Extent3D {
-                            width: transfer.dst_image.description.size[0],
-                            height: transfer.dst_image.description.size[1],
+                            width: transfer.dst_description.size[0],
+                            height: transfer.dst_description.size[1],
                             depth: 1,
                         },
                     }],
@@ -194,7 +195,7 @@ impl TransferQueue {
         }
 
         unsafe {
-            self.device.synchronization2.cmd_pipeline_barrier2(
+            self.device.base.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfoKHR::builder().image_memory_barriers(&image_barriers2),
             );

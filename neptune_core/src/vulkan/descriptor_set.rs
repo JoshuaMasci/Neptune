@@ -5,6 +5,13 @@ use ash::vk;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub enum BindingType {
+    StorageBuffer,
+    StorageImage,
+    SampledImage,
+    Sampler,
+}
+
 pub struct DescriptorSet {
     storage_buffer_indexes: IdPool,
     storage_image_indexes: IdPool,
@@ -233,6 +240,55 @@ impl DescriptorSet {
             },
         );
         index
+    }
+
+    pub(crate) fn clear_binding(&mut self, binding_type: BindingType, binding: u32) {
+        match binding_type {
+            BindingType::StorageBuffer => {
+                self.storage_buffer_indexes.free(binding);
+                self.storage_buffer_changes.insert(
+                    binding,
+                    vk::DescriptorBufferInfo {
+                        buffer: self.empty_buffer.handle,
+                        offset: 0,
+                        range: vk::WHOLE_SIZE,
+                    },
+                );
+            }
+            BindingType::StorageImage => {
+                self.storage_image_indexes.free(binding);
+                self.storage_image_changes.insert(
+                    binding,
+                    vk::DescriptorImageInfo {
+                        sampler: vk::Sampler::null(),
+                        image_view: self.empty_image.view.unwrap(),
+                        image_layout: vk::ImageLayout::GENERAL, //Sampled images should always be in GENERAL
+                    },
+                );
+            }
+            BindingType::SampledImage => {
+                self.sampled_image_indexes.free(binding);
+                self.sampled_image_changes.insert(
+                    binding,
+                    vk::DescriptorImageInfo {
+                        sampler: vk::Sampler::null(),
+                        image_view: self.empty_image.view.unwrap(),
+                        image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, //Sampled images should always be in GENERAL
+                    },
+                );
+            }
+            BindingType::Sampler => {
+                self.sampler_indexes.free(binding);
+                self.sampler_changes.insert(
+                    binding,
+                    vk::DescriptorImageInfo {
+                        sampler: self.empty_sampler,
+                        image_view: vk::ImageView::null(),
+                        image_layout: vk::ImageLayout::UNDEFINED,
+                    },
+                );
+            }
+        }
     }
 
     pub(crate) fn commit_changes(&mut self) {

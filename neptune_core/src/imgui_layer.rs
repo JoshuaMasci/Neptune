@@ -72,33 +72,33 @@ impl ImguiLayer {
         .expect("Failed to create sampler");
 
         //TODO: replace Push Descriptors once images are supported
-        let descriptor_layout = unsafe {
-            device.base.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder()
-                    .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
-                    .bindings(&[vk::DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .descriptor_count(1)
-                        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                        .build()]),
-                None,
-            )
-        }
-        .expect("Failed to create descriptor set layout");
-
-        let pipeline_layout = unsafe {
-            device.base.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&[descriptor_layout])
-                    .push_constant_ranges(&[vk::PushConstantRange::builder()
-                        .size(64)
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .build()]),
-                None,
-            )
-        }
-        .expect("Failed to create pipeline layout");
+        // let descriptor_layout = unsafe {
+        //     device.base.create_descriptor_set_layout(
+        //         &vk::DescriptorSetLayoutCreateInfo::builder()
+        //             .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
+        //             .bindings(&[vk::DescriptorSetLayoutBinding::builder()
+        //                 .binding(0)
+        //                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //                 .descriptor_count(1)
+        //                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        //                 .build()]),
+        //         None,
+        //     )
+        // }
+        // .expect("Failed to create descriptor set layout");
+        //
+        // let pipeline_layout = unsafe {
+        //     device.base.create_pipeline_layout(
+        //         &vk::PipelineLayoutCreateInfo::builder()
+        //             .set_layouts(&[descriptor_layout])
+        //             .push_constant_ranges(&[vk::PushConstantRange::builder()
+        //                 .size(64)
+        //                 .stage_flags(vk::ShaderStageFlags::VERTEX)
+        //                 .build()]),
+        //         None,
+        //     )
+        // }
+        // .expect("Failed to create pipeline layout");
 
         //let pipeline = create_pipeline(&device.base, pipeline_layout);
 
@@ -108,8 +108,8 @@ impl ImguiLayer {
             device,
             texture_atlas,
             texture_sampler,
-            descriptor_layout,
-            pipeline_layout,
+            descriptor_layout: vk::DescriptorSetLayout::null(),
+            pipeline_layout: vk::PipelineLayout::null(),
             pipeline: vk::Pipeline::null(),
             texture_atlas_data: Some(image_data),
         }

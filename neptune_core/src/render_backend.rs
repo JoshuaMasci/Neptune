@@ -1,21 +1,15 @@
 use crate::render_graph::pipeline_cache::PipelineCache;
 use crate::render_graph::render_graph::{ImageAccessType, RenderGraph, RenderPassBuilder};
 use crate::render_graph::Renderer;
+use crate::resource_deleter::ResourceDeleter;
 use crate::transfer_queue::TransferQueue;
 use crate::vulkan::debug_messenger::DebugMessenger;
 use crate::vulkan::swapchain::Swapchain;
-use crate::vulkan::{DescriptorSet, Image, ImageDescription};
+use crate::vulkan::{Buffer, BufferDescription, DescriptorSet, Image, ImageDescription};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::rc::Rc;
-
-//TODO: this
-#[allow(dead_code)]
-pub struct ResourceDeleter {
-    base: Rc<ash::Device>,
-    allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
-}
 
 #[derive(Clone)]
 pub struct RenderDevice {
@@ -23,10 +17,8 @@ pub struct RenderDevice {
     pub allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     pub surface: Rc<ash::extensions::khr::Surface>,
     pub swapchain: Rc<ash::extensions::khr::Swapchain>,
-    pub dynamic_rendering: Rc<ash::extensions::khr::DynamicRendering>,
-    pub synchronization2: Rc<ash::extensions::khr::Synchronization2>,
-    pub push_descriptor: Rc<ash::extensions::khr::PushDescriptor>,
 }
+
 #[allow(dead_code)]
 pub struct RenderBackend {
     entry: ash::Entry,
@@ -43,6 +35,7 @@ pub struct RenderBackend {
 
     descriptor_set: DescriptorSet,
     pipeline_layout: vk::PipelineLayout,
+    resource_deleter: Rc<RefCell<ResourceDeleter>>,
 
     //Temp Device Frame Objects
     command_pool: vk::CommandPool,
@@ -76,16 +69,20 @@ impl RenderBackend {
 
         let surface_extensions = ash_window::enumerate_required_extensions(window)
             .expect("Failed to get required surface extensions");
-        let mut extension_names_raw = surface_extensions.iter().map(|ext| ext).collect::<Vec<_>>();
-        extension_names_raw.push(ash::extensions::ext::DebugUtils::name());
-        extension_names_raw.push(ash::extensions::khr::GetPhysicalDeviceProperties2::name());
+        let mut extension_names_raw = surface_extensions
+            .iter()
+            .map(|&ext| ext.as_ptr())
+            .collect::<Vec<_>>();
+        extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+        extension_names_raw
+            .push(ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr());
 
         let app_info = vk::ApplicationInfo::builder()
             .application_name(app_name.as_c_str())
             .application_version(app_version)
             .engine_name(engine_name.as_c_str())
             .engine_version(engine_version)
-            .api_version(vk::API_VERSION_1_2);
+            .api_version(vk::API_VERSION_1_3);
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
@@ -140,12 +137,7 @@ impl RenderBackend {
             device_name, device_properties.driver_version, device_properties.device_type,
         );
 
-        let device_extension_names_raw = vec![
-            ash::extensions::khr::Swapchain::name().as_ptr(),
-            ash::extensions::khr::Synchronization2::name().as_ptr(),
-            ash::extensions::khr::PushDescriptor::name().as_ptr(), //I am not sure if I want to keep this long term
-            ash::extensions::khr::DynamicRendering::name().as_ptr(),
-        ];
+        let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
         let mut synchronization2_features =
             vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
@@ -193,13 +185,6 @@ impl RenderBackend {
             allocator,
             surface: Rc::new(surface_loader),
             swapchain: Rc::new(ash::extensions::khr::Swapchain::new(&instance, &base)),
-            dynamic_rendering: Rc::new(ash::extensions::khr::DynamicRendering::new(
-                &instance, &base,
-            )),
-            synchronization2: Rc::new(ash::extensions::khr::Synchronization2::new(
-                &instance, &base,
-            )),
-            push_descriptor: Rc::new(ash::extensions::khr::PushDescriptor::new(&instance, &base)),
         };
 
         let graphics_queue =
@@ -221,6 +206,9 @@ impl RenderBackend {
             )
         }
         .expect("Failed to create pipeline layout");
+
+        //TODO: don't hardcode this value
+        let resource_deleter = Rc::new(RefCell::new(ResourceDeleter::new(2)));
 
         //TEMP Device frame stuff
         let command_pool = unsafe {
@@ -290,6 +278,7 @@ impl RenderBackend {
 
             descriptor_set,
             pipeline_layout,
+            resource_deleter,
 
             command_pool,
             transfer_command_buffer: command_buffers[0],
@@ -304,6 +293,19 @@ impl RenderBackend {
         }
     }
 
+    pub fn create_buffer(&mut self, description: BufferDescription) -> Buffer {
+        let is_storage = description
+            .usage
+            .contains(vk::BufferUsageFlags::STORAGE_BUFFER);
+        let mut buffer = Buffer::new(&self.device, self.resource_deleter.clone(), description);
+
+        if is_storage {
+            buffer.binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
+        }
+
+        buffer
+    }
+
     fn begin_frame(&mut self) -> Option<vk::CommandBuffer> {
         unsafe {
             self.device
@@ -311,7 +313,9 @@ impl RenderBackend {
                 .wait_for_fences(&[self.frame_done_fence], true, u64::MAX)
                 .expect("Failed to wait for fence")
         };
-
+        self.resource_deleter
+            .borrow_mut()
+            .clear_frame(&self.device, &mut self.descriptor_set);
         self.descriptor_set.commit_changes();
 
         let image_index = self
@@ -385,7 +389,7 @@ impl RenderBackend {
                     .signal_semaphore_infos(signal_semaphore_infos)
                     .build();
                 self.device
-                    .synchronization2
+                    .base
                     .queue_submit2(self.graphics_queue, &[submit_info], vk::Fence::null())
                     .expect("Failed to queue command buffer");
             }
@@ -420,7 +424,7 @@ impl RenderBackend {
                 .signal_semaphore_infos(signal_semaphore_infos)
                 .build();
             self.device
-                .synchronization2
+                .base
                 .queue_submit2(self.graphics_queue, &[submit_info], self.frame_done_fence)
                 .expect("Failed to queue command buffer");
 

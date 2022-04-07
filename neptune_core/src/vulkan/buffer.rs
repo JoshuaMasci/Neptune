@@ -1,5 +1,9 @@
 use crate::render_backend::RenderDevice;
+use crate::resource_deleter::ResourceDeleter;
+use crate::vulkan::BindingType;
 use ash::vk;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub struct BufferDescription {
@@ -9,14 +13,20 @@ pub struct BufferDescription {
 }
 
 pub struct Buffer {
-    device: Option<RenderDevice>,
+    resource_deleter: Rc<RefCell<ResourceDeleter>>,
+
     pub description: BufferDescription,
     pub memory: gpu_allocator::vulkan::Allocation,
     pub handle: vk::Buffer,
+    pub binding: Option<u32>,
 }
 
 impl Buffer {
-    pub(crate) fn new(device: &RenderDevice, description: BufferDescription) -> Self {
+    pub(crate) fn new(
+        device: &RenderDevice,
+        resource_deleter: Rc<RefCell<ResourceDeleter>>,
+        description: BufferDescription,
+    ) -> Self {
         let handle = unsafe {
             device.base.create_buffer(
                 &vk::BufferCreateInfo::builder()
@@ -47,10 +57,11 @@ impl Buffer {
         }
 
         Self {
-            device: Some(device.clone()),
+            resource_deleter,
             description,
             memory,
             handle,
+            binding: None,
         }
     }
 
@@ -67,28 +78,15 @@ impl Buffer {
             )
         };
     }
-
-    pub(crate) fn clone_no_drop(&self) -> Self {
-        Self {
-            device: None,
-            description: self.description,
-            memory: self.memory.clone(),
-            handle: self.handle,
-        }
-    }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        if let Some(device) = &self.device {
-            device
-                .allocator
-                .borrow_mut()
-                .free(self.memory.clone())
-                .expect("Failed to free buffer memory");
-            unsafe {
-                device.base.destroy_buffer(self.handle, None);
-            }
+        let mut resource_deleter = self.resource_deleter.borrow_mut();
+        resource_deleter.free_buffer(self.handle, std::mem::take(&mut self.memory));
+
+        if let Some(binding) = self.binding {
+            resource_deleter.free_binding(BindingType::StorageBuffer, binding);
         }
     }
 }

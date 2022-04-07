@@ -8,6 +8,7 @@ use crate::render_graph::{render_graph, ImageHandle};
 use crate::vulkan::{Buffer, BufferDescription};
 use ash::vk;
 use cgmath::Vector3;
+use std::rc::Rc;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -20,8 +21,8 @@ pub struct SceneLayer {
     device: RenderDevice,
 
     triangle_index_count: u32,
-    triangle_vertex_buffer: Buffer,
-    triangle_index_buffer: Buffer,
+    triangle_vertex_buffer: Rc<Buffer>,
+    triangle_index_buffer: Rc<Buffer>,
     triangle_transfer: Option<(Vec<ColorVertex>, Vec<u32>)>,
 
     vertex_module: vk::ShaderModule,
@@ -97,8 +98,8 @@ impl SceneLayer {
         Self {
             device,
             triangle_index_count,
-            triangle_vertex_buffer,
-            triangle_index_buffer,
+            triangle_vertex_buffer: Rc::new(triangle_vertex_buffer),
+            triangle_index_buffer: Rc::new(triangle_index_buffer),
             triangle_transfer,
             vertex_module,
             fragment_module,
@@ -106,8 +107,8 @@ impl SceneLayer {
     }
 
     pub fn build_render_pass(&mut self, render_graph: &mut RenderGraph, target_image: ImageHandle) {
-        let triangle_vertex_buffer = self.triangle_vertex_buffer.clone_no_drop();
-        let triangle_index_buffer = self.triangle_index_buffer.clone_no_drop();
+        let triangle_vertex_buffer = self.triangle_vertex_buffer.clone();
+        let triangle_index_buffer = self.triangle_index_buffer.clone();
         let triangle_index_count = self.triangle_index_count;
 
         let triangle_transfer = self.triangle_transfer.take();

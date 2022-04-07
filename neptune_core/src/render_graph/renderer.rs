@@ -189,7 +189,7 @@ pub fn render_inline_temp(
 
             unsafe {
                 device
-                    .dynamic_rendering
+                    .base
                     .cmd_begin_rendering(command_buffer, &rendering_info);
             }
 
@@ -214,7 +214,7 @@ pub fn render_inline_temp(
 
         if pass.framebuffer.is_some() {
             unsafe {
-                device.dynamic_rendering.cmd_end_rendering(command_buffer);
+                device.base.cmd_end_rendering(command_buffer);
             }
         }
     }
@@ -224,7 +224,7 @@ pub fn render_inline_temp(
         let swapchain_image_handle = 0usize;
         let src_flags = get_image_barrier_flags(previous_image_state[swapchain_image_handle]);
         unsafe {
-            device.synchronization2.cmd_pipeline_barrier2(
+            device.base.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfoKHR::builder().image_memory_barriers(&[
                     vk::ImageMemoryBarrier2KHR::builder()
@@ -265,7 +265,7 @@ fn create_resources(device: &RenderDevice, render_graph: &RenderGraph) -> Render
                 BufferResourceDescription::New(buffer_description) => {
                     Buffer::new(device, *buffer_description)
                 }
-                BufferResourceDescription::Import(buffer, _) => buffer.clone_no_drop(),
+                BufferResourceDescription::Import(buffer, _) => unreachable!(),
             })
             .collect(),
         images: render_graph
@@ -436,7 +436,7 @@ fn buffer_barriers(
         .collect();
 
     unsafe {
-        device.synchronization2.cmd_pipeline_barrier2(
+        device.base.cmd_pipeline_barrier2(
             command_buffer,
             &vk::DependencyInfoKHR::builder().buffer_memory_barriers(&buffer_barriers),
         );
@@ -484,7 +484,7 @@ fn image_barriers(
         .collect();
 
     unsafe {
-        device.synchronization2.cmd_pipeline_barrier2(
+        device.base.cmd_pipeline_barrier2(
             command_buffer,
             &vk::DependencyInfoKHR::builder().image_memory_barriers(&image_barriers),
         );
