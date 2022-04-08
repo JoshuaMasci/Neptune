@@ -56,7 +56,8 @@ impl SceneLayer {
 
         let triangle_index_count: u32 = triangle_index_data.len() as u32;
         let triangle_vertex_buffer: Buffer = Buffer::new(
-            &device,
+            device.base.clone(),
+            device.allocator.clone(),
             BufferDescription {
                 size: std::mem::size_of::<ColorVertex>() * triangle_vertex_data.len(),
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
@@ -64,7 +65,8 @@ impl SceneLayer {
             },
         );
         let triangle_index_buffer: Buffer = Buffer::new(
-            &device,
+            device.base.clone(),
+            device.allocator.clone(),
             BufferDescription {
                 size: std::mem::size_of::<u32>() * triangle_index_data.len(),
                 usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,

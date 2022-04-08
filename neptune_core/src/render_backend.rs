@@ -193,7 +193,9 @@ impl RenderBackend {
         //Swapchain
         let swapchain = crate::vulkan::swapchain::Swapchain::new(&device, physical_device, surface);
 
-        let descriptor_set = DescriptorSet::new(device.clone(), 2048, 2048, 2048, 128);
+        let descriptor_set =
+            DescriptorSet::new(device.base.clone(), &allocator, 2048, 2048, 2048, 128);
+
         let pipeline_layout = unsafe {
             device.base.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::builder()
@@ -293,19 +295,6 @@ impl RenderBackend {
         }
     }
 
-    pub fn create_buffer(&mut self, description: BufferDescription) -> Buffer {
-        let is_storage = description
-            .usage
-            .contains(vk::BufferUsageFlags::STORAGE_BUFFER);
-        let mut buffer = Buffer::new(&self.device, self.resource_deleter.clone(), description);
-
-        if is_storage {
-            buffer.binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
-        }
-
-        buffer
-    }
-
     fn begin_frame(&mut self) -> Option<vk::CommandBuffer> {
         unsafe {
             self.device
@@ -315,7 +304,7 @@ impl RenderBackend {
         };
         self.resource_deleter
             .borrow_mut()
-            .clear_frame(&self.device, &mut self.descriptor_set);
+            .clear_frame(&mut self.descriptor_set);
         self.descriptor_set.commit_changes();
 
         let image_index = self
@@ -509,6 +498,52 @@ impl Drop for RenderBackend {
             self.device
                 .base
                 .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}
+
+struct DeviceResources {
+    device: Rc<ash::Device>,
+    allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
+    descriptor_set: DescriptorSet,
+    resource_deleter: Rc<RefCell<ResourceDeleter>>,
+}
+
+impl DeviceResources {
+    fn new(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        device: Rc<ash::Device>,
+        frame_count: usize,
+    ) -> Self {
+        let allocator = Rc::new(RefCell::new(
+            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance: instance.clone(),
+                device: *device,
+                physical_device,
+                debug_settings: Default::default(),
+                buffer_device_address: false,
+            })
+            .expect("Failed to create device allocator"),
+        ));
+
+        let resource_deleter = Rc::new(RefCell::new(ResourceDeleter::new(frame_count)));
+
+        const DESCRIPTOR_COUNT: u32 = 2048;
+        let descriptor_set = DescriptorSet::new(
+            device.clone(),
+            &allocator,
+            DESCRIPTOR_COUNT,
+            DESCRIPTOR_COUNT,
+            DESCRIPTOR_COUNT,
+            128,
+        );
+
+        Self {
+            device,
+            allocator,
+            descriptor_set,
+            resource_deleter,
         }
     }
 }

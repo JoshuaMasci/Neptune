@@ -1,7 +1,6 @@
 mod buffer;
 pub mod debug_messenger;
 mod descriptor_set;
-pub mod framebuffer;
 mod image;
 pub mod swapchain;
 

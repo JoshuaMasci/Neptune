@@ -39,7 +39,8 @@ impl TransferQueue {
 
     fn create_staging_buffer<T: std::marker::Copy>(&mut self, data: &[T]) -> Buffer {
         let staging_buffer = Buffer::new(
-            &self.device,
+            self.device.base.clone(),
+            self.device.allocator.clone(),
             BufferDescription {
                 size: std::mem::size_of::<T>() * data.len(),
                 usage: vk::BufferUsageFlags::TRANSFER_SRC,

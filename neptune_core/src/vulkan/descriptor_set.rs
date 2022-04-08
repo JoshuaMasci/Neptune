@@ -1,7 +1,9 @@
 use crate::id_pool::IdPool;
 use crate::render_backend::RenderDevice;
+use crate::resource_deleter::ResourceDeleter;
 use crate::vulkan::{Buffer, BufferDescription, Image, ImageDescription};
 use ash::vk;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -42,14 +44,16 @@ impl DescriptorSet {
     const SAMPLER_BINDING: u32 = 4;
 
     pub(crate) fn new(
-        device: RenderDevice,
+        device: Rc<ash::Device>,
+        allocator: &Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
         storage_buffer_count: u32,
         storage_image_count: u32,
         sampled_image_count: u32,
         sampler_count: u32,
     ) -> Self {
         let empty_buffer = Buffer::new(
-            &device,
+            device.clone(),
+            allocator.clone(),
             BufferDescription {
                 size: 16,
                 usage: vk::BufferUsageFlags::STORAGE_BUFFER,
@@ -58,7 +62,8 @@ impl DescriptorSet {
         );
 
         let mut empty_image = Image::new(
-            &device,
+            device.clone(),
+            allocator.clone(),
             ImageDescription {
                 format: vk::Format::R8G8B8A8_UNORM,
                 size: [16; 2],
@@ -69,7 +74,7 @@ impl DescriptorSet {
         empty_image.create_image_view();
 
         let empty_sampler = unsafe {
-            device.base.create_sampler(
+            device.create_sampler(
                 &vk::SamplerCreateInfo::builder()
                     .mag_filter(vk::Filter::NEAREST)
                     .min_filter(vk::Filter::NEAREST)
@@ -83,7 +88,7 @@ impl DescriptorSet {
         .expect("Failed to create image sampler");
 
         let layout = unsafe {
-            device.base.create_descriptor_set_layout(
+            device.create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::builder()
                     .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
                     .bindings(&[
@@ -119,7 +124,7 @@ impl DescriptorSet {
         .expect("Failed to create descriptor set layout");
 
         let pool = unsafe {
-            device.base.create_descriptor_pool(
+            device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::builder()
                     .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                     .max_sets(1)
@@ -148,7 +153,7 @@ impl DescriptorSet {
         .expect("Failed to create descriptor pool");
 
         let set = unsafe {
-            device.base.allocate_descriptor_sets(
+            device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
                     .descriptor_pool(pool)
                     .set_layouts(&[layout]),
@@ -168,7 +173,7 @@ impl DescriptorSet {
             storage_image_changes: HashMap::new(),
             sampled_image_changes: HashMap::new(),
             sampler_changes: HashMap::new(),
-            device: device.base,
+            device,
             layout,
             pool,
             set,

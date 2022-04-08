@@ -1,4 +1,4 @@
-use crate::render_backend::RenderDevice;
+use crate::resource::ResourceDrop;
 use crate::resource_deleter::ResourceDeleter;
 use crate::vulkan::BindingType;
 use ash::vk;
@@ -13,22 +13,23 @@ pub struct BufferDescription {
 }
 
 pub struct Buffer {
-    resource_deleter: Rc<RefCell<ResourceDeleter>>,
+    device: Rc<ash::Device>,
+    allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
 
     pub description: BufferDescription,
-    pub memory: gpu_allocator::vulkan::Allocation,
+    pub allocation: gpu_allocator::vulkan::Allocation,
     pub handle: vk::Buffer,
     pub binding: Option<u32>,
 }
 
 impl Buffer {
     pub(crate) fn new(
-        device: &RenderDevice,
-        resource_deleter: Rc<RefCell<ResourceDeleter>>,
+        device: Rc<ash::Device>,
+        allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
         description: BufferDescription,
     ) -> Self {
         let handle = unsafe {
-            device.base.create_buffer(
+            device.create_buffer(
                 &vk::BufferCreateInfo::builder()
                     .size(description.size as vk::DeviceSize)
                     .usage(description.usage),
@@ -36,10 +37,9 @@ impl Buffer {
             )
         }
         .expect("Failed to create buffer");
-        let requirements = unsafe { device.base.get_buffer_memory_requirements(handle) };
+        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
 
-        let memory = device
-            .allocator
+        let allocation = allocator
             .borrow_mut()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: "Buffer Allocation",
@@ -51,15 +51,15 @@ impl Buffer {
 
         unsafe {
             device
-                .base
-                .bind_buffer_memory(handle, memory.memory(), memory.offset())
+                .bind_buffer_memory(handle, allocation.memory(), allocation.offset())
                 .expect("Failed to bind buffer memory");
         }
 
         Self {
-            resource_deleter,
+            device,
+            allocator,
             description,
-            memory,
+            allocation,
             handle,
             binding: None,
         }
@@ -69,7 +69,7 @@ impl Buffer {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 data.as_ptr(),
-                self.memory
+                self.allocation
                     .mapped_ptr()
                     .expect("Failed to map buffer memory")
                     .cast()
@@ -82,11 +82,20 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        let mut resource_deleter = self.resource_deleter.borrow_mut();
-        resource_deleter.free_buffer(self.handle, std::mem::take(&mut self.memory));
+        let allocation = std::mem::take(&mut self.allocation);
 
-        if let Some(binding) = self.binding {
-            resource_deleter.free_binding(BindingType::StorageBuffer, binding);
+        self.allocator
+            .get_mut()
+            .free(allocation)
+            .expect("Failed to free buffer memory");
+        unsafe {
+            self.device.destroy_buffer(self.handle, None);
         }
+    }
+}
+
+impl ResourceDrop for Buffer {
+    fn drop_resource(deleter: &mut ResourceDeleter, resource: Self) {
+        deleter.free_buffer(resource);
     }
 }

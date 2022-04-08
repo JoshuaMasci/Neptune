@@ -6,11 +6,9 @@ use std::time::Instant;
 
 use crate::render_backend::RenderDevice;
 use crate::render_graph::{render_graph, ImageHandle};
-use crate::vulkan::framebuffer::FrameBufferSet;
 use crate::vulkan::{Buffer, BufferDescription};
 use crate::vulkan::{Image, ImageDescription};
 use ash::vk;
-use ash::vk::Offset2D;
 use gpu_allocator::MemoryLocation;
 use imgui::{DrawCmd, DrawCmdParams, DrawData, DrawIdx, DrawVert};
 
@@ -43,7 +41,8 @@ impl ImguiLayer {
         let image_data = imgui_context.fonts().build_alpha8_texture();
 
         let mut texture_atlas = Image::new(
-            &device,
+            device.base.clone(),
+            device.allocator.clone(),
             ImageDescription {
                 format: vk::Format::R8_UNORM,
                 size: [image_data.width, image_data.height],

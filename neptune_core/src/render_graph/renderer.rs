@@ -262,9 +262,11 @@ fn create_resources(device: &RenderDevice, render_graph: &RenderGraph) -> Render
             .buffers
             .iter()
             .map(|buffer_resource| match &buffer_resource.description {
-                BufferResourceDescription::New(buffer_description) => {
-                    Buffer::new(device, *buffer_description)
-                }
+                BufferResourceDescription::New(buffer_description) => Buffer::new(
+                    device.base.clone(),
+                    device.allocator.clone(),
+                    *buffer_description,
+                ),
                 BufferResourceDescription::Import(buffer, _) => unreachable!(),
             })
             .collect(),
@@ -273,11 +275,15 @@ fn create_resources(device: &RenderDevice, render_graph: &RenderGraph) -> Render
             .iter()
             .map(|image_resource| match &image_resource.description {
                 ImageResourceDescription::New(image_description) => {
-                    let mut image = Image::new(device, *image_description);
+                    let mut image = Image::new(
+                        device.base.clone(),
+                        device.allocator.clone(),
+                        *image_description,
+                    );
                     image.create_image_view();
                     image
                 }
-                ImageResourceDescription::Import(image, _) => image.clone_no_drop(),
+                ImageResourceDescription::Import(image, _) => unreachable!("IDK to do here bro"),
             })
             .collect(),
     }
