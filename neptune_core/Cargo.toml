@@ -2,7 +2,7 @@
 name = "neptune_core"
 version = "0.1.0"
 authors = ["Joshua_Masci <iamshortman@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 winit = "0.25.0"

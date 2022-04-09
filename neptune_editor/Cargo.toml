@@ -2,8 +2,8 @@
 name = "neptune_editor"
 version = "0.1.0"
 authors = ["Joshua_Masci <iamshortman@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-winit = "0.25.0"
-neptune_core = { path = "../neptune_core"}
+winit = "0.26"
+neptune_graphics = { path = "../neptune_graphics"}

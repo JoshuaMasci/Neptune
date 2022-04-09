@@ -1,48 +1,78 @@
 use crate::MemoryType;
 use bitflags::bitflags;
-use std::sync::Arc;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum Format {
-    R8_UNORM,
-    RG8_UNORM,
-    RGB8_UNORM,
-    RGBA8_UNORM,
+pub enum TextureFormat {
+    //Color Formats
+    Unknown,
+    R8Unorm,
+    Rg8Unorm,
+    Rgb8Unorm,
+    Rgba8Unorm,
 
-    R8_SNORM,
-    RG8_SNORM,
-    RGB8_SNORM,
-    RGBA8_SNORM,
+    R8Snorm,
+    Rg8Snorm,
+    Rgb8Snorm,
+    Rgba8Snorm,
 
-    R8_UINT,
-    RG8_UINT,
-    RGB8_UINT,
-    RGBA8_UINT,
+    R8Uint,
+    Rg8Uint,
+    Rgb8Uint,
+    Rgba8Uint,
 
-    R8_SINT,
-    RG8_SINT,
-    RGB8_SINT,
-    RGBA8_SINT,
+    R8Sint,
+    Rg8Sint,
+    Rgb8Sint,
+    Rgba8Sint,
 
-    R16_UNORM,
-    RG16_UNORM,
-    RGB16_UNORM,
-    RGBA16_UNORM,
+    R16Unorm,
+    Rg16Unorm,
+    Rgb16Unorm,
+    Rgba16Unorm,
 
-    R16_SNORM,
-    RG16_SNORM,
-    RGB16_SNORM,
-    RGBA16_SNORM,
+    R16Snorm,
+    Rg16Snorm,
+    Rgb16Snorm,
+    Rgba16Snorm,
 
-    R16_UINT,
-    RG16_UINT,
-    RGB16_UINT,
-    RGBA16_UINT,
+    R16Uint,
+    Rg16Uint,
+    Rgb16Uint,
+    Rgba16Uint,
 
-    R16_SINT,
-    RG16_SINT,
-    RGB16_SINT,
-    RGBA16_SINT,
+    R16Sint,
+    Rg16Sint,
+    Rgb16Sint,
+    Rgba16Sint,
+
+    //Depth Stencil Formats
+    D16Unorm,
+    D24UnormS8Uint,
+    D32Float,
+    D32FloatS8Uint,
+}
+
+impl TextureFormat {
+    pub fn is_color(self) -> bool {
+        match self {
+            TextureFormat::Unknown
+            | TextureFormat::D16Unorm
+            | TextureFormat::D24UnormS8Uint
+            | TextureFormat::D32Float
+            | TextureFormat::D32FloatS8Uint => false,
+            _ => true,
+        }
+    }
+
+    pub fn is_depth(self) -> bool {
+        match self {
+            TextureFormat::D16Unorm
+            | TextureFormat::D24UnormS8Uint
+            | TextureFormat::D32Float
+            | TextureFormat::D32FloatS8Uint => true,
+            _ => false,
+        }
+    }
 }
 
 bitflags! {
@@ -50,30 +80,26 @@ bitflags! {
         const TRANSFER_SRC = 1 << 0;
         const TRANSFER_DST = 1 << 1;
         const STORAGE = 1 << 2;
-        const SAMPLED = 1 << 1;
-        const ATTACHMENT = 1 << 2;
+        const SAMPLED = 1 << 3;
+        const COLOR_ATTACHMENT = 1 << 4;
+        const DEPTH_STENCIL_ATTACHMENT = 1 << 5;
+        const INPUT_ATTACHMENT = 1 << 6;
+        const TRANSIENT_ATTACHMENT = 1 << 7;
     }
 }
 
-//TODO: tie this type to DeviceImpl???
-pub type TextureId = u32;
-pub type TextureCubeId = u32;
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum TextureDimensions {
+    D1(u32),
+    D2(u32, u32),
+    D3(u32, u32, u32),
+}
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+//TODO: Texture Mips + Mip Auto filler function
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct TextureDescription {
-    pub name: String,
-    pub format: Format,
+    pub format: TextureFormat,
+    pub size: TextureDimensions,
     pub usage: TextureUsages,
     pub memory_type: MemoryType,
-    pub mip_levels: u32,
-}
-
-pub struct Texture {
-    device: Arc<dyn crate::internal::DeviceImpl>,
-    handle: TextureId,
-}
-
-pub struct TextureCube {
-    device: Arc<dyn crate::internal::DeviceImpl>,
-    handle: TextureCubeId,
 }

@@ -2,12 +2,12 @@
 name = "neptune_graphics"
 version = "0.1.0"
 authors = ["Joshua_Masci <iamshortman@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 bitflags = "1.3"
-winit = "0.25.0"
+winit = "0.26"
 ash = "0.36"
-ash-window = "0.9.0"
-gpu-allocator = "0.17.0"
+ash-window = "0.9.1"
+gpu-allocator = "0.17"
 

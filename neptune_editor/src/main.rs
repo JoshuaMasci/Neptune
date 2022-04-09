@@ -1,3 +1,4 @@
+use neptune_graphics::{BufferUsages, MemoryType};
 use std::time::Instant;
 pub use winit::{
     event::{Event, WindowEvent},
@@ -13,10 +14,30 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut render_backend = neptune_core::render_backend::RenderBackend::new(&window);
-    let mut imgui_layer =
-        neptune_core::imgui_layer::ImguiLayer::new(&window, render_backend.device.clone());
-    let mut scene_layer = neptune_core::scene_layer::SceneLayer::new(render_backend.device.clone());
+    {
+        let vulkan_instance =
+            neptune_graphics::vulkan::Instance::new(&window, "Neptune Editor", true);
+        let mut vulkan_device = vulkan_instance.create_device(0, 3);
+
+        let _ = vulkan_device.create_buffer(
+            neptune_graphics::BufferDescription {
+                size: 2048,
+                usage: BufferUsages::STORAGE,
+                memory_type: MemoryType::GpuOnly,
+            },
+            "Test Buffer",
+        );
+
+        let _ = vulkan_device.create_texture(
+            neptune_graphics::TextureDescription {
+                format: neptune_graphics::TextureFormat::Rgba8Unorm,
+                size: neptune_graphics::TextureDimensions::D2(16, 16),
+                usage: neptune_graphics::TextureUsages::SAMPLED,
+                memory_type: MemoryType::GpuOnly,
+            },
+            "Test Texture",
+        );
+    }
 
     let mut last_frame = Instant::now();
 
@@ -24,7 +45,6 @@ fn main() {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::NewEvents(_) => {
-                imgui_layer.update_time(last_frame);
                 last_frame = Instant::now();
             }
             Event::WindowEvent {
@@ -32,45 +52,14 @@ fn main() {
                 ..
             } => {
                 println!("The close button was pressed; stopping");
-                let _ = unsafe { render_backend.device.base.device_wait_idle() };
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                imgui_layer.build_frame(&window, move |ui| {
-                    let _dock_space_id = neptune_core::imgui_docking::enable_docking();
-
-                    ui.window("Hello World1").build(|| {
-                        ui.text("Hello world!");
-                        ui.text("こんにちは世界！");
-                        ui.text("This...is...imgui-rs!");
-                        ui.separator();
-                        let mouse_pos = ui.io().mouse_pos;
-                        ui.text(format!(
-                            "Mouse Position: ({:.1},{:.1})",
-                            mouse_pos[0], mouse_pos[1]
-                        ));
-                    });
-
-                    ui.window("Hello World2").build(|| {
-                        ui.text("Hello world!");
-                    });
-
-                    ui.window("Goodbye World").build(|| {
-                        ui.text("Goodbye World");
-                    });
-                });
-
-                if !render_backend.render(|render_graph| {
-                    scene_layer.build_render_pass(render_graph, 0);
-                }) {
-                    //imgui_layer.end_frame_no_render();
-                }
-
-                imgui_layer.end_frame_no_render();
+                //TODO: Render Here?
             }
             Event::RedrawRequested(_) => {}
             event => {
-                imgui_layer.handle_event(&window, &event);
+                //imgui_layer.handle_event(&window, &event);
             }
         }
     });

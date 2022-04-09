@@ -1,11 +1,15 @@
-pub mod buffer;
-mod internal;
+mod buffer;
+mod id_pool;
+mod resource;
 mod texture;
+pub mod vulkan;
 
-use std::ops::Range;
-use std::sync::Arc;
-
-pub struct Surface {}
+pub use buffer::BufferDescription;
+pub use buffer::BufferUsages;
+pub use texture::TextureDescription;
+pub use texture::TextureDimensions;
+pub use texture::TextureFormat;
+pub use texture::TextureUsages;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum MemoryType {
@@ -14,46 +18,12 @@ pub enum MemoryType {
     GpuToCpu,
 }
 
-pub struct Device {
-    device: Arc<dyn crate::internal::DeviceImpl>,
-}
-
-impl Device {
-    fn create_buffer(&mut self, desription: &crate::buffer::BufferDescription) {}
-
-    fn create_texture_1d(&mut self, size: u32, description: &crate::texture::TextureDescription) {}
-    fn create_texture_2d(
-        &mut self,
-        size: [u32; 2],
-        description: &crate::texture::TextureDescription,
-    ) {
+impl MemoryType {
+    pub fn to_gpu_alloc(self) -> gpu_allocator::MemoryLocation {
+        match self {
+            MemoryType::GpuOnly => gpu_allocator::MemoryLocation::GpuOnly,
+            MemoryType::CpuToGpu => gpu_allocator::MemoryLocation::CpuToGpu,
+            MemoryType::GpuToCpu => gpu_allocator::MemoryLocation::GpuToCpu,
+        }
     }
-    fn create_texture_3d(
-        &mut self,
-        size: [u32; 3],
-        description: &crate::texture::TextureDescription,
-    ) {
-    }
-    fn create_texture_cube(
-        &mut self,
-        size: [u32; 2],
-        description: &crate::texture::TextureDescription,
-    ) {
-    }
-
-    //TODO: add render graph
-    fn render(&mut self) {}
-}
-
-pub trait CommandBuffer {
-    fn bind_compute_pipeline(&mut self);
-    fn dispatch_compute(&mut self);
-
-    fn bind_graphics_pipeline(&mut self);
-    fn bind_index_buffers(&mut self, buffer: &crate::buffer::Buffer);
-
-    fn set_viewport(&mut self);
-    fn set_scissor(&mut self);
-
-    fn draw_indexed(&mut self, indices: Range<u32>, instances: Range<u32>);
 }
