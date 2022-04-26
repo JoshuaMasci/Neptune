@@ -1,19 +1,22 @@
 use crate::buffer::BufferDescription;
+use crate::render_graph::{BufferResourceDescription, RenderGraph, TextureHandle};
 use crate::resource::{Resource, ResourceDeleter};
 use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::descriptor_set::DescriptorSet;
+use crate::vulkan::swapchain::Swapchain;
 use crate::vulkan::texture::Texture;
 use crate::{BufferUsages, TextureUsages};
 use ash::vk;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
 
 struct DeviceDrop(Rc<ash::Device>);
 impl DeviceDrop {
     fn new(device: &Rc<ash::Device>) -> Self {
-        Self { 0: device.clone() }
+        Self(device.clone())
     }
 }
 
@@ -25,10 +28,66 @@ impl Drop for DeviceDrop {
     }
 }
 
+#[derive(Clone)]
+struct CommandPool {
+    device: Rc<ash::Device>,
+    command_pool: vk::CommandPool,
+}
+impl CommandPool {
+    fn new(device: Rc<ash::Device>, graphics_queue_family_index: u32) -> Self {
+        let command_pool = unsafe {
+            device.create_command_pool(
+                &vk::CommandPoolCreateInfo::builder()
+                    .queue_family_index(graphics_queue_family_index)
+                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                    .build(),
+                None,
+            )
+        }
+        .expect("Failed to create command pool");
+
+        Self {
+            device,
+            command_pool,
+        }
+    }
+
+    fn create_command_buffer(&self) -> vk::CommandBuffer {
+        unsafe {
+            self.device.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::builder()
+                    .command_pool(self.command_pool)
+                    .command_buffer_count(1)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .build(),
+            )
+        }
+        .expect("Failed to allocate command_buffers")[0]
+    }
+}
+
+impl Drop for CommandPool {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_command_pool(self.command_pool, None);
+        }
+    }
+}
+
+pub struct SwapchainImage {
+    handle: TextureHandle,
+    size: [u32; 2],
+}
+
 pub struct Device {
     device: Rc<ash::Device>,
     resource_deleter: Rc<RefCell<ResourceDeleter>>,
     descriptor_set: DescriptorSet,
+
+    swapchain: Swapchain,
+
+    frame_index: usize,
+    frames: Vec<Frame>,
 
     allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     device_drop: DeviceDrop,
@@ -40,6 +99,8 @@ pub struct Device {
 impl Device {
     pub(crate) fn new(
         instance: &ash::Instance,
+        surface: vk::SurfaceKHR,
+        surface_ext: Rc<ash::extensions::khr::Surface>,
         physical_device: vk::PhysicalDevice,
         graphics_queue_family_index: u32,
         frame_in_flight_count: u32,
@@ -131,14 +192,37 @@ impl Device {
 
         let resource_deleter = ResourceDeleter::new(frame_in_flight_count as usize);
 
+        let swapchain = Swapchain::new(
+            physical_device,
+            device.clone(),
+            surface_ext,
+            surface,
+            Rc::new(ash::extensions::khr::Swapchain::new(
+                instance,
+                device.as_ref(),
+            )),
+        );
+
+        let command_pool = Rc::new(CommandPool::new(
+            device.clone(),
+            graphics_queue_family_index,
+        ));
+
+        let frames: Vec<Frame> = (0..frame_in_flight_count)
+            .map(|_| Frame::new(device.clone(), command_pool.clone()))
+            .collect();
+
         let device_drop = DeviceDrop::new(&device);
         Self {
             device,
-            allocator,
             resource_deleter,
-            graphics_queue,
-            device_drop,
             descriptor_set,
+            swapchain,
+            frame_index: 0,
+            frames,
+            allocator,
+            device_drop,
+            graphics_queue,
         }
     }
 
@@ -188,12 +272,190 @@ impl Device {
 
         Resource::new(texture, self.resource_deleter.clone())
     }
+
+    pub fn render(&mut self, build_render_graph: impl FnOnce(&mut RenderGraph, SwapchainImage)) {
+        unsafe {
+            self.device
+                .wait_for_fences(
+                    &[self.frames[self.frame_index].frame_done_fence],
+                    true,
+                    u64::MAX,
+                )
+                .expect("Failed to wait for fence")
+        };
+
+        self.descriptor_set.commit_changes();
+
+        let swapchain_image_index = self
+            .swapchain
+            .acquire_next_image(self.frames[self.frame_index].image_ready_semaphore);
+
+        if swapchain_image_index.is_none() {
+            return;
+        }
+
+        let swapchain_image_index = swapchain_image_index.unwrap();
+
+        unsafe {
+            self.device
+                .reset_fences(&[self.frames[self.frame_index].frame_done_fence])
+                .expect("Failed to reset fence")
+        };
+
+        unsafe {
+            self.device
+                .begin_command_buffer(
+                    self.frames[self.frame_index].graphics_command_buffer,
+                    &vk::CommandBufferBeginInfo::builder().build(),
+                )
+                .expect("Failed to begin command buffer recording");
+        }
+
+        //TODO: Add swapchain image
+        let mut render_graph = RenderGraph::default();
+
+        let swapchain_image = SwapchainImage {
+            handle: TextureHandle::new(0),
+            size: [0, 0],
+        };
+
+        build_render_graph(&mut render_graph, swapchain_image);
+
+        //TODO: execute graph
+
+        unsafe {
+            let image_memory_barriers = vk::ImageMemoryBarrier2::builder()
+                .image(self.swapchain.images[swapchain_image_index as usize].handle)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                .dst_access_mask(vk::AccessFlags2KHR::NONE)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .base_mip_level(0)
+                        .level_count(1)
+                        .build(),
+                )
+                .build();
+
+            self.device.cmd_pipeline_barrier2(
+                self.frames[self.frame_index].graphics_command_buffer,
+                &vk::DependencyInfo::builder()
+                    .image_memory_barriers(&[image_memory_barriers])
+                    .build(),
+            );
+        }
+
+        unsafe {
+            self.device
+                .end_command_buffer(self.frames[self.frame_index].graphics_command_buffer)
+                .expect("Failed to end command buffer recording");
+        }
+
+        let wait_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+            .semaphore(self.frames[self.frame_index].image_ready_semaphore)
+            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+            .build()];
+
+        let command_buffer_infos = &[vk::CommandBufferSubmitInfoKHR::builder()
+            .command_buffer(self.frames[self.frame_index].graphics_command_buffer)
+            .build()];
+
+        let signal_semaphore_infos = &[vk::SemaphoreSubmitInfoKHR::builder()
+            .semaphore(self.frames[self.frame_index].present_semaphore)
+            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+            .build()];
+
+        let submit_info = vk::SubmitInfo2KHR::builder()
+            .wait_semaphore_infos(wait_semaphore_infos)
+            .command_buffer_infos(command_buffer_infos)
+            .signal_semaphore_infos(signal_semaphore_infos)
+            .build();
+        unsafe {
+            self.device
+                .queue_submit2(
+                    self.graphics_queue,
+                    &[submit_info],
+                    self.frames[self.frame_index].frame_done_fence,
+                )
+                .expect("Failed to queue command buffer");
+        }
+
+        self.swapchain.present_image(
+            self.graphics_queue,
+            swapchain_image_index,
+            self.frames[self.frame_index].present_semaphore,
+        );
+
+        self.frame_index = (self.frame_index + 1) % self.frames.len();
+    }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
-            self.device.device_wait_idle();
+            println!("Drop Device!");
+            let _ = self.device_drop.0.device_wait_idle();
+        }
+    }
+}
+
+struct Frame {
+    command_pool: Rc<CommandPool>,
+    device: Rc<ash::Device>,
+    frame_done_fence: vk::Fence,
+    graphics_command_buffer: vk::CommandBuffer,
+    image_ready_semaphore: vk::Semaphore,
+    present_semaphore: vk::Semaphore,
+}
+
+impl Frame {
+    fn new(device: Rc<ash::Device>, command_pool: Rc<CommandPool>) -> Self {
+        let frame_done_fence = unsafe {
+            device.create_fence(
+                &vk::FenceCreateInfo::builder()
+                    .flags(vk::FenceCreateFlags::SIGNALED)
+                    .build(),
+                None,
+            )
+        }
+        .expect("Failed to create fence");
+
+        let image_ready_semaphore =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
+                .expect("Failed to create semaphore");
+        let present_semaphore =
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
+                .expect("Failed to create semaphore");
+
+        let graphics_command_buffer = command_pool.create_command_buffer();
+
+        Self {
+            command_pool,
+            device,
+            frame_done_fence,
+            graphics_command_buffer,
+            image_ready_semaphore,
+            present_semaphore,
+        }
+    }
+}
+
+impl Drop for Frame {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_fence(self.frame_done_fence, None);
+            self.device
+                .destroy_semaphore(self.image_ready_semaphore, None);
+            self.device.destroy_semaphore(self.present_semaphore, None);
+            let _ = self.command_pool.command_pool;
         }
     }
 }

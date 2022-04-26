@@ -1,12 +1,12 @@
 use crate::vulkan::debug_messenger::DebugMessenger;
 use crate::vulkan::Device;
-use ash::extensions::khr::Surface;
 use ash::vk;
 use std::ffi::CString;
+use std::rc::Rc;
 
 pub struct Instance {
     entry: ash::Entry,
-    surface_ext: Surface,
+    surface_ext: Rc<ash::extensions::khr::Surface>,
     instance: ash::Instance,
     surface: vk::SurfaceKHR,
     debug_messenger: Option<DebugMessenger>,
@@ -71,7 +71,7 @@ impl Instance {
             None
         };
 
-        let surface_ext = ash::extensions::khr::Surface::new(&entry, &instance);
+        let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
         let surface = unsafe {
             ash_window::create_surface(&entry, &instance, window, None)
                 .expect("Failed to create vulkan surface")
@@ -105,6 +105,8 @@ impl Instance {
 
         Device::new(
             &self.instance,
+            self.surface,
+            self.surface_ext.clone(),
             selected_device,
             selected_queue,
             frame_in_flight_count,

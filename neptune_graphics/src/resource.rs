@@ -26,6 +26,7 @@ impl<T> Deref for Resource<T> {
 
 impl<T> Drop for Resource<T> {
     fn drop(&mut self) {
+        println!("Drop Resource!");
         let resource = self.resource.take().unwrap();
         self.deleter.borrow_mut().free_resource(move || {
             let _ = resource;

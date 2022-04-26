@@ -1,12 +1,13 @@
 use crate::texture::{TextureDescription, TextureDimensions, TextureFormat, TextureUsages};
 use crate::vulkan::descriptor_set::Binding;
 use ash::vk;
+use core::panicking::panic;
 use gpu_allocator::vulkan;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 impl TextureFormat {
-    fn to_vk(self) -> vk::Format {
+    pub fn to_vk(&self) -> vk::Format {
         match self {
             TextureFormat::Unknown => vk::Format::UNDEFINED,
             TextureFormat::R8Unorm => vk::Format::R8_UNORM,
@@ -53,6 +54,59 @@ impl TextureFormat {
             TextureFormat::D24UnormS8Uint => vk::Format::D24_UNORM_S8_UINT,
             TextureFormat::D32Float => vk::Format::D32_SFLOAT,
             TextureFormat::D32FloatS8Uint => vk::Format::D32_SFLOAT_S8_UINT,
+        }
+    }
+
+    pub fn from_vk(format: vk::Format) -> Self {
+        match format {
+            vk::Format::UNDEFINED => TextureFormat::Unknown,
+
+            vk::Format::R8_UNORM => TextureFormat::R8Unorm,
+            vk::Format::R8G8_UNORM => TextureFormat::Rg8Unorm,
+            vk::Format::R8G8B8_UNORM => TextureFormat::Rgb8Unorm,
+            vk::Format::R8G8B8A8_UNORM => TextureFormat::Rgba8Unorm,
+
+            vk::Format::R8_SNORM => TextureFormat::R8Snorm,
+            vk::Format::R8G8_SNORM => TextureFormat::Rg8Snorm,
+            vk::Format::R8G8B8_SNORM => TextureFormat::Rgb8Snorm,
+            vk::Format::R8G8B8A8_SNORM => TextureFormat::Rgba8Snorm,
+
+            vk::Format::R8_UINT => TextureFormat::R8Uint,
+            vk::Format::R8G8_UINT => TextureFormat::Rg8Uint,
+            vk::Format::R8G8B8_UINT => TextureFormat::Rgb8Uint,
+            vk::Format::R8G8B8A8_UINT => TextureFormat::Rgba8Uint,
+
+            vk::Format::R8_SINT => TextureFormat::R8Sint,
+            vk::Format::R8G8_SINT => TextureFormat::Rg8Sint,
+            vk::Format::R8G8B8_SINT => TextureFormat::Rgb8Sint,
+            vk::Format::R8G8B8A8_SINT => TextureFormat::Rgba8Sint,
+
+            vk::Format::R16_UNORM => TextureFormat::R16Unorm,
+            vk::Format::R16G16_UNORM => TextureFormat::Rg16Unorm,
+            vk::Format::R16G16B16_UNORM => TextureFormat::Rgb16Unorm,
+            vk::Format::R16G16B16A16_UNORM => TextureFormat::Rgba16Unorm,
+
+            vk::Format::R16_SNORM => TextureFormat::R16Snorm,
+            vk::Format::R16G16_SNORM => TextureFormat::Rg16Snorm,
+            vk::Format::R16G16B16_SNORM => TextureFormat::Rgb16Snorm,
+            vk::Format::R16G16B16A16_SNORM => TextureFormat::Rgba16Snorm,
+
+            vk::Format::R16_UINT => TextureFormat::R16Uint,
+            vk::Format::R16G16_UINT => TextureFormat::Rg16Uint,
+            vk::Format::R16G16B16_UINT => TextureFormat::Rgb16Uint,
+            vk::Format::R16G16B16A16_UINT => TextureFormat::Rgba16Uint,
+
+            vk::Format::R16_SINT => TextureFormat::R16Sint,
+            vk::Format::R16G16_SINT => TextureFormat::Rg16Sint,
+            vk::Format::R16G16B16_SINT => TextureFormat::Rgb16Sint,
+            vk::Format::R16G16B16A16_SINT => TextureFormat::Rgba16Sint,
+            vk::Format::D16_UNORM => TextureFormat::D16Unorm,
+
+            vk::Format::D24_UNORM_S8_UINT => TextureFormat::D24UnormS8Uint,
+            vk::Format::D32_SFLOAT => TextureFormat::D32Float,
+            vk::Format::D32_SFLOAT_S8_UINT => TextureFormat::D32FloatS8Uint,
+
+            _ => panic!("Unknown Texture Format"),
         }
     }
 }
@@ -162,6 +216,7 @@ impl Texture {
                     .array_layers(1)
                     .image_type(image_type)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .tiling(vk::ImageTiling::OPTIMAL)
                     .build(),
                 None,
             )
