@@ -1,7 +1,6 @@
 use crate::texture::{TextureDescription, TextureDimensions, TextureFormat, TextureUsages};
 use crate::vulkan::descriptor_set::Binding;
 use ash::vk;
-use core::panicking::panic;
 use gpu_allocator::vulkan;
 use std::cell::RefCell;
 use std::rc::Rc;

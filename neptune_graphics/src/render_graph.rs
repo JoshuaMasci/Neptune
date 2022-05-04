@@ -33,6 +33,20 @@ impl TextureHandle {
 
 pub type RenderFn = RenderFnVulkan;
 
+pub enum BufferReadType {
+    None,
+    Index,
+    Vertex,
+    Transfer,
+    Shader,
+}
+
+pub enum BufferWriteType {
+    None,
+    Transfer,
+    Shader,
+}
+
 //TODO: RayTracing Accesses
 //TODO: make flags?
 #[derive(Copy, Clone, Debug)]
@@ -49,11 +63,23 @@ pub enum BufferAccessType {
     ShaderWrite,
 }
 
+pub enum ResourcesAccessType {
+    None,
+    Read,
+    Write,
+}
+
 impl BufferAccessType {
-    pub fn is_write(&self) -> bool {
+    pub fn get_type(&self) -> ResourcesAccessType {
         match self {
-            BufferAccessType::TransferWrite | BufferAccessType::ShaderWrite => true,
-            _ => false,
+            BufferAccessType::None => ResourcesAccessType::None,
+            BufferAccessType::IndexBuffer
+            | BufferAccessType::VertexBuffer
+            | BufferAccessType::TransferRead
+            | BufferAccessType::ShaderRead => ResourcesAccessType::Read,
+            BufferAccessType::TransferWrite | BufferAccessType::ShaderWrite => {
+                ResourcesAccessType::Write
+            }
         }
     }
 }
@@ -82,9 +108,14 @@ pub(crate) enum BufferResourceDescription {
     Import(Rc<Buffer>, BufferAccessType),
 }
 
+pub(crate) struct BufferVersion {
+    write: Option<(usize, BufferWriteType)>,
+    reads: Vec<(usize, BufferReadType)>,
+}
+
 pub struct BufferResource {
     pub(crate) description: BufferResourceDescription,
-    pub(crate) accesses: Vec<(usize, BufferAccessType)>,
+    pub(crate) versions: Vec<BufferVersion>,
 }
 
 pub enum TextureResourceDescription {
@@ -211,11 +242,28 @@ pub struct RenderGraph {
 }
 
 impl RenderGraph {
+    pub fn new() -> Self {
+        Self {
+            passes: vec![RenderPass {
+                name: String::from("PrePass"),
+                buffers_dependencies: vec![],
+                texture_dependencies: vec![],
+                framebuffer: None,
+                render_fn: None,
+            }],
+            buffers: vec![],
+            textures: vec![],
+        }
+    }
+
     pub fn create_buffer(&mut self, buffer_description: BufferDescription) -> BufferHandle {
         let new_handle = BufferHandle(self.buffers.len() as u32);
         self.buffers.push(BufferResource {
             description: BufferResourceDescription::New(buffer_description),
-            accesses: vec![],
+            versions: vec![BufferVersion {
+                write: None,
+                reads: vec![],
+            }],
         });
         new_handle
     }
@@ -228,7 +276,10 @@ impl RenderGraph {
         let new_handle = BufferHandle(self.buffers.len() as u32);
         self.buffers.push(BufferResource {
             description: BufferResourceDescription::Import(buffer, last_access),
-            accesses: vec![],
+            versions: vec![BufferVersion {
+                write: None,
+                reads: vec![],
+            }],
         });
         new_handle
     }
