@@ -53,7 +53,7 @@ fn main() {
                 let _ = test_buffer.take();
                 let _ = test_texture.take();
 
-                vulkan_device.render(move |_, _| {});
+                vulkan_device.render(move |_vulkan_render_graph| {});
             }
             Event::RedrawRequested(_) => {}
             _event => {

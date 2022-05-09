@@ -5,7 +5,6 @@ use std::rc::Rc;
 //TODO: Create Abstraction Types
 type Buffer = Resource<crate::vulkan::Buffer>;
 type Texture = Resource<crate::vulkan::Texture>;
-type RenderFnVulkan = dyn FnOnce();
 
 #[derive(Copy, Clone, Debug)]
 pub struct BufferHandle(u32);
@@ -31,7 +30,7 @@ impl TextureHandle {
     }
 }
 
-pub type RenderFn = RenderFnVulkan;
+pub type RenderFn = dyn FnOnce();
 
 pub enum BufferReadType {
     None,
@@ -311,17 +310,17 @@ impl RenderGraph {
 
         let pass_index = self.passes.len();
 
-        for buffer_accesses in render_pass.buffers_dependencies.iter() {
-            self.buffers[buffer_accesses.handle.0 as usize]
-                .accesses
-                .push((pass_index, buffer_accesses.access_type));
-        }
-
-        for texture_accesses in render_pass.texture_dependencies.iter() {
-            self.textures[texture_accesses.handle.0 as usize]
-                .accesses
-                .push((pass_index, texture_accesses.access_type));
-        }
+        // for buffer_accesses in render_pass.buffers_dependencies.iter() {
+        //     self.buffers[buffer_accesses.handle.0 as usize]
+        //         .accesses
+        //         .push((pass_index, buffer_accesses.access_type));
+        // }
+        //
+        // for texture_accesses in render_pass.texture_dependencies.iter() {
+        //     self.textures[texture_accesses.handle.0 as usize]
+        //         .accesses
+        //         .push((pass_index, texture_accesses.access_type));
+        // }
 
         self.passes.push(render_pass);
     }

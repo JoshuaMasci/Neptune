@@ -4,12 +4,12 @@ use crate::resource::{Resource, ResourceDeleter};
 use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::descriptor_set::DescriptorSet;
+use crate::vulkan::pipeline_cache::PipelineCache;
 use crate::vulkan::swapchain::Swapchain;
 use crate::vulkan::texture::Texture;
 use crate::{BufferUsages, TextureUsages};
 use ash::vk;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
 
@@ -88,6 +88,9 @@ pub struct Device {
 
     frame_index: usize,
     frames: Vec<Frame>,
+
+    pipeline_layout: vk::PipelineLayout,
+    pipeline_cache: PipelineCache,
 
     allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     device_drop: DeviceDrop,
@@ -212,6 +215,23 @@ impl Device {
             .map(|_| Frame::new(device.clone(), command_pool.clone()))
             .collect();
 
+        let pipeline_layout = unsafe {
+            device.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&[descriptor_set.get_layout()])
+                    .push_constant_ranges(&[vk::PushConstantRange::builder()
+                        .size(256)
+                        .offset(0)
+                        .stage_flags(vk::ShaderStageFlags::ALL)
+                        .build()])
+                    .build(),
+                None,
+            )
+        }
+        .expect("Failed to create pipeline layout");
+
+        let pipeline_cache = PipelineCache::new(device.clone(), pipeline_layout);
+
         let device_drop = DeviceDrop::new(&device);
         Self {
             device,
@@ -220,6 +240,8 @@ impl Device {
             swapchain,
             frame_index: 0,
             frames,
+            pipeline_layout,
+            pipeline_cache,
             allocator,
             device_drop,
             graphics_queue,
@@ -273,7 +295,7 @@ impl Device {
         Resource::new(texture, self.resource_deleter.clone())
     }
 
-    pub fn render(&mut self, build_render_graph: impl FnOnce(&mut RenderGraph, SwapchainImage)) {
+    pub fn render(&mut self, build_render_graph: impl FnOnce(&mut crate::vulkan::Graph)) {
         unsafe {
             self.device
                 .wait_for_fences(
@@ -311,17 +333,16 @@ impl Device {
                 .expect("Failed to begin command buffer recording");
         }
 
-        //TODO: Add swapchain image
-        let mut render_graph = RenderGraph::default();
+        //TODO fill command
+        let mut render_graph = crate::vulkan::Graph::new();
 
-        let swapchain_image = SwapchainImage {
-            handle: TextureHandle::new(0),
-            size: [0, 0],
-        };
+        build_render_graph(&mut render_graph);
 
-        build_render_graph(&mut render_graph, swapchain_image);
-
-        //TODO: execute graph
+        render_graph.record_command_buffer(
+            &self.device,
+            self.frames[self.frame_index].graphics_command_buffer,
+            &mut self.pipeline_cache,
+        );
 
         unsafe {
             let image_memory_barriers = vk::ImageMemoryBarrier2::builder()
@@ -403,6 +424,8 @@ impl Drop for Device {
         unsafe {
             println!("Drop Device!");
             let _ = self.device_drop.0.device_wait_idle();
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

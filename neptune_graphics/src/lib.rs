@@ -1,6 +1,7 @@
 mod buffer;
-mod command_buffer;
 mod id_pool;
+mod interface;
+mod pipeline;
 mod render_graph;
 mod resource;
 mod texture;
@@ -15,6 +16,12 @@ pub use texture::TextureDescription;
 pub use texture::TextureDimensions;
 pub use texture::TextureFormat;
 pub use texture::TextureUsages;
+
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum IndexSize {
+    U16,
+    U32,
+}
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum MemoryType {

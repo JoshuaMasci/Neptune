@@ -2,14 +2,18 @@ mod buffer;
 mod debug_messenger;
 mod descriptor_set;
 mod device;
+mod graph;
 mod instance;
+mod pipeline_cache;
+mod raster_api;
 mod swapchain;
 mod texture;
-mod vulkan_graph;
 
 pub use buffer::Buffer;
 pub use device::Device;
+pub use graph::{Graph, Pass, PassData, PassSet};
 pub use instance::Instance;
+pub use pipeline_cache::FramebufferLayout;
 pub use texture::Texture;
 
 use crate::{BufferDescription, TextureDescription};
