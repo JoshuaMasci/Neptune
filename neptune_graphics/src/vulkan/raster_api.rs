@@ -1,5 +1,5 @@
 use crate::interface::{RasterApi, RasterCommandBuffer};
-use crate::render_graph::BufferHandle;
+use crate::render_graph::BufferId;
 use crate::IndexSize;
 use ash::vk;
 use std::rc::Rc;
@@ -10,11 +10,11 @@ pub(crate) struct VulkanRasterCommandBuffer {
 }
 
 impl RasterCommandBuffer for VulkanRasterCommandBuffer {
-    fn bind_vertex_buffers(&mut self, buffers: &[(BufferHandle, u32)]) {
+    fn bind_vertex_buffers(&mut self, buffers: &[(BufferId, u32)]) {
         todo!()
     }
 
-    fn bind_index_buffer(&mut self, buffer: BufferHandle, offset: u32, index_type: IndexSize) {
+    fn bind_index_buffer(&mut self, buffer: BufferId, offset: u32, index_type: IndexSize) {
         todo!()
     }
 

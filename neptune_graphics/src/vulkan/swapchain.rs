@@ -1,5 +1,5 @@
 use crate::vulkan::TextureInfo;
-use crate::{MemoryType, TextureDescription, TextureDimensions, TextureFormat, TextureUsages};
+use crate::{TextureDescription, TextureDimensions, TextureFormat, TextureUsages};
 use ash::*;
 use gpu_allocator::MemoryLocation;
 use std::rc::Rc;
@@ -204,7 +204,7 @@ impl Swapchain {
             format: TextureFormat::Unknown,
             size: TextureDimensions::D2(surface_size.width, surface_size.height),
             usage: TextureUsages::empty(),
-            memory_type: MemoryType::GpuOnly,
+            memory_type: crate::MemoryType::GpuOnly,
         };
 
         self.images = images

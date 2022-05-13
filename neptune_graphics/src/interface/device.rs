@@ -1,5 +1,5 @@
 use crate::interface::RasterCommandBuffer;
-use crate::render_graph::BufferHandle;
+use crate::render_graph::BufferId;
 use crate::{BufferDescription, IndexSize};
 
 pub trait Device {
@@ -36,8 +36,8 @@ pub struct RenderGraphBuilder<'a, Buffer, Texture, CommandBuffer: RasterCommandB
 
 struct TestCommandBuffer();
 impl RasterCommandBuffer for TestCommandBuffer {
-    fn bind_vertex_buffers(&mut self, buffers: &[(BufferHandle, u32)]) {}
-    fn bind_index_buffer(&mut self, buffer: BufferHandle, offset: u32, index_type: IndexSize) {}
+    fn bind_vertex_buffers(&mut self, buffers: &[(BufferId, u32)]) {}
+    fn bind_index_buffer(&mut self, buffer: BufferId, offset: u32, index_type: IndexSize) {}
     fn draw(
         &mut self,
         vertex_count: u32,

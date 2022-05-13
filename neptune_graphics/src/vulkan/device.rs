@@ -1,5 +1,4 @@
 use crate::buffer::BufferDescription;
-use crate::render_graph::{BufferResourceDescription, RenderGraph, TextureHandle};
 use crate::resource::{Resource, ResourceDeleter};
 use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
@@ -72,11 +71,6 @@ impl Drop for CommandPool {
             self.device.destroy_command_pool(self.command_pool, None);
         }
     }
-}
-
-pub struct SwapchainImage {
-    handle: TextureHandle,
-    size: [u32; 2],
 }
 
 pub struct Device {

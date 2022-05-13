@@ -7,9 +7,7 @@ mod resource;
 mod texture;
 pub mod vulkan;
 
-use crate::render_graph::{
-    AttachmentLoadOp, BufferAccessType, RenderPassBuilder, TextureAccessType,
-};
+use crate::render_graph::{DepthStencilAttachment, RasterPassBuilder};
 pub use buffer::BufferDescription;
 pub use buffer::BufferUsages;
 pub use texture::TextureDescription;
@@ -41,47 +39,31 @@ impl MemoryType {
 }
 
 pub fn render_graph_test() {
-    let mut render_graph = crate::render_graph::RenderGraph::default();
+    let mut render_graph = crate::render_graph::RenderGraphBuilder::new();
 
-    let some_buffer = render_graph.create_buffer(BufferDescription {
-        size: 16,
-        usage: BufferUsages::STORAGE | BufferUsages::TRANSFER_SRC | BufferUsages::TRANSFER_DST,
-        memory_type: MemoryType::GpuOnly,
-    });
-
-    let some_texture = render_graph.create_texture(TextureDescription {
-        format: TextureFormat::Rgba8Unorm,
-        size: TextureDimensions::D2(128, 128),
-        usage: TextureUsages::SAMPLED | TextureUsages::TRANSFER_DST,
-        memory_type: MemoryType::GpuOnly,
-    });
-
-    let some_depth_texture = render_graph.create_texture(TextureDescription {
-        format: TextureFormat::D32Float,
-        size: TextureDimensions::D2(1920, 1080),
-        usage: TextureUsages::DEPTH_STENCIL_ATTACHMENT,
-        memory_type: MemoryType::GpuOnly,
-    });
-
-    render_graph.add_render_pass(
-        RenderPassBuilder::new("Pass1")
-            .buffer(some_buffer, BufferAccessType::ShaderWrite)
-            .texture(some_texture, TextureAccessType::ShaderStorageWrite),
+    let some_buffer = render_graph.create_buffer(16, MemoryType::GpuOnly);
+    let some_texture = render_graph.create_texture(
+        TextureFormat::Rgba8Unorm,
+        TextureDimensions::D2(128, 128),
+        MemoryType::GpuOnly,
     );
 
-    render_graph.add_render_pass(
-        RenderPassBuilder::new("Pass2").buffer(some_buffer, BufferAccessType::VertexBuffer),
+    let some_depth_texture = render_graph.create_texture(
+        TextureFormat::D32Float,
+        TextureDimensions::D2(1920, 1080),
+        MemoryType::GpuOnly,
     );
 
-    render_graph.add_render_pass(
-        RenderPassBuilder::new("Pass3")
-            .buffer(some_buffer, BufferAccessType::VertexBuffer)
-            .raster(
+    render_graph.add_raster_pass(
+        RasterPassBuilder::new("Test")
+            .attachments(
                 &[],
-                Some((some_depth_texture, AttachmentLoadOp::Clear([1.0; 4]))),
+                Some(DepthStencilAttachment {
+                    id: some_depth_texture,
+                    clear: Some([1.0, 0.0]),
+                }),
             )
-            .render(move || {
-                println!("render_fn: {:?}", some_depth_texture.get());
-            }),
+            .vertex_buffer(some_buffer)
+            .raster_fn(move || println!("Rendering: {}", some_depth_texture)),
     );
 }

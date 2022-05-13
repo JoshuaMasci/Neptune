@@ -1,12 +1,12 @@
-use crate::render_graph::BufferHandle;
+use crate::render_graph::BufferId;
 use crate::IndexSize;
 
 pub trait RasterCommandBuffer {
     //TODO: "Object Safe" push constant function
     //fn push_data<T>(&mut self, offset: u32, data: &[T]);
 
-    fn bind_vertex_buffers(&mut self, buffers: &[(BufferHandle, u32)]);
-    fn bind_index_buffer(&mut self, buffer: BufferHandle, offset: u32, index_type: IndexSize);
+    fn bind_vertex_buffers(&mut self, buffers: &[(BufferId, u32)]);
+    fn bind_index_buffer(&mut self, buffer: BufferId, offset: u32, index_type: IndexSize);
 
     fn draw(
         &mut self,
