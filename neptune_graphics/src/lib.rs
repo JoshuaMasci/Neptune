@@ -64,6 +64,6 @@ pub fn render_graph_test() {
                 }),
             )
             .vertex_buffer(some_buffer)
-            .raster_fn(move || println!("Rendering: {}", some_depth_texture)),
+            .raster_fn(move |_, _| println!("Rendering: {}", some_depth_texture)),
     );
 }

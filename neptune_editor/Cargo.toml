@@ -6,4 +6,5 @@ edition = "2021"
 
 [dependencies]
 winit = "0.26"
+neptune_core = { path = "../neptune_core"}
 neptune_graphics = { path = "../neptune_graphics"}

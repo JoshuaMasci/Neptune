@@ -66,7 +66,10 @@ impl RasterPassBuilder {
         self
     }
 
-    pub fn raster_fn(mut self, raster_fn: impl FnOnce() + 'static) -> Self {
+    pub fn raster_fn(
+        mut self,
+        raster_fn: impl FnOnce(std::rc::Rc<ash::Device>, ash::vk::CommandBuffer) + 'static,
+    ) -> Self {
         assert!(
             self.raster_fn.replace(Box::new(raster_fn)).is_none(),
             "Already set raster function"

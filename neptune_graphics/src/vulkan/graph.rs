@@ -42,7 +42,10 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn new() -> Self {
+    pub fn new(render_graph: crate::render_graph::RenderGraphBuilder) -> Self {
+        
+        
+        
         Self { sets: vec![] }
     }
 

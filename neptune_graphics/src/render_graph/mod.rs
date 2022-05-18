@@ -2,15 +2,23 @@ mod graph;
 mod render_graph;
 mod render_pass;
 
+use crate::resource::Resource;
 pub use render_graph::RenderGraphBuilder;
 pub use render_pass::ColorAttachment;
 pub use render_pass::ComputePassBuilder;
 pub use render_pass::DepthStencilAttachment;
 pub use render_pass::RasterPassBuilder;
+use std::rc::Rc;
 
 pub type PassId = usize;
 pub type BufferId = usize;
 pub type TextureId = usize;
+
+//TODO: use abstract types
+pub type RasterFn = dyn FnOnce(Rc<ash::Device>, ash::vk::CommandBuffer);
+
+pub type ImportedBuffer = Rc<Resource<crate::vulkan::Buffer>>;
+pub type ImportedTexture = Rc<Resource<crate::vulkan::Texture>>;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum BufferAccess {
@@ -68,9 +76,6 @@ impl TextureAccess {
         }
     }
 }
-
-pub type RenderFn = dyn FnOnce();
-pub type RasterFn = dyn FnOnce();
 
 #[derive(Copy, Clone)]
 pub(crate) struct ResourceAccess<T: Copy> {

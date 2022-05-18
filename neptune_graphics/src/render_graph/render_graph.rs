@@ -1,7 +1,7 @@
 use crate::render_graph::render_pass::{ColorAttachment, DepthStencilAttachment};
 use crate::render_graph::{
-    BufferAccess, BufferId, PassId, RasterFn, RasterPassBuilder, ResourceAccess,
-    ResourceAccessType, TextureAccess, TextureId,
+    BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
+    ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
 use crate::{MemoryType, TextureDimensions, TextureFormat};
 
@@ -27,7 +27,7 @@ pub(crate) enum BufferResourceDescription {
         size: usize,
         memory_type: MemoryType,
     },
-    Imported(),
+    Imported(ImportedBuffer),
 }
 
 pub(crate) enum TextureResourceDescription {
@@ -36,7 +36,7 @@ pub(crate) enum TextureResourceDescription {
         size: TextureDimensions,
         memory_type: MemoryType,
     },
-    Imported(),
+    Imported(ImportedTexture),
 }
 
 pub struct BufferResource {

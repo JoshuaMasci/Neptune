@@ -5,14 +5,6 @@ authors = ["Joshua_Masci <iamshortman@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-winit = "0.25.0"
-ash = "0.36"
-ash-window = "0.9.0"
-gpu-allocator = "0.17.0"
-
-cgmath = "0.18.0"
-image = "0.23.14"
-legion = "0.4.0"
-
-imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
-imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }
+chrono = "0.4"
+log = "0.4"
+fern = "0.6"

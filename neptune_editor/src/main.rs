@@ -1,3 +1,4 @@
+use neptune_core::log::{debug, error, info, trace, warn};
 use neptune_graphics::{BufferUsages, MemoryType};
 pub use winit::{
     event::{Event, WindowEvent},
@@ -5,6 +6,8 @@ pub use winit::{
 };
 
 fn main() {
+    neptune_core::setup_logger().expect("Failed to init logger");
+
     neptune_graphics::render_graph_test();
 
     let event_loop = winit::event_loop::EventLoop::new();

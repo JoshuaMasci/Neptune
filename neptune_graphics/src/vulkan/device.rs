@@ -289,7 +289,10 @@ impl Device {
         Resource::new(texture, self.resource_deleter.clone())
     }
 
-    pub fn render(&mut self, build_render_graph: impl FnOnce(&mut crate::vulkan::Graph)) {
+    pub fn render(
+        &mut self,
+        build_render_graph: impl FnOnce(&mut crate::render_graph::RenderGraphBuilder),
+    ) {
         unsafe {
             self.device
                 .wait_for_fences(
@@ -327,10 +330,11 @@ impl Device {
                 .expect("Failed to begin command buffer recording");
         }
 
-        //TODO fill command
-        let mut render_graph = crate::vulkan::Graph::new();
+        let mut render_graph_builder = crate::render_graph::RenderGraphBuilder::new();
 
-        build_render_graph(&mut render_graph);
+        build_render_graph(&mut render_graph_builder);
+
+        let mut render_graph = crate::vulkan::Graph::new(render_graph_builder);
 
         render_graph.record_command_buffer(
             &self.device,
