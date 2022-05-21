@@ -73,7 +73,7 @@ impl SwapchainSupportDetails {
             .present_modes
             .iter()
             .find(|&&present_mode| present_mode == desired_mode)
-            .unwrap_or(&self.present_modes[0])
+            .unwrap_or(&vk::PresentModeKHR::FIFO)
     }
 
     pub fn get_image_count(&self, desired_count: u32) -> u32 {

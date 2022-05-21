@@ -1,14 +1,18 @@
-mod graph;
+pub mod graph;
 mod render_graph;
 mod render_pass;
 
 use crate::resource::Resource;
+use std::rc::Rc;
+
+pub(crate) use render_graph::RenderPass;
+
 pub use render_graph::RenderGraphBuilder;
+pub use render_graph::RenderPassData;
 pub use render_pass::ColorAttachment;
 pub use render_pass::ComputePassBuilder;
 pub use render_pass::DepthStencilAttachment;
 pub use render_pass::RasterPassBuilder;
-use std::rc::Rc;
 
 pub type PassId = usize;
 pub type BufferId = usize;
@@ -86,4 +90,9 @@ pub(crate) struct ResourceAccess<T: Copy> {
 pub(crate) enum ResourceAccessType<T: Copy> {
     Write(ResourceAccess<T>),
     Reads(Vec<ResourceAccess<T>>),
+}
+
+pub(crate) struct ResourceAccessList<T: Copy> {
+    is_write_fn: Box<dyn Fn(T, &[T]) -> bool>,
+    list: Vec<ResourceAccessType<T>>,
 }

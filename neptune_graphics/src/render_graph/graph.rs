@@ -2,19 +2,19 @@ use std::collections::HashMap;
 
 pub type NodeId = usize;
 
-struct GraphEdge<E> {
-    from: NodeId,
-    data: E,
+pub struct GraphEdge<E> {
+    pub from: NodeId,
+    pub data: E,
 }
 
-struct GraphNode<N, E> {
-    data: N,
-    edges: Vec<GraphEdge<E>>,
+pub struct GraphNode<N, E> {
+    pub data: N,
+    pub edges: Vec<GraphEdge<E>>,
 }
 
 pub struct Graph<N, E> {
-    next_node_id: NodeId,
-    nodes: HashMap<NodeId, GraphNode<N, E>>,
+    pub next_node_id: NodeId,
+    pub nodes: HashMap<NodeId, GraphNode<N, E>>,
 }
 
 impl<N, E> Graph<N, E> {
@@ -48,5 +48,27 @@ impl<N, E> Graph<N, E> {
             .push(GraphEdge { from, data });
     }
 
-    pub fn get_unconnected_nodes(&mut self) {}
+    pub fn get_unconnected_nodes(&mut self) -> Option<Vec<GraphNode<N, E>>> {
+        let mut unconnected_nodes = Vec::new();
+
+        'outer: for (&id, node) in self.nodes.iter() {
+            for edge in node.edges.iter() {
+                if self.nodes.contains_key(&edge.from) {
+                    continue 'outer;
+                }
+            }
+            unconnected_nodes.push(id);
+        }
+
+        if unconnected_nodes.is_empty() {
+            None
+        } else {
+            Some(
+                unconnected_nodes
+                    .drain(..)
+                    .map(|id| self.nodes.remove(&id).unwrap())
+                    .collect(),
+            )
+        }
+    }
 }

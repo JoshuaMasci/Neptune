@@ -5,23 +5,6 @@ use crate::render_graph::{
 };
 use crate::{MemoryType, TextureDimensions, TextureFormat};
 
-pub enum RenderPassData {
-    Import,
-    Raster {
-        color_attachments: Vec<ColorAttachment>,
-        depth_stencil_attachment: Option<DepthStencilAttachment>,
-        raster_fn: Option<Box<RasterFn>>,
-    },
-}
-
-pub(crate) struct RenderPass {
-    id: PassId,
-    name: String,
-    data: RenderPassData,
-    buffer_accesses: Vec<(BufferId, BufferAccess)>,
-    texture_accesses: Vec<(TextureId, TextureAccess)>,
-}
-
 pub(crate) enum BufferResourceDescription {
     New {
         size: usize,
@@ -39,13 +22,32 @@ pub(crate) enum TextureResourceDescription {
     Imported(ImportedTexture),
 }
 
-pub struct BufferResource {
-    description: BufferResourceDescription,
-    access_list: Vec<ResourceAccessType<BufferAccess>>,
+pub(crate) struct BufferResource {
+    pub(crate) id: BufferId,
+    pub(crate) description: BufferResourceDescription,
+    pub(crate) access_list: Vec<ResourceAccessType<BufferAccess>>,
 }
-pub struct TextureResource {
-    description: TextureResourceDescription,
-    access_list: Vec<ResourceAccessType<TextureAccess>>,
+
+pub(crate) struct TextureResource {
+    pub(crate) id: TextureId,
+    pub(crate) description: TextureResourceDescription,
+    pub(crate) access_list: Vec<ResourceAccessType<TextureAccess>>,
+}
+
+pub enum RenderPassData {
+    Raster {
+        color_attachments: Vec<ColorAttachment>,
+        depth_stencil_attachment: Option<DepthStencilAttachment>,
+        raster_fn: Option<Box<RasterFn>>,
+    },
+}
+
+pub(crate) struct RenderPass {
+    pub(crate) id: PassId,
+    pub(crate) name: String,
+    pub(crate) data: RenderPassData,
+    pub(crate) buffer_accesses: Vec<(BufferId, BufferAccess)>,
+    pub(crate) texture_accesses: Vec<(TextureId, TextureAccess)>,
 }
 
 pub struct RenderGraphBuilder {
@@ -64,12 +66,13 @@ impl RenderGraphBuilder {
     }
 
     pub fn create_buffer(&mut self, size: usize, memory_type: MemoryType) -> BufferId {
-        let new_handle = self.buffers.len();
+        let new_id = self.buffers.len();
         self.buffers.push(BufferResource {
+            id: new_id,
             description: BufferResourceDescription::New { size, memory_type },
             access_list: vec![],
         });
-        new_handle
+        new_id
     }
 
     pub fn create_texture(
@@ -78,8 +81,9 @@ impl RenderGraphBuilder {
         size: TextureDimensions,
         memory_type: MemoryType,
     ) -> TextureId {
-        let new_handle = self.textures.len();
+        let new_id = self.textures.len();
         self.textures.push(TextureResource {
+            id: new_id,
             description: TextureResourceDescription::New {
                 format,
                 size,
@@ -87,7 +91,7 @@ impl RenderGraphBuilder {
             },
             access_list: vec![],
         });
-        new_handle
+        new_id
     }
 
     fn add_render_pass(
