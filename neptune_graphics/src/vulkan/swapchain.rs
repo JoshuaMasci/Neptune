@@ -1,7 +1,4 @@
-use crate::vulkan::TextureInfo;
-use crate::{TextureDescription, TextureDimensions, TextureFormat, TextureUsages};
 use ash::*;
-use gpu_allocator::MemoryLocation;
 use std::rc::Rc;
 
 pub struct SwapchainSupportDetails {
@@ -85,7 +82,14 @@ impl SwapchainSupportDetails {
     }
 }
 
-pub struct Swapchain {
+pub(crate) struct SwapchainImage {
+    pub(crate) format: vk::Format,
+    pub(crate) size: [u32; 2],
+    pub(crate) handle: vk::Image,
+    pub(crate) view: vk::ImageView,
+}
+
+pub(crate) struct Swapchain {
     invalid: bool,
     physical_device: vk::PhysicalDevice,
     device: Rc<ash::Device>,
@@ -97,7 +101,7 @@ pub struct Swapchain {
     pub(crate) handle: vk::SwapchainKHR,
 
     pub(crate) mode: vk::PresentModeKHR,
-    pub(crate) images: Vec<Rc<TextureInfo>>,
+    pub(crate) images: Vec<SwapchainImage>,
 }
 
 impl Swapchain {
@@ -200,24 +204,14 @@ impl Swapchain {
             })
             .collect();
 
-        let description = TextureDescription {
-            format: TextureFormat::Unknown,
-            size: TextureDimensions::D2(surface_size.width, surface_size.height),
-            usage: TextureUsages::empty(),
-            memory_type: crate::MemoryType::GpuOnly,
-        };
-
         self.images = images
             .iter()
             .zip(views.iter())
-            .map(|(&handle, &view)| {
-                Rc::new(TextureInfo {
-                    description,
-                    handle,
-                    view,
-                    storage_binding: None,
-                    sampled_binding: None,
-                })
+            .map(|(&handle, &view)| SwapchainImage {
+                format: surface_format.format,
+                size: [surface_size.width, surface_size.height],
+                handle,
+                view,
             })
             .collect();
 

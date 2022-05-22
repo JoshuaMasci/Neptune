@@ -5,8 +5,11 @@ mod render_pass;
 use crate::resource::Resource;
 use std::rc::Rc;
 
+pub(crate) use render_graph::BufferResourceDescription;
 pub(crate) use render_graph::RenderPass;
+pub(crate) use render_graph::TextureResourceDescription;
 
+use crate::vulkan::RasterFnVulkan;
 pub use render_graph::RenderGraphBuilder;
 pub use render_graph::RenderPassData;
 pub use render_pass::ColorAttachment;
@@ -19,7 +22,7 @@ pub type BufferId = usize;
 pub type TextureId = usize;
 
 //TODO: use abstract types
-pub type RasterFn = dyn FnOnce(Rc<ash::Device>, ash::vk::CommandBuffer);
+pub type RasterFn = RasterFnVulkan;
 
 pub type ImportedBuffer = Rc<Resource<crate::vulkan::Buffer>>;
 pub type ImportedTexture = Rc<Resource<crate::vulkan::Texture>>;

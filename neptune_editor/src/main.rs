@@ -8,8 +8,6 @@ pub use winit::{
 fn main() {
     neptune_core::setup_logger().expect("Failed to init logger");
 
-    neptune_graphics::render_graph_test();
-
     let event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
@@ -21,14 +19,13 @@ fn main() {
     let vulkan_instance = neptune_graphics::vulkan::Instance::new(&window, "Neptune Editor", true);
     let mut vulkan_device = vulkan_instance.create_device(0, 3);
 
-    let mut test_buffer = Some(vulkan_device.create_buffer(
-        neptune_graphics::BufferDescription {
+    let mut test_buffer = Some(
+        vulkan_device.create_buffer(neptune_graphics::BufferDescription {
             size: 65_536,
             usage: BufferUsages::STORAGE,
             memory_type: MemoryType::GpuOnly,
-        },
-        "Test Buffer",
-    ));
+        }),
+    );
 
     let mut test_texture = Some(vulkan_device.create_texture(
         neptune_graphics::TextureDescription {
@@ -37,7 +34,6 @@ fn main() {
             usage: neptune_graphics::TextureUsages::SAMPLED,
             memory_type: MemoryType::GpuOnly,
         },
-        "Test Texture",
     ));
 
     event_loop.run(move |event, _, control_flow| {
@@ -56,7 +52,9 @@ fn main() {
                 let _ = test_buffer.take();
                 let _ = test_texture.take();
 
-                vulkan_device.render(move |_vulkan_render_graph| {});
+                vulkan_device.render(move |_vulkan_render_graph| {
+                    neptune_graphics::render_graph_test(_vulkan_render_graph);
+                });
             }
             Event::RedrawRequested(_) => {}
             _event => {

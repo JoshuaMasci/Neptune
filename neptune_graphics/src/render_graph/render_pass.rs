@@ -1,4 +1,10 @@
 use crate::render_graph::{BufferId, RasterFn, TextureId};
+use std::rc::Rc;
+
+//TODO: use abstract types
+use crate::vulkan::FramebufferLayout;
+use crate::vulkan::PipelineCache;
+use ash::vk;
 
 #[derive(Clone, Debug)]
 pub struct ColorAttachment {
@@ -9,7 +15,7 @@ pub struct ColorAttachment {
 #[derive(Clone, Debug)]
 pub struct DepthStencilAttachment {
     pub id: TextureId,
-    pub clear: Option<[f32; 2]>,
+    pub clear: Option<(f32, u32)>,
 }
 
 pub struct RasterPassBuilder {
@@ -68,7 +74,8 @@ impl RasterPassBuilder {
 
     pub fn raster_fn(
         mut self,
-        raster_fn: impl FnOnce(std::rc::Rc<ash::Device>, ash::vk::CommandBuffer) + 'static,
+        raster_fn: impl FnOnce(&Rc<ash::Device>, vk::CommandBuffer, &mut PipelineCache, &FramebufferLayout)
+            + 'static,
     ) -> Self {
         assert!(
             self.raster_fn.replace(Box::new(raster_fn)).is_none(),

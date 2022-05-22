@@ -7,7 +7,9 @@ mod resource;
 mod texture;
 pub mod vulkan;
 
-use crate::render_graph::{DepthStencilAttachment, RasterPassBuilder};
+use crate::render_graph::{
+    ColorAttachment, DepthStencilAttachment, RasterPassBuilder, RenderGraphBuilder,
+};
 pub use buffer::BufferDescription;
 pub use buffer::BufferUsages;
 pub use texture::TextureDescription;
@@ -38,32 +40,42 @@ impl MemoryType {
     }
 }
 
-pub fn render_graph_test() {
-    let mut render_graph = crate::render_graph::RenderGraphBuilder::new();
+pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
+    let some_buffer = render_graph.create_buffer(BufferDescription {
+        size: 16,
+        usage: BufferUsages::STORAGE,
+        memory_type: MemoryType::GpuOnly,
+    });
 
-    let some_buffer = render_graph.create_buffer(16, MemoryType::GpuOnly);
-    let some_texture = render_graph.create_texture(
-        TextureFormat::Rgba8Unorm,
-        TextureDimensions::D2(128, 128),
-        MemoryType::GpuOnly,
-    );
+    let swapchain_image = render_graph.get_swapchain_image();
 
-    let some_depth_texture = render_graph.create_texture(
-        TextureFormat::D32Float,
-        TextureDimensions::D2(1920, 1080),
-        MemoryType::GpuOnly,
-    );
+    // let some_texture = render_graph.create_texture(TextureDescription {
+    //     format: TextureFormat::Rgba8Unorm,
+    //     size: TextureDimensions::D2(128, 128),
+    //     usage: TextureUsages::COLOR_ATTACHMENT,
+    //     memory_type: MemoryType::GpuOnly,
+    // });
+
+    let some_depth_texture = render_graph.create_texture(TextureDescription {
+        format: TextureFormat::D32Float,
+        size: TextureDimensions::D2(swapchain_image.1[0], swapchain_image.1[1]),
+        usage: TextureUsages::DEPTH_STENCIL_ATTACHMENT,
+        memory_type: MemoryType::GpuOnly,
+    });
 
     render_graph.add_raster_pass(
         RasterPassBuilder::new("Test")
             .attachments(
-                &[],
+                &[ColorAttachment {
+                    id: swapchain_image.0,
+                    clear: Some([1.0, 0.5, 0.25, 0.0]),
+                }],
                 Some(DepthStencilAttachment {
                     id: some_depth_texture,
-                    clear: Some([1.0, 0.0]),
+                    clear: Some((1.0, 0)),
                 }),
             )
             .vertex_buffer(some_buffer)
-            .raster_fn(move |_, _| println!("Rendering: {}", some_depth_texture)),
+            .raster_fn(move |_, _, _, _| {}),
     );
 }

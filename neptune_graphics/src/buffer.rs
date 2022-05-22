@@ -7,6 +7,7 @@ bitflags! {
         const TRANSFER_DST = 1 << 1;
         const STORAGE = 1 << 2;
         const INDEX = 1 << 3;
+        const VERTEX = 1 << 4;
     }
 }
 

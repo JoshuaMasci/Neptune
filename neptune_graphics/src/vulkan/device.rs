@@ -6,7 +6,7 @@ use crate::vulkan::descriptor_set::DescriptorSet;
 use crate::vulkan::pipeline_cache::PipelineCache;
 use crate::vulkan::swapchain::Swapchain;
 use crate::vulkan::texture::Texture;
-use crate::{BufferUsages, TextureUsages};
+use crate::{BufferUsages, TextureDimensions, TextureUsages};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -115,7 +115,11 @@ impl Device {
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-        let mut features_vulkan_12 = vk::PhysicalDeviceVulkan12Features::builder()
+        let mut robustness2_features = vk::PhysicalDeviceRobustness2FeaturesEXT::builder()
+            .null_descriptor(true)
+            .build();
+
+        let mut vulkan1_2_features = vk::PhysicalDeviceVulkan12Features::builder()
             .descriptor_indexing(true)
             .descriptor_binding_partially_bound(true)
             .descriptor_binding_storage_buffer_update_after_bind(true)
@@ -148,7 +152,8 @@ impl Device {
                     &vk::DeviceCreateInfo::builder()
                         .queue_create_infos(&queue_info)
                         .enabled_extension_names(&device_extension_names_raw)
-                        .push_next(&mut features_vulkan_12)
+                        .push_next(&mut robustness2_features)
+                        .push_next(&mut vulkan1_2_features)
                         .push_next(&mut synchronization2_features)
                         .push_next(&mut dynamic_rendering_features),
                     None,
@@ -242,19 +247,10 @@ impl Device {
         }
     }
 
-    pub fn create_buffer(
-        &mut self,
-        description: BufferDescription,
-        name: &'static str,
-    ) -> Resource<Buffer> {
+    pub fn create_buffer(&mut self, description: BufferDescription) -> Resource<Buffer> {
         let is_storage = description.usage.contains(BufferUsages::STORAGE);
 
-        let mut buffer = Buffer::new(
-            self.device.clone(),
-            self.allocator.clone(),
-            description,
-            name,
-        );
+        let mut buffer = Buffer::new(self.device.clone(), self.allocator.clone(), description);
 
         if is_storage {
             buffer.binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
@@ -263,20 +259,11 @@ impl Device {
         Resource::new(buffer, self.resource_deleter.clone())
     }
 
-    pub fn create_texture(
-        &mut self,
-        description: TextureDescription,
-        name: &'static str,
-    ) -> Resource<Texture> {
+    pub fn create_texture(&mut self, description: TextureDescription) -> Resource<Texture> {
         let is_storage = description.usage.contains(TextureUsages::STORAGE);
         let is_sampled = description.usage.contains(TextureUsages::SAMPLED);
 
-        let mut texture = Texture::new(
-            self.device.clone(),
-            self.allocator.clone(),
-            description,
-            name,
-        );
+        let mut texture = Texture::new(self.device.clone(), self.allocator.clone(), description);
 
         if is_storage {
             texture.storage_binding = Some(self.descriptor_set.bind_storage_image(&texture));
@@ -330,11 +317,22 @@ impl Device {
                 .expect("Failed to begin command buffer recording");
         }
 
-        let mut render_graph_builder = crate::render_graph::RenderGraphBuilder::new();
+        let swapchain_image = &self.swapchain.images[swapchain_image_index as usize];
+
+        let mut render_graph_builder =
+            crate::render_graph::RenderGraphBuilder::new(swapchain_image.size);
 
         build_render_graph(&mut render_graph_builder);
 
-        let mut render_graph = crate::vulkan::Graph::new(render_graph_builder);
+        let mut render_graph = crate::vulkan::Graph::new(
+            self,
+            (
+                swapchain_image.format,
+                swapchain_image.view,
+                TextureDimensions::D2(swapchain_image.size[0], swapchain_image.size[1]),
+            ),
+            render_graph_builder,
+        );
 
         render_graph.record_command_buffer(
             &self.device,

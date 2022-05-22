@@ -9,31 +9,20 @@ mod raster_api;
 mod swapchain;
 mod texture;
 
+pub use graph::RasterFnVulkan;
+pub use pipeline_cache::PipelineCache;
+
 pub use buffer::Buffer;
 pub use device::Device;
-pub use graph::{Graph, Pass, PassData, PassSet};
 pub use instance::Instance;
 pub use pipeline_cache::FramebufferLayout;
 pub use texture::Texture;
 
+pub(crate) use graph::Graph;
+
 use crate::render_graph::{BufferAccess, TextureAccess};
 use crate::{BufferDescription, TextureDescription};
 use ash::vk;
-
-//Not sure these need to exist
-pub(crate) struct BufferInfo {
-    pub description: BufferDescription,
-    pub handle: vk::Buffer,
-    pub binding: Option<u32>,
-}
-
-pub(crate) struct TextureInfo {
-    pub description: TextureDescription,
-    pub handle: vk::Image,
-    pub view: vk::ImageView,
-    pub storage_binding: Option<u32>,
-    pub sampled_binding: Option<u32>,
-}
 
 impl BufferAccess {
     pub(crate) fn get_vk(&self) -> (vk::PipelineStageFlags2, vk::AccessFlags2) {

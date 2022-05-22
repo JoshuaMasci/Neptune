@@ -95,6 +95,15 @@ pub enum TextureDimensions {
     D3(u32, u32, u32),
 }
 
+impl TextureDimensions {
+    pub fn expect_2d(&self) -> [u32; 2] {
+        match self {
+            TextureDimensions::D2(a, b) => [*a, *b],
+            _ => panic!("TextureDimension not 2d"),
+        }
+    }
+}
+
 //TODO: Texture Mips + Mip Auto filler function
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct TextureDescription {

@@ -38,7 +38,6 @@ impl Buffer {
         device: Rc<ash::Device>,
         allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
         description: BufferDescription,
-        name: &'static str,
     ) -> Self {
         let handle = unsafe {
             device.create_buffer(
@@ -54,7 +53,7 @@ impl Buffer {
         let allocation = allocator
             .borrow_mut()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name,
+                name: "Buffer Allocation",
                 requirements,
                 location: description.memory_type.to_gpu_alloc(),
                 linear: true,

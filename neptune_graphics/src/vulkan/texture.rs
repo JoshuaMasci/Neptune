@@ -151,6 +151,7 @@ pub struct Texture {
     pub view: vk::ImageView,
     pub storage_binding: Option<Binding>,
     pub sampled_binding: Option<Binding>,
+    pub format: vk::Format,
 }
 
 impl TextureDimensions {
@@ -192,7 +193,6 @@ impl Texture {
         device: Rc<ash::Device>,
         allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
         description: TextureDescription,
-        name: &'static str,
     ) -> Self {
         assert_ne!(
             description.format,
@@ -226,7 +226,7 @@ impl Texture {
         let allocation = allocator
             .borrow_mut()
             .allocate(&vulkan::AllocationCreateDesc {
-                name,
+                name: "Texture Allocation",
                 requirements,
                 location: description.memory_type.to_gpu_alloc(),
                 linear: true,
@@ -278,6 +278,7 @@ impl Texture {
             view,
             storage_binding: None,
             sampled_binding: None,
+            format,
         }
     }
 }

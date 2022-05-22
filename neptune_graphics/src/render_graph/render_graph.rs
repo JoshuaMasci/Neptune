@@ -3,22 +3,16 @@ use crate::render_graph::{
     BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
     ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
-use crate::{MemoryType, TextureDimensions, TextureFormat};
+use crate::{BufferDescription, MemoryType, TextureDescription, TextureDimensions, TextureFormat};
 
 pub(crate) enum BufferResourceDescription {
-    New {
-        size: usize,
-        memory_type: MemoryType,
-    },
+    New(BufferDescription),
     Imported(ImportedBuffer),
 }
 
 pub(crate) enum TextureResourceDescription {
-    New {
-        format: TextureFormat,
-        size: TextureDimensions,
-        memory_type: MemoryType,
-    },
+    Swapchain(u32),
+    New(TextureDescription),
     Imported(ImportedTexture),
 }
 
@@ -51,44 +45,45 @@ pub(crate) struct RenderPass {
 }
 
 pub struct RenderGraphBuilder {
+    pub(crate) swapchain_texture: (TextureId, [u32; 2]),
     pub(crate) passes: Vec<RenderPass>,
     pub(crate) buffers: Vec<BufferResource>,
     pub(crate) textures: Vec<TextureResource>,
 }
 
 impl RenderGraphBuilder {
-    pub fn new() -> Self {
+    pub fn new(swapchain_size: [u32; 2]) -> Self {
         Self {
+            swapchain_texture: (0, swapchain_size),
             passes: vec![],
             buffers: vec![],
-            textures: vec![],
+            textures: vec![TextureResource {
+                id: 0,
+                description: TextureResourceDescription::Swapchain(0),
+                access_list: vec![],
+            }],
         }
     }
 
-    pub fn create_buffer(&mut self, size: usize, memory_type: MemoryType) -> BufferId {
+    pub fn get_swapchain_image(&self) -> (TextureId, [u32; 2]) {
+        self.swapchain_texture
+    }
+
+    pub fn create_buffer(&mut self, description: BufferDescription) -> BufferId {
         let new_id = self.buffers.len();
         self.buffers.push(BufferResource {
             id: new_id,
-            description: BufferResourceDescription::New { size, memory_type },
+            description: BufferResourceDescription::New(description),
             access_list: vec![],
         });
         new_id
     }
 
-    pub fn create_texture(
-        &mut self,
-        format: TextureFormat,
-        size: TextureDimensions,
-        memory_type: MemoryType,
-    ) -> TextureId {
+    pub fn create_texture(&mut self, description: TextureDescription) -> TextureId {
         let new_id = self.textures.len();
         self.textures.push(TextureResource {
             id: new_id,
-            description: TextureResourceDescription::New {
-                format,
-                size,
-                memory_type,
-            },
+            description: TextureResourceDescription::New(description),
             access_list: vec![],
         });
         new_id

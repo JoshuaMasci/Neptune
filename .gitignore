@@ -4,3 +4,4 @@ Cargo.lock
 .idea/
 imgui.ini
 *.spv
+neptune_editor/output.log

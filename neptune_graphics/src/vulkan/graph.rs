@@ -1,16 +1,19 @@
 use crate::render_graph::{
-    BufferAccess, BufferId, RenderPassData, ResourceAccess, ResourceAccessType, TextureAccess,
-    TextureId,
+    BufferAccess, BufferResourceDescription, RenderPass, RenderPassData, ResourceAccess,
+    ResourceAccessType, TextureResourceDescription,
 };
+use crate::resource::Resource;
 use crate::vulkan::pipeline_cache::{FramebufferLayout, PipelineCache};
+use crate::vulkan::{Buffer, Texture};
+use crate::TextureDimensions;
 use ash::vk;
-use std::collections::HashMap;
+use ash::vk::ClearDepthStencilValue;
 use std::rc::Rc;
 
-type RasterFnVulkan =
+pub type RasterFnVulkan =
     dyn FnOnce(&Rc<ash::Device>, vk::CommandBuffer, &mut PipelineCache, &FramebufferLayout);
 
-pub enum PassData {
+enum PassData {
     None,
     Raster {
         framebuffer_layout: FramebufferLayout,
@@ -27,10 +30,125 @@ pub enum PassData {
     // Custom,
 }
 
-pub struct Pass {
+struct Pass {
     pub id: usize,
-    pub name: String,
     pub data: PassData,
+}
+
+impl Pass {
+    fn from(
+        render_pass: RenderPass,
+        buffers: &[BufferStorage],
+        textures: &[TextureStorage],
+    ) -> Self {
+        Self {
+            id: render_pass.id,
+            data: match render_pass.data {
+                RenderPassData::Raster {
+                    color_attachments,
+                    depth_stencil_attachment,
+                    raster_fn,
+                } => {
+                    let framebuffer_layout = FramebufferLayout {
+                        color_attachments: color_attachments
+                            .iter()
+                            .map(|attachment| textures[attachment.id].get_texture_format())
+                            .collect(),
+                        depth_stencil_attachment: depth_stencil_attachment
+                            .as_ref()
+                            .map(|attachment| textures[attachment.id].get_texture_format()),
+                    };
+
+                    let framebuffer_size: [u32; 2] = {
+                        let mut framebuffer_size: Option<[u32; 2]> = None;
+                        for attachment in color_attachments.iter() {
+                            let attachment_size =
+                                textures[attachment.id].get_texture_size().expect_2d();
+                            if let Some(size) = framebuffer_size {
+                                if size != attachment_size {
+                                    panic!(
+                                        "Color attachment size doesn't match rest of framebuffer"
+                                    );
+                                }
+                            } else {
+                                framebuffer_size = Some(attachment_size);
+                            }
+                        }
+
+                        if let Some(attachment) = &depth_stencil_attachment {
+                            let attachment_size =
+                                textures[attachment.id].get_texture_size().expect_2d();
+                            if let Some(size) = framebuffer_size {
+                                if size != attachment_size {
+                                    panic!(
+                                        "Depth stencil attachment size doesn't match rest of framebuffer"
+                                    );
+                                }
+                            } else {
+                                framebuffer_size = Some(attachment_size);
+                            }
+                        }
+
+                        framebuffer_size.expect("No textures found for framebuffer")
+                    };
+
+                    let color_attachments = color_attachments
+                        .iter()
+                        .map(|attachment| {
+                            vk::RenderingAttachmentInfoKHR::builder()
+                                .image_view(textures[attachment.id].get_texture_view())
+                                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                                .load_op(match attachment.clear {
+                                    None => vk::AttachmentLoadOp::LOAD,
+                                    Some(_) => vk::AttachmentLoadOp::CLEAR,
+                                })
+                                .store_op(vk::AttachmentStoreOp::STORE)
+                                .clear_value(vk::ClearValue {
+                                    color: vk::ClearColorValue {
+                                        float32: attachment.clear.unwrap_or_default(),
+                                    },
+                                })
+                                .build()
+                        })
+                        .collect();
+
+                    let depth_stencil_attachment = depth_stencil_attachment.map(|attachment| {
+                        let clear = attachment.clear.unwrap_or_default();
+
+                        vk::RenderingAttachmentInfoKHR::builder()
+                            .image_view(textures[attachment.id].get_texture_view())
+                            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                            .load_op(match attachment.clear {
+                                None => vk::AttachmentLoadOp::LOAD,
+                                Some(_) => vk::AttachmentLoadOp::CLEAR,
+                            })
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(vk::ClearValue {
+                                depth_stencil: ClearDepthStencilValue {
+                                    depth: clear.0,
+                                    stencil: clear.1,
+                                },
+                            })
+                            .build()
+                    });
+
+                    PassData::Raster {
+                        framebuffer_layout,
+                        render_area: vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent: vk::Extent2D {
+                                width: framebuffer_size[0],
+                                height: framebuffer_size[1],
+                            },
+                        },
+                        color_attachments,
+                        depth_stencil_attachment,
+                        raster_fn,
+                    }
+                }
+            },
+        }
+    }
 }
 
 #[derive(Default)]
@@ -55,146 +173,131 @@ impl PassSetBarrier {
     }
 }
 
-#[derive(Default)]
-pub(crate) struct PassSet {
-    pub(crate) pre_barrier: PassSetBarrier,
-    pub(crate) passes: Vec<Pass>,
-    pub(crate) post_barrier: PassSetBarrier,
+pub(crate) enum BufferStorage {
+    Unused,
+    Temporary(Resource<Buffer>),
+    Imported(Rc<Resource<Buffer>>),
 }
 
-#[derive(Default)]
-pub struct Graph {
-    pub sets: Vec<PassSet>,
+pub(crate) enum TextureStorage {
+    Unused,
+    Swapchain(vk::Format, vk::ImageView, TextureDimensions),
+    Temporary(Resource<Texture>),
+    Imported(Rc<Resource<Texture>>),
 }
 
-enum RenderGraphEdge {
-    Buffer {
-        id: BufferId,
-        last: BufferAccess,
-        next: BufferAccess,
-    },
-    Texture {
-        id: TextureId,
-        last: TextureAccess,
-        next: TextureAccess,
-    },
-}
-
-fn get_buffer_node_access_list(
-    access_type: &ResourceAccessType<BufferAccess>,
-) -> Vec<ResourceAccess<BufferAccess>> {
-    match access_type {
-        ResourceAccessType::Write(access) => vec![*access],
-        ResourceAccessType::Reads(some) => some.clone(),
+impl TextureStorage {
+    fn get_texture_size(&self) -> TextureDimensions {
+        match self {
+            TextureStorage::Unused => panic!("Tried to access Unused Texture"),
+            TextureStorage::Swapchain(_, _, dimensions) => *dimensions,
+            TextureStorage::Temporary(texture) => texture.description.size,
+            TextureStorage::Imported(texture) => texture.description.size,
+        }
     }
+
+    fn get_texture_format(&self) -> vk::Format {
+        match self {
+            TextureStorage::Unused => panic!("Tried to access Unused Texture"),
+            TextureStorage::Swapchain(format, _, _) => *format,
+            TextureStorage::Temporary(texture) => texture.format,
+            TextureStorage::Imported(texture) => texture.format,
+        }
+    }
+
+    fn get_texture_view(&self) -> vk::ImageView {
+        match self {
+            TextureStorage::Unused => panic!("Tried to access Unused Texture"),
+            TextureStorage::Swapchain(_, view, _) => *view,
+            TextureStorage::Temporary(texture) => texture.view,
+            TextureStorage::Imported(texture) => texture.view,
+        }
+    }
+}
+
+#[derive(Default)]
+struct PassSet {
+    pre_barrier: PassSetBarrier,
+    passes: Vec<Pass>,
+    post_barrier: PassSetBarrier,
+}
+
+#[derive(Default)]
+pub(crate) struct Graph {
+    buffers: Vec<BufferStorage>,
+    textures: Vec<TextureStorage>,
+    sets: Vec<PassSet>,
 }
 
 impl Graph {
-    pub fn new(mut render_graph: crate::render_graph::RenderGraphBuilder) -> Self {
-        //Construct the graph
-        let mut graph: crate::render_graph::graph::Graph<
-            crate::render_graph::RenderPass,
-            RenderGraphEdge,
-        > = crate::render_graph::graph::Graph::new();
-
-        //Add Nodes
-        let pass_to_node_id: Vec<crate::render_graph::graph::NodeId> = render_graph
-            .passes
-            .drain(..)
-            .map(|pass| graph.add_node(pass))
+    pub(crate) fn new(
+        device: &mut crate::vulkan::Device,
+        swapchain_image: (vk::Format, vk::ImageView, TextureDimensions),
+        mut render_graph: crate::render_graph::RenderGraphBuilder,
+    ) -> Self {
+        let buffers: Vec<BufferStorage> = render_graph
+            .buffers
+            .iter()
+            .map(|buffer| {
+                if buffer.access_list.is_empty() {
+                    BufferStorage::Unused
+                } else {
+                    match &buffer.description {
+                        BufferResourceDescription::New(description) => {
+                            BufferStorage::Temporary(device.create_buffer(*description))
+                        }
+                        BufferResourceDescription::Imported(buffer) => {
+                            BufferStorage::Imported(buffer.clone())
+                        }
+                    }
+                }
+            })
             .collect();
 
-        //Add Buffer Edges
-        for buffer in render_graph.buffers.iter() {
-            let mut access_list = buffer.access_list.iter();
-            if let Some(mut last_access) = access_list.next() {
-                for access in access_list {
-                    let last = get_buffer_node_access_list(last_access);
-                    let current = get_buffer_node_access_list(last_access);
-
-                    for current_access in current {
-                        for last_access in last.iter() {
-                            graph.add_edge(
-                                pass_to_node_id[last_access.pass_id],
-                                pass_to_node_id[current_access.pass_id],
-                                RenderGraphEdge::Buffer {
-                                    id: buffer.id,
-                                    last: last_access.access,
-                                    next: current_access.access,
-                                },
-                            );
+        let textures: Vec<TextureStorage> = render_graph
+            .textures
+            .iter()
+            .map(|texture| {
+                if texture.access_list.is_empty() {
+                    TextureStorage::Unused
+                } else {
+                    match &texture.description {
+                        TextureResourceDescription::Swapchain(_swapchain_id) => {
+                            TextureStorage::Swapchain(
+                                swapchain_image.0,
+                                swapchain_image.1,
+                                swapchain_image.2,
+                            )
+                        }
+                        TextureResourceDescription::New(description) => {
+                            TextureStorage::Temporary(device.create_texture(*description))
+                        }
+                        TextureResourceDescription::Imported(texture) => {
+                            TextureStorage::Imported(texture.clone())
                         }
                     }
-
-                    last_access = access;
                 }
-            }
+            })
+            .collect();
+
+        let sets: Vec<PassSet> = render_graph
+            .passes
+            .drain(..)
+            .map(|pass| PassSet {
+                pre_barrier: Default::default(),
+                passes: vec![Pass::from(pass, &buffers, &textures)],
+                post_barrier: Default::default(),
+            })
+            .collect();
+
+        Self {
+            buffers,
+            textures,
+            sets,
         }
-
-        //Add Texture Edges
-
-        let mut sets = Vec::new();
-
-        while let Some(mut nodes) = graph.get_unconnected_nodes() {
-            let mut pass_set = PassSet::default();
-
-            for node in nodes.drain(..) {
-                for edge in node.edges {
-                    match edge.data {
-                        RenderGraphEdge::Buffer { id, last, next } => {
-                            let handle = vk::Buffer::null(); //TODO: this
-                            let src = last.get_vk();
-                            let dst = next.get_vk();
-
-                            pass_set.buffer_barriers.push(
-                                vk::BufferMemoryBarrier2::builder()
-                                    .buffer(handle)
-                                    .offset(0)
-                                    .size(vk::WHOLE_SIZE)
-                                    .src_stage_mask(src.0)
-                                    .src_access_mask(src.1)
-                                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                    .dst_stage_mask(dst.0)
-                                    .dst_access_mask(dst.1)
-                                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                                    .build(),
-                            );
-                        }
-                        RenderGraphEdge::Texture { .. } => {}
-                    }
-                }
-
-                let data = match node.data.data {
-                    RenderPassData::Raster {
-                        color_attachments,
-                        depth_stencil_attachment,
-                        raster_fn,
-                    } => PassData::Raster {
-                        framebuffer_layout: FramebufferLayout {
-                            color_attachments: vec![],
-                            depth_stencil_attachment: None,
-                        },
-                        render_area: Default::default(),
-                        color_attachments: vec![],
-                        depth_stencil_attachment: None,
-                        raster_fn: None,
-                    },
-                };
-
-                pass_set.passes.push(Pass {
-                    id: node.data.id,
-                    name: node.data.name,
-                    data,
-                });
-            }
-
-            sets.push(pass_set);
-        }
-
-        Self { sets }
     }
 
-    pub fn record_command_buffer(
+    pub(crate) fn record_command_buffer(
         &mut self,
         device: &Rc<ash::Device>,
         command_buffer: vk::CommandBuffer,
@@ -204,7 +307,7 @@ impl Graph {
             set.pre_barrier.record(device, command_buffer);
 
             for pass in set.passes.iter_mut() {
-                println!("Render Pass {}: {}", pass.id, pass.name);
+                //println!("Render Pass {}: {}", pass.id, pass.name);
                 //TODO: set push constants
                 match &mut pass.data {
                     PassData::None => {}
