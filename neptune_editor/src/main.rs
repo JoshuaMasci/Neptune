@@ -1,14 +1,18 @@
 use neptune_core::log::{debug, error, info, trace, warn};
 use neptune_graphics::{BufferUsages, MemoryType};
+use std::rc::Rc;
+use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
 };
 
+include!(concat!(env!("OUT_DIR"), "/shader.rs"));
+
 fn main() {
     neptune_core::setup_logger().expect("Failed to init logger");
 
-    let event_loop = winit::event_loop::EventLoop::new();
+    let mut event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
         .with_resizable(true)
@@ -16,27 +20,32 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let vulkan_instance = neptune_graphics::vulkan::Instance::new(&window, "Neptune Editor", true);
-    let mut vulkan_device = vulkan_instance.create_device(0, 3);
+    let instance = neptune_graphics::vulkan::Instance::new(&window, "Neptune Editor", true);
+    let mut device = instance.create_device(0, 3);
+
+    let device_ref = &mut device;
 
     let mut test_buffer = Some(
-        vulkan_device.create_buffer(neptune_graphics::BufferDescription {
+        device_ref.create_buffer(neptune_graphics::BufferDescription {
             size: 65_536,
             usage: BufferUsages::STORAGE,
             memory_type: MemoryType::GpuOnly,
         }),
     );
 
-    let mut test_texture = Some(vulkan_device.create_texture(
-        neptune_graphics::TextureDescription {
+    let mut test_texture = Some(
+        device_ref.create_texture(neptune_graphics::TextureDescription {
             format: neptune_graphics::TextureFormat::Rgba8Unorm,
             size: neptune_graphics::TextureDimensions::D2(8_192, 8_192),
             usage: neptune_graphics::TextureUsages::SAMPLED,
             memory_type: MemoryType::GpuOnly,
-        },
-    ));
+        }),
+    );
 
-    event_loop.run(move |event, _, control_flow| {
+    // let _imgui_vert_module = Rc::new(device_ref.create_shader_module(IMGUI_VERT));
+    // let _imgui_frag_module = Rc::new(device_ref.create_shader_module(IMGUI_FRAG));
+
+    event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::NewEvents(_) => {}
@@ -52,7 +61,7 @@ fn main() {
                 let _ = test_buffer.take();
                 let _ = test_texture.take();
 
-                vulkan_device.render(move |_vulkan_render_graph| {
+                device_ref.render(move |_vulkan_render_graph| {
                     neptune_graphics::render_graph_test(_vulkan_render_graph);
                 });
             }
@@ -62,4 +71,5 @@ fn main() {
             }
         }
     });
+    info!("Exiting Main Loop!");
 }

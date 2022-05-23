@@ -47,7 +47,7 @@ pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
         memory_type: MemoryType::GpuOnly,
     });
 
-    let swapchain_image = render_graph.get_swapchain_image();
+    let (swapchain_id, swapchain_size) = render_graph.get_swapchain_image();
 
     // let some_texture = render_graph.create_texture(TextureDescription {
     //     format: TextureFormat::Rgba8Unorm,
@@ -58,7 +58,7 @@ pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
 
     let some_depth_texture = render_graph.create_texture(TextureDescription {
         format: TextureFormat::D32Float,
-        size: TextureDimensions::D2(swapchain_image.1[0], swapchain_image.1[1]),
+        size: TextureDimensions::D2(swapchain_size[0], swapchain_size[1]),
         usage: TextureUsages::DEPTH_STENCIL_ATTACHMENT,
         memory_type: MemoryType::GpuOnly,
     });
@@ -67,8 +67,8 @@ pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
         RasterPassBuilder::new("Test")
             .attachments(
                 &[ColorAttachment {
-                    id: swapchain_image.0,
-                    clear: Some([1.0, 0.5, 0.25, 0.0]),
+                    id: swapchain_id,
+                    clear: Some([0.5, 0.25, 0.125, 0.0]),
                 }],
                 Some(DepthStencilAttachment {
                     id: some_depth_texture,

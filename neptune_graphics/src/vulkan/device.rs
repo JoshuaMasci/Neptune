@@ -4,6 +4,7 @@ use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::descriptor_set::DescriptorSet;
 use crate::vulkan::pipeline_cache::PipelineCache;
+use crate::vulkan::shader::ShaderModule;
 use crate::vulkan::swapchain::Swapchain;
 use crate::vulkan::texture::Texture;
 use crate::{BufferUsages, TextureDimensions, TextureUsages};
@@ -274,6 +275,10 @@ impl Device {
         }
 
         Resource::new(texture, self.resource_deleter.clone())
+    }
+
+    pub fn create_shader_module(&mut self, code: &[u32]) -> ShaderModule {
+        ShaderModule::new(self.device.clone(), code)
     }
 
     pub fn render(

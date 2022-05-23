@@ -6,6 +6,7 @@ mod graph;
 mod instance;
 mod pipeline_cache;
 mod raster_api;
+mod shader;
 mod swapchain;
 mod texture;
 
@@ -16,6 +17,7 @@ pub use buffer::Buffer;
 pub use device::Device;
 pub use instance::Instance;
 pub use pipeline_cache::FramebufferLayout;
+pub use shader::ShaderModule;
 pub use texture::Texture;
 
 pub(crate) use graph::Graph;
