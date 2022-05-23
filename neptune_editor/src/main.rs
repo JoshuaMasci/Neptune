@@ -25,22 +25,22 @@ fn main() {
 
     let device_ref = &mut device;
 
-    let mut test_buffer = Some(
-        device_ref.create_buffer(neptune_graphics::BufferDescription {
-            size: 65_536,
-            usage: BufferUsages::STORAGE,
-            memory_type: MemoryType::GpuOnly,
-        }),
-    );
-
-    let mut test_texture = Some(
-        device_ref.create_texture(neptune_graphics::TextureDescription {
-            format: neptune_graphics::TextureFormat::Rgba8Unorm,
-            size: neptune_graphics::TextureDimensions::D2(8_192, 8_192),
-            usage: neptune_graphics::TextureUsages::SAMPLED,
-            memory_type: MemoryType::GpuOnly,
-        }),
-    );
+    // let mut test_buffer = Some(
+    //     device_ref.create_buffer(neptune_graphics::BufferDescription {
+    //         size: 65_536,
+    //         usage: BufferUsages::STORAGE,
+    //         memory_type: MemoryType::GpuOnly,
+    //     }),
+    // );
+    //
+    // let mut test_texture = Some(
+    //     device_ref.create_texture(neptune_graphics::TextureDescription {
+    //         format: neptune_graphics::TextureFormat::Rgba8Unorm,
+    //         size: neptune_graphics::TextureDimensions::D2(8_192, 8_192),
+    //         usage: neptune_graphics::TextureUsages::SAMPLED,
+    //         memory_type: MemoryType::GpuOnly,
+    //     }),
+    // );
 
     let _imgui_vert_module = Rc::new(device_ref.create_shader_module(IMGUI_VERT));
     let _imgui_frag_module = Rc::new(device_ref.create_shader_module(IMGUI_FRAG));
@@ -61,8 +61,8 @@ fn main() {
             }
             Event::RedrawRequested(_window_id) => {
                 //TODO: Render Here?
-                let _ = test_buffer.take();
-                let _ = test_texture.take();
+                // let _ = test_buffer.take();
+                // let _ = test_texture.take();
 
                 device_ref.render(move |_vulkan_render_graph| {
                     neptune_graphics::render_graph_test(_vulkan_render_graph);

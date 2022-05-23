@@ -1,5 +1,5 @@
 use crate::buffer::BufferDescription;
-use crate::resource::{Resource, ResourceDeleter};
+use crate::resource::{Resource, ResourceDeleter, ResourceDeleterInner};
 use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::descriptor_set::DescriptorSet;
@@ -76,7 +76,7 @@ impl Drop for CommandPool {
 
 pub struct Device {
     device: Rc<ash::Device>,
-    resource_deleter: Rc<RefCell<ResourceDeleter>>,
+    resource_deleter: ResourceDeleter,
     descriptor_set: DescriptorSet,
 
     swapchain: Swapchain,
@@ -257,7 +257,7 @@ impl Device {
             buffer.binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
         }
 
-        Resource::new(buffer, self.resource_deleter.clone())
+        self.resource_deleter.create_resource(buffer)
     }
 
     pub fn create_texture(&mut self, description: TextureDescription) -> Resource<Texture> {
@@ -274,7 +274,7 @@ impl Device {
             texture.sampled_binding = Some(self.descriptor_set.bind_sampled_image(&texture));
         }
 
-        Resource::new(texture, self.resource_deleter.clone())
+        self.resource_deleter.create_resource(texture)
     }
 
     pub fn create_shader_module(&mut self, code: &[u32]) -> ShaderModule {
@@ -295,6 +295,7 @@ impl Device {
                 .expect("Failed to wait for fence")
         };
 
+        self.resource_deleter.clear_frame();
         self.descriptor_set.commit_changes();
 
         let swapchain_image_index = self
