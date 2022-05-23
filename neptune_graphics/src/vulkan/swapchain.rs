@@ -242,6 +242,7 @@ impl Swapchain {
                     return Some(index);
                 }
             }
+
             self.invalid = true;
         }
 

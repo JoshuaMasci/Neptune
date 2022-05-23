@@ -152,6 +152,7 @@ pub struct Texture {
     pub storage_binding: Option<Binding>,
     pub sampled_binding: Option<Binding>,
     pub format: vk::Format,
+    pub sub_resource_range: vk::ImageSubresourceRange,
 }
 
 impl TextureDimensions {
@@ -245,6 +246,14 @@ impl Texture {
             vk::ImageAspectFlags::DEPTH
         };
 
+        let sub_resource_range = vk::ImageSubresourceRange {
+            aspect_mask,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+
         let view = unsafe {
             device.create_image_view(
                 &vk::ImageViewCreateInfo::builder()
@@ -257,13 +266,7 @@ impl Texture {
                         b: vk::ComponentSwizzle::IDENTITY,
                         a: vk::ComponentSwizzle::IDENTITY,
                     })
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    }),
+                    .subresource_range(sub_resource_range),
                 None,
             )
         }
@@ -279,6 +282,7 @@ impl Texture {
             storage_binding: None,
             sampled_binding: None,
             format,
+            sub_resource_range,
         }
     }
 }

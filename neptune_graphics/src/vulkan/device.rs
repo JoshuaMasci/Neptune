@@ -333,13 +333,14 @@ impl Device {
             self,
             (
                 swapchain_image.format,
+                swapchain_image.handle,
                 swapchain_image.view,
                 TextureDimensions::D2(swapchain_image.size[0], swapchain_image.size[1]),
             ),
             render_graph_builder,
         );
 
-        render_graph.record_command_buffer(
+        let swapchain_layout = render_graph.record_command_buffer(
             &self.device,
             self.frames[self.frame_index].graphics_command_buffer,
             &mut self.pipeline_cache,
@@ -348,7 +349,7 @@ impl Device {
         unsafe {
             let image_memory_barriers = vk::ImageMemoryBarrier2::builder()
                 .image(self.swapchain.images[swapchain_image_index as usize].handle)
-                .old_layout(vk::ImageLayout::UNDEFINED)
+                .old_layout(swapchain_layout)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                 .src_access_mask(vk::AccessFlags2::NONE)

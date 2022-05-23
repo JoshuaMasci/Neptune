@@ -16,7 +16,7 @@ fn main() {
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
         .with_resizable(true)
-        .with_maximized(true)
+        //.with_maximized(true)
         .build(&event_loop)
         .unwrap();
 
@@ -42,8 +42,8 @@ fn main() {
         }),
     );
 
-    // let _imgui_vert_module = Rc::new(device_ref.create_shader_module(IMGUI_VERT));
-    // let _imgui_frag_module = Rc::new(device_ref.create_shader_module(IMGUI_FRAG));
+    let _imgui_vert_module = Rc::new(device_ref.create_shader_module(IMGUI_VERT));
+    let _imgui_frag_module = Rc::new(device_ref.create_shader_module(IMGUI_FRAG));
 
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -57,6 +57,9 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
+                window.request_redraw();
+            }
+            Event::RedrawRequested(_window_id) => {
                 //TODO: Render Here?
                 let _ = test_buffer.take();
                 let _ = test_texture.take();
@@ -65,7 +68,6 @@ fn main() {
                     neptune_graphics::render_graph_test(_vulkan_render_graph);
                 });
             }
-            Event::RedrawRequested(_) => {}
             _event => {
                 //imgui_layer.handle_event(&window, &event);
             }

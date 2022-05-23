@@ -1,13 +1,12 @@
 use crate::render_graph::{
     BufferAccess, BufferResourceDescription, RenderPass, RenderPassData, ResourceAccess,
-    ResourceAccessType, TextureResourceDescription,
+    ResourceAccessType, TextureAccess, TextureResourceDescription,
 };
 use crate::resource::Resource;
 use crate::vulkan::pipeline_cache::{FramebufferLayout, PipelineCache};
 use crate::vulkan::{Buffer, Texture};
 use crate::TextureDimensions;
 use ash::vk;
-use ash::vk::ClearDepthStencilValue;
 use std::rc::Rc;
 
 pub type RasterFnVulkan =
@@ -124,7 +123,7 @@ impl Pass {
                             })
                             .store_op(vk::AttachmentStoreOp::STORE)
                             .clear_value(vk::ClearValue {
-                                depth_stencil: ClearDepthStencilValue {
+                                depth_stencil: vk::ClearDepthStencilValue {
                                     depth: clear.0,
                                     stencil: clear.1,
                                 },
@@ -179,9 +178,19 @@ pub(crate) enum BufferStorage {
     Imported(Rc<Resource<Buffer>>),
 }
 
+impl BufferStorage {
+    pub(crate) fn get_handle(&self) -> vk::Buffer {
+        match self {
+            BufferStorage::Unused => panic!("Tried to access Unused Buffer"),
+            BufferStorage::Temporary(buffer) => buffer.handle,
+            BufferStorage::Imported(buffer) => buffer.handle,
+        }
+    }
+}
+
 pub(crate) enum TextureStorage {
     Unused,
-    Swapchain(vk::Format, vk::ImageView, TextureDimensions),
+    Swapchain(vk::Format, vk::Image, vk::ImageView, TextureDimensions),
     Temporary(Resource<Texture>),
     Imported(Rc<Resource<Texture>>),
 }
@@ -190,7 +199,7 @@ impl TextureStorage {
     fn get_texture_size(&self) -> TextureDimensions {
         match self {
             TextureStorage::Unused => panic!("Tried to access Unused Texture"),
-            TextureStorage::Swapchain(_, _, dimensions) => *dimensions,
+            TextureStorage::Swapchain(_, _, _, dimensions) => *dimensions,
             TextureStorage::Temporary(texture) => texture.description.size,
             TextureStorage::Imported(texture) => texture.description.size,
         }
@@ -199,18 +208,42 @@ impl TextureStorage {
     fn get_texture_format(&self) -> vk::Format {
         match self {
             TextureStorage::Unused => panic!("Tried to access Unused Texture"),
-            TextureStorage::Swapchain(format, _, _) => *format,
+            TextureStorage::Swapchain(format, _, _, _) => *format,
             TextureStorage::Temporary(texture) => texture.format,
             TextureStorage::Imported(texture) => texture.format,
+        }
+    }
+
+    pub(crate) fn get_handle(&self) -> vk::Image {
+        match self {
+            TextureStorage::Unused => panic!("Tried to access Unused Texture"),
+            TextureStorage::Swapchain(_, handle, _, _) => *handle,
+            TextureStorage::Temporary(texture) => texture.handle,
+            TextureStorage::Imported(texture) => texture.handle,
         }
     }
 
     fn get_texture_view(&self) -> vk::ImageView {
         match self {
             TextureStorage::Unused => panic!("Tried to access Unused Texture"),
-            TextureStorage::Swapchain(_, view, _) => *view,
+            TextureStorage::Swapchain(_, _, view, _) => *view,
             TextureStorage::Temporary(texture) => texture.view,
             TextureStorage::Imported(texture) => texture.view,
+        }
+    }
+
+    fn get_texture_range(&self) -> vk::ImageSubresourceRange {
+        match self {
+            TextureStorage::Unused => panic!("Tried to access Unused Texture"),
+            TextureStorage::Swapchain(_, _, _, _) => vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            TextureStorage::Temporary(texture) => texture.sub_resource_range,
+            TextureStorage::Imported(texture) => texture.sub_resource_range,
         }
     }
 }
@@ -222,17 +255,20 @@ struct PassSet {
     post_barrier: PassSetBarrier,
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 pub(crate) struct Graph {
     buffers: Vec<BufferStorage>,
     textures: Vec<TextureStorage>,
     sets: Vec<PassSet>,
+
+    temp_final_swapchain_layout: vk::ImageLayout,
 }
 
 impl Graph {
     pub(crate) fn new(
         device: &mut crate::vulkan::Device,
-        swapchain_image: (vk::Format, vk::ImageView, TextureDimensions),
+        swapchain_image: (vk::Format, vk::Image, vk::ImageView, TextureDimensions),
         mut render_graph: crate::render_graph::RenderGraphBuilder,
     ) -> Self {
         let buffers: Vec<BufferStorage> = render_graph
@@ -267,6 +303,7 @@ impl Graph {
                                 swapchain_image.0,
                                 swapchain_image.1,
                                 swapchain_image.2,
+                                swapchain_image.3,
                             )
                         }
                         TextureResourceDescription::New(description) => {
@@ -280,11 +317,76 @@ impl Graph {
             })
             .collect();
 
+        //TODO: make better
+        //WARNING: Bad implementation of barriers
+        //This assumes that the execution order is the same as the submission order, rather than a traditional RenderGraph which can reorder itself when needed.
+        //Also this produces too many barriers as it produces many barriers in the Case: WRITE -> MANY READ or MANY READ -> WRITE where it can be done with only 1 barrier
+        let mut last_access_buffer: Vec<BufferAccess> = render_graph
+            .buffers
+            .iter()
+            .map(|_buffer| BufferAccess::None)
+            .collect();
+
+        let mut last_access_texture: Vec<TextureAccess> = render_graph
+            .textures
+            .iter()
+            .map(|_texture| TextureAccess::None)
+            .collect();
+
         let sets: Vec<PassSet> = render_graph
             .passes
             .drain(..)
             .map(|pass| PassSet {
-                pre_barrier: Default::default(),
+                pre_barrier: PassSetBarrier {
+                    memory_barriers: vec![],
+                    buffer_barriers: pass
+                        .buffer_accesses
+                        .iter()
+                        .map(|(id, access)| {
+                            let last = last_access_buffer[*id];
+                            last_access_buffer[*id] = *access;
+
+                            let src = last.get_vk();
+                            let dst = access.get_vk();
+
+                            vk::BufferMemoryBarrier2::builder()
+                                .buffer(buffers[*id].get_handle())
+                                .offset(0)
+                                .size(vk::WHOLE_SIZE)
+                                .src_stage_mask(src.0)
+                                .src_access_mask(src.1)
+                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .dst_stage_mask(dst.0)
+                                .dst_access_mask(dst.1)
+                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .build()
+                        })
+                        .collect(),
+                    image_barriers: pass
+                        .texture_accesses
+                        .iter()
+                        .map(|(id, access)| {
+                            let last = last_access_texture[*id];
+                            last_access_texture[*id] = *access;
+
+                            let src = last.get_vk();
+                            let dst = access.get_vk();
+
+                            vk::ImageMemoryBarrier2::builder()
+                                .image(textures[*id].get_handle())
+                                .subresource_range(textures[*id].get_texture_range())
+                                .old_layout(src.2)
+                                .src_stage_mask(src.0)
+                                .src_access_mask(src.1)
+                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .new_layout(dst.2)
+                                .dst_stage_mask(dst.0)
+                                .dst_access_mask(dst.1)
+                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .build()
+                        })
+                        .collect(),
+                },
                 passes: vec![Pass::from(pass, &buffers, &textures)],
                 post_barrier: Default::default(),
             })
@@ -294,6 +396,7 @@ impl Graph {
             buffers,
             textures,
             sets,
+            temp_final_swapchain_layout: last_access_texture[0].get_vk().2,
         }
     }
 
@@ -302,7 +405,7 @@ impl Graph {
         device: &Rc<ash::Device>,
         command_buffer: vk::CommandBuffer,
         pipeline_cache: &mut PipelineCache,
-    ) {
+    ) -> vk::ImageLayout {
         for set in self.sets.iter_mut() {
             set.pre_barrier.record(device, command_buffer);
 
@@ -360,7 +463,8 @@ impl Graph {
                 }
             }
 
-            set.pre_barrier.record(device, command_buffer);
+            set.post_barrier.record(device, command_buffer);
         }
+        self.temp_final_swapchain_layout
     }
 }
