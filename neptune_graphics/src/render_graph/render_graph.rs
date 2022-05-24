@@ -3,7 +3,7 @@ use crate::render_graph::{
     BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
     ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
-use crate::{BufferDescription, MemoryType, TextureDescription, TextureDimensions, TextureFormat};
+use crate::{BufferDescription, TextureDescription};
 
 pub(crate) enum BufferResourceDescription {
     New(BufferDescription),

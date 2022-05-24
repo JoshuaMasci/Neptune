@@ -68,19 +68,13 @@ impl ResourceDeleterInner {
             let type_id = TypeId::of::<T>();
             if let Some(free_list) = self.freed_resource_lists[self.current_frame].get_mut(&type_id)
             {
-                let free_list: &mut Box<Vec<T>> = free_list.downcast_mut().unwrap();
+                let free_list: &mut Vec<T> = free_list.downcast_mut().unwrap();
                 free_list.push(resource)
             } else {
                 let free_list: Box<Vec<T>> = Box::new(vec![resource]);
                 self.freed_resource_lists[self.current_frame].insert(type_id, free_list);
             }
         }
-    }
-}
-
-impl Drop for ResourceDeleterInner {
-    fn drop(&mut self) {
-        self.no_wait = true;
     }
 }
 
@@ -112,5 +106,12 @@ impl ResourceDeleter {
             let mut lock = self.deleter.borrow_mut().lock().unwrap();
             lock.set_no_wait(false);
         }
+    }
+}
+
+impl Drop for ResourceDeleter {
+    fn drop(&mut self) {
+        let mut lock = self.deleter.borrow_mut().lock().unwrap();
+        lock.set_no_wait(true);
     }
 }

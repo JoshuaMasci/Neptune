@@ -23,7 +23,6 @@ pub use texture::Texture;
 pub(crate) use graph::Graph;
 
 use crate::render_graph::{BufferAccess, TextureAccess};
-use crate::{BufferDescription, TextureDescription};
 use ash::vk;
 
 impl BufferAccess {

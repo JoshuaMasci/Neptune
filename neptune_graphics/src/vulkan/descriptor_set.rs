@@ -1,9 +1,7 @@
 use crate::id_pool::IdPool;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::texture::Texture;
-use crate::BufferDescription;
 use ash::vk;
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -344,71 +342,71 @@ impl DescriptorSet {
         self.sampled_image_changes.clear();
     }
 
-    fn write_empty(
-        &mut self,
-        storage_buffer_count: u32,
-        storage_image_count: u32,
-        sampled_image_count: u32,
-        sampler_count: u32,
-    ) {
-        let mut writes: Vec<vk::WriteDescriptorSet> = Vec::with_capacity(
-            (storage_buffer_count + storage_image_count + sampled_image_count + sampler_count)
-                as usize,
-        );
-
-        for index in 0..storage_buffer_count {
-            writes.push(vk::WriteDescriptorSet {
-                dst_set: self.set,
-                dst_binding: Self::STORAGE_BUFFER_BINDING,
-                dst_array_element: index,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
-                p_buffer_info: &EMPTY_BUFFER_INFO,
-                ..Default::default()
-            });
-        }
-
-        for index in 0..storage_image_count {
-            writes.push(vk::WriteDescriptorSet {
-                dst_set: self.set,
-                dst_binding: Self::STORAGE_IMAGE_BINDING,
-                dst_array_element: index,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                p_image_info: &EMPTY_IMAGE_INFO,
-                ..Default::default()
-            });
-        }
-
-        for index in 0..sampled_image_count {
-            writes.push(vk::WriteDescriptorSet {
-                dst_set: self.set,
-                dst_binding: Self::SAMPLED_IMAGE_BINDING,
-                dst_array_element: index,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
-                p_image_info: &EMPTY_IMAGE_INFO,
-                ..Default::default()
-            });
-        }
-
-        for index in 0..sampler_count {
-            writes.push(vk::WriteDescriptorSet {
-                dst_set: self.set,
-                dst_binding: Self::SAMPLER_BINDING,
-                dst_array_element: index,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::SAMPLER,
-                p_image_info: &EMPTY_IMAGE_INFO,
-                ..Default::default()
-            });
-        }
-
-        //TODO: profile this part
-        unsafe {
-            self.device.update_descriptor_sets(&writes, &[]);
-        }
-    }
+    // fn write_empty(
+    //     &mut self,
+    //     storage_buffer_count: u32,
+    //     storage_image_count: u32,
+    //     sampled_image_count: u32,
+    //     sampler_count: u32,
+    // ) {
+    //     let mut writes: Vec<vk::WriteDescriptorSet> = Vec::with_capacity(
+    //         (storage_buffer_count + storage_image_count + sampled_image_count + sampler_count)
+    //             as usize,
+    //     );
+    //
+    //     for index in 0..storage_buffer_count {
+    //         writes.push(vk::WriteDescriptorSet {
+    //             dst_set: self.set,
+    //             dst_binding: Self::STORAGE_BUFFER_BINDING,
+    //             dst_array_element: index,
+    //             descriptor_count: 1,
+    //             descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+    //             p_buffer_info: &EMPTY_BUFFER_INFO,
+    //             ..Default::default()
+    //         });
+    //     }
+    //
+    //     for index in 0..storage_image_count {
+    //         writes.push(vk::WriteDescriptorSet {
+    //             dst_set: self.set,
+    //             dst_binding: Self::STORAGE_IMAGE_BINDING,
+    //             dst_array_element: index,
+    //             descriptor_count: 1,
+    //             descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+    //             p_image_info: &EMPTY_IMAGE_INFO,
+    //             ..Default::default()
+    //         });
+    //     }
+    //
+    //     for index in 0..sampled_image_count {
+    //         writes.push(vk::WriteDescriptorSet {
+    //             dst_set: self.set,
+    //             dst_binding: Self::SAMPLED_IMAGE_BINDING,
+    //             dst_array_element: index,
+    //             descriptor_count: 1,
+    //             descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+    //             p_image_info: &EMPTY_IMAGE_INFO,
+    //             ..Default::default()
+    //         });
+    //     }
+    //
+    //     for index in 0..sampler_count {
+    //         writes.push(vk::WriteDescriptorSet {
+    //             dst_set: self.set,
+    //             dst_binding: Self::SAMPLER_BINDING,
+    //             dst_array_element: index,
+    //             descriptor_count: 1,
+    //             descriptor_type: vk::DescriptorType::SAMPLER,
+    //             p_image_info: &EMPTY_IMAGE_INFO,
+    //             ..Default::default()
+    //         });
+    //     }
+    //
+    //     //TODO: profile this part
+    //     unsafe {
+    //         self.device.update_descriptor_sets(&writes, &[]);
+    //     }
+    // }
 }
 
 impl Drop for DescriptorSet {

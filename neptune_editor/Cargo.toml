@@ -11,3 +11,6 @@ shaderc = "0.8.0"
 winit = "0.26"
 neptune_core = { path = "../neptune_core"}
 neptune_graphics = { path = "../neptune_graphics"}
+
+imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
+imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }

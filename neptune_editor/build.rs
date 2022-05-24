@@ -51,7 +51,7 @@ fn compile_shaders(compiler: &mut shaderc::Compiler, src_path: &std::path::Path)
 
             let output_name = filename.to_uppercase().replace('.', "_");
             shader_code += &format!(
-                "const {}: &[u32] = &{:?};",
+                "pub const {}: &[u32] = &{:?};",
                 output_name,
                 spirv_code.as_binary()
             );

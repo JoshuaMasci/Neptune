@@ -134,6 +134,7 @@ impl Swapchain {
 
     fn rebuild(&mut self) {
         unsafe {
+            let _ = self.device.device_wait_idle();
             for image in self.images.drain(..) {
                 self.device.destroy_image_view(image.view, None)
             }
@@ -220,8 +221,11 @@ impl Swapchain {
         }
 
         println!(
-            "Swapchain Rebuild: \n\tMode: {:?}\n\tFormat: {:?}\n\tExtend: {:?}",
-            self.mode, surface_format, surface_size,
+            "Swapchain Rebuild: \n\tCount: {} \n\tMode: {:?}\n\tFormat: {:?}\n\tExtend: {:?}",
+            self.images.len(),
+            self.mode,
+            surface_format,
+            surface_size,
         );
         self.invalid = false;
     }

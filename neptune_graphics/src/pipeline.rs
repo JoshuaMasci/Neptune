@@ -63,20 +63,20 @@ pub enum BlendOp {
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum VertexElement {
-    float,
-    float2,
-    float3,
-    float4,
+    Float,
+    Float2,
+    Float3,
+    Float4,
 }
 
 impl VertexElement {
     pub fn get_size_bytes(&self) -> u32 {
         let float_size = std::mem::size_of::<f32>() as u32;
         match self {
-            VertexElement::float => float_size,
-            VertexElement::float2 => float_size * 2,
-            VertexElement::float3 => float_size * 3,
-            VertexElement::float4 => float_size * 4,
+            VertexElement::Float => float_size,
+            VertexElement::Float2 => float_size * 2,
+            VertexElement::Float3 => float_size * 3,
+            VertexElement::Float4 => float_size * 4,
         }
     }
 }

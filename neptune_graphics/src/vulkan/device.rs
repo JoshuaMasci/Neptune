@@ -1,5 +1,5 @@
 use crate::buffer::BufferDescription;
-use crate::resource::{Resource, ResourceDeleter, ResourceDeleterInner};
+use crate::resource::{Resource, ResourceDeleter};
 use crate::texture::TextureDescription;
 use crate::vulkan::buffer::Buffer;
 use crate::vulkan::descriptor_set::DescriptorSet;
