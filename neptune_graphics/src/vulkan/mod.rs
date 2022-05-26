@@ -1,15 +1,16 @@
 mod buffer;
+mod command_buffer;
 mod debug_messenger;
 mod descriptor_set;
 mod device;
 mod graph;
 mod instance;
 mod pipeline_cache;
-mod raster_api;
 mod shader;
 mod swapchain;
 mod texture;
 
+pub use command_buffer::VulkanRasterCommandBuffer;
 pub use graph::RasterFnVulkan;
 pub use pipeline_cache::PipelineCache;
 

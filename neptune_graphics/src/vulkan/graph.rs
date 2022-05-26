@@ -1,25 +1,28 @@
 use crate::render_graph::{
-    BufferAccess, BufferResourceDescription, RenderPass, RenderPassData, ResourceAccess,
-    ResourceAccessType, TextureAccess, TextureResourceDescription,
+    BufferAccess, BufferResourceDescription, RenderPass, RenderPassData, TextureAccess,
+    TextureResourceDescription,
 };
 use crate::resource::Resource;
 use crate::vulkan::pipeline_cache::{FramebufferLayout, PipelineCache};
-use crate::vulkan::{Buffer, Texture};
+use crate::vulkan::{Buffer, ShaderModule, Texture, VulkanRasterCommandBuffer};
 use crate::TextureDimensions;
 use ash::vk;
 use std::rc::Rc;
 
-pub type RasterFnVulkan =
-    dyn FnOnce(&Rc<ash::Device>, vk::CommandBuffer, &mut PipelineCache, &FramebufferLayout);
+pub type RasterFnVulkan = dyn FnOnce(&mut VulkanRasterCommandBuffer);
 
 enum PassData {
     None,
     Raster {
-        framebuffer_layout: FramebufferLayout,
         render_area: vk::Rect2D,
         color_attachments: Vec<vk::RenderingAttachmentInfoKHR>,
         depth_stencil_attachment: Option<vk::RenderingAttachmentInfoKHR>,
-        raster_fn: Option<Box<RasterFnVulkan>>,
+        pipelines: Vec<(
+            vk::Pipeline,
+            Box<RasterFnVulkan>,
+            Rc<ShaderModule>,
+            Option<Rc<ShaderModule>>,
+        )>,
     },
     Compute {
         pipeline: vk::Pipeline,
@@ -39,6 +42,7 @@ impl Pass {
         render_pass: RenderPass,
         buffers: &[BufferStorage],
         textures: &[TextureStorage],
+        pipeline_cache: &mut PipelineCache,
     ) -> Self {
         Self {
             id: render_pass.id,
@@ -46,7 +50,7 @@ impl Pass {
                 RenderPassData::Raster {
                     color_attachments,
                     depth_stencil_attachment,
-                    raster_fn,
+                    mut pipelines,
                 } => {
                     let framebuffer_layout = FramebufferLayout {
                         color_attachments: color_attachments
@@ -131,8 +135,25 @@ impl Pass {
                             .build()
                     });
 
+                    let pipelines = pipelines
+                        .drain(..)
+                        .map(|pipeline_description| {
+                            (
+                                pipeline_cache.get_graphics(
+                                    pipeline_description.vertex_module.clone(),
+                                    pipeline_description.fragment_module.clone(),
+                                    pipeline_description.vertex_elements,
+                                    pipeline_description.pipeline_state,
+                                    framebuffer_layout.clone(),
+                                ),
+                                pipeline_description.raster_fn,
+                                pipeline_description.vertex_module,
+                                pipeline_description.fragment_module,
+                            )
+                        })
+                        .collect();
+
                     PassData::Raster {
-                        framebuffer_layout,
                         render_area: vk::Rect2D {
                             offset: vk::Offset2D { x: 0, y: 0 },
                             extent: vk::Extent2D {
@@ -142,7 +163,7 @@ impl Pass {
                         },
                         color_attachments,
                         depth_stencil_attachment,
-                        raster_fn,
+                        pipelines,
                     }
                 }
             },
@@ -387,7 +408,12 @@ impl Graph {
                         })
                         .collect(),
                 },
-                passes: vec![Pass::from(pass, &buffers, &textures)],
+                passes: vec![Pass::from(
+                    pass,
+                    &buffers,
+                    &textures,
+                    &mut device.pipeline_cache,
+                )],
                 post_barrier: Default::default(),
             })
             .collect();
@@ -404,22 +430,21 @@ impl Graph {
         &mut self,
         device: &Rc<ash::Device>,
         command_buffer: vk::CommandBuffer,
-        pipeline_cache: &mut PipelineCache,
+        pipeline_layout: vk::PipelineLayout,
+        descriptor_set: vk::DescriptorSet,
     ) -> vk::ImageLayout {
         for set in self.sets.iter_mut() {
             set.pre_barrier.record(device, command_buffer);
 
             for pass in set.passes.iter_mut() {
                 //println!("Render Pass {}: {}", pass.id, pass.name);
-                //TODO: set push constants
                 match &mut pass.data {
                     PassData::None => {}
                     PassData::Raster {
-                        framebuffer_layout,
                         render_area,
                         color_attachments,
                         depth_stencil_attachment,
-                        raster_fn,
+                        pipelines,
                     } => {
                         let mut rendering_info = vk::RenderingInfoKHR::builder()
                             .render_area(*render_area)
@@ -436,8 +461,42 @@ impl Graph {
                             device.cmd_begin_rendering(command_buffer, &rendering_info);
                         }
 
-                        if let Some(raster_fn) = raster_fn.take() {
-                            raster_fn(device, command_buffer, pipeline_cache, framebuffer_layout);
+                        let raster_command_buffer =
+                            &mut VulkanRasterCommandBuffer::new(device.clone(), command_buffer);
+
+                        for pipeline in pipelines.drain(..) {
+                            unsafe {
+                                device.cmd_bind_descriptor_sets(
+                                    command_buffer,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    pipeline_layout,
+                                    0,
+                                    &[descriptor_set],
+                                    &[],
+                                );
+
+                                device.cmd_bind_pipeline(
+                                    command_buffer,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    pipeline.0,
+                                );
+
+                                device.cmd_set_viewport(
+                                    command_buffer,
+                                    0,
+                                    &[vk::Viewport {
+                                        x: render_area.offset.x as f32,
+                                        y: render_area.offset.y as f32,
+                                        width: render_area.extent.width as f32,
+                                        height: render_area.extent.height as f32,
+                                        min_depth: 0.0,
+                                        max_depth: 1.0,
+                                    }],
+                                );
+                                device.cmd_set_scissor(command_buffer, 0, &[*render_area]);
+
+                                pipeline.1(raster_command_buffer);
+                            }
                         }
 
                         unsafe {
@@ -448,6 +507,15 @@ impl Graph {
                         pipeline,
                         dispatch_size,
                     } => unsafe {
+                        //TODO: Push used resource bindings
+                        device.cmd_bind_descriptor_sets(
+                            command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                            pipeline_layout,
+                            0,
+                            &[descriptor_set],
+                            &[],
+                        );
                         device.cmd_bind_pipeline(
                             command_buffer,
                             vk::PipelineBindPoint::COMPUTE,

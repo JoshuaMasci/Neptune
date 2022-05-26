@@ -85,7 +85,7 @@ pub struct Device {
     frames: Vec<Frame>,
 
     pipeline_layout: vk::PipelineLayout,
-    pipeline_cache: PipelineCache,
+    pub(crate) pipeline_cache: PipelineCache,
 
     allocator: Rc<RefCell<gpu_allocator::vulkan::Allocator>>,
     device_drop: DeviceDrop,
@@ -344,7 +344,8 @@ impl Device {
         let swapchain_layout = render_graph.record_command_buffer(
             &self.device,
             self.frames[self.frame_index].graphics_command_buffer,
-            &mut self.pipeline_cache,
+            self.pipeline_layout,
+            self.descriptor_set.get_set(),
         );
 
         unsafe {

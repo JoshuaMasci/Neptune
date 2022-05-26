@@ -10,6 +10,19 @@ pub struct PipelineState {
     pub blend_op: BlendOp,
 }
 
+impl Default for PipelineState {
+    fn default() -> Self {
+        Self {
+            cull_mode: CullMode::None,
+            depth_mode: DepthTestMode::None,
+            depth_op: DepthTestOp::Never,
+            src_factor: BlendFactor::Zero,
+            dst_factor: BlendFactor::Zero,
+            blend_op: BlendOp::None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum CullMode {
     None,

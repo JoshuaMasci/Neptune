@@ -7,9 +7,14 @@ mod resource;
 mod texture;
 pub mod vulkan;
 
-use crate::render_graph::{
+pub use crate::render_graph::{
     ColorAttachment, DepthStencilAttachment, RasterPassBuilder, RenderGraphBuilder,
 };
+use std::rc::Rc;
+
+use crate::pipeline::PipelineState;
+use crate::render_graph::TextureId;
+use crate::vulkan::ShaderModule;
 pub use buffer::BufferDescription;
 pub use buffer::BufferUsages;
 pub use resource::Resource;
@@ -65,25 +70,47 @@ pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
         memory_type: MemoryType::GpuOnly,
     });
 
-    render_graph.add_raster_pass(
-        RasterPassBuilder::new("Test")
-            .attachments(
-                &[
-                    ColorAttachment {
-                        id: swapchain_id,
-                        clear: Some([0.5, 0.25, 0.125, 0.0]),
-                    },
-                    ColorAttachment {
-                        id: some_texture,
-                        clear: Some([0.0; 4]),
-                    },
-                ],
-                Some(DepthStencilAttachment {
-                    id: some_depth_texture,
-                    clear: Some((1.0, 0)),
-                }),
-            )
-            .vertex_buffer(some_buffer)
-            .raster_fn(move |_, _, _, _| {}),
+    let mut raster_pass = RasterPassBuilder::new("Test");
+    raster_pass.attachments(
+        &[
+            ColorAttachment {
+                id: swapchain_id,
+                clear: Some([0.5, 0.25, 0.125, 0.0]),
+            },
+            ColorAttachment {
+                id: some_texture,
+                clear: Some([0.0; 4]),
+            },
+        ],
+        Some(DepthStencilAttachment {
+            id: some_depth_texture,
+            clear: Some((1.0, 0)),
+        }),
     );
+    raster_pass.vertex_buffer(some_buffer);
+    render_graph.add_raster_pass(raster_pass);
+}
+
+pub fn render_triangle_test(
+    render_graph: &mut RenderGraphBuilder,
+    render_target: TextureId,
+    vertex_module: Rc<ShaderModule>,
+    fragment_module: Rc<ShaderModule>,
+) {
+    let mut raster_pass = RasterPassBuilder::new("Test");
+    raster_pass.attachments(
+        &[ColorAttachment {
+            id: render_target,
+            clear: Some([0.5, 0.25, 0.125, 0.0]),
+        }],
+        None,
+    );
+    raster_pass.pipeline(
+        vertex_module,
+        Some(fragment_module),
+        Vec::new(),
+        PipelineState::default(),
+        |command_buffer| command_buffer.draw(3, 0, 1, 0),
+    );
+    render_graph.add_raster_pass(raster_pass);
 }

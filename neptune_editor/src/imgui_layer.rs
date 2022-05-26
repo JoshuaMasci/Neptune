@@ -2,17 +2,29 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use imgui::Context;
+use imgui::{Context, DrawData, TextureId};
 use imgui_winit_support::WinitPlatform;
 
-use neptune_graphics::{vulkan, MemoryType, TextureDescription, TextureDimensions, TextureFormat};
+use neptune_graphics::{
+    vulkan, MemoryType, RenderGraphBuilder, TextureDescription, TextureDimensions, TextureFormat,
+};
 use neptune_graphics::{Resource, TextureUsages};
 
-pub struct ImguiLayer {
-    imgui_context: Rc<RefCell<Context>>,
-    winit_platform: WinitPlatform,
-
+struct ImguiContext {
+    context: Context,
     needs_render: bool,
+}
+
+impl ImguiContext {
+    fn render(&mut self) -> &DrawData {
+        self.needs_render = false;
+        self.context.render()
+    }
+}
+
+pub struct ImguiLayer {
+    imgui_context: Rc<RefCell<ImguiContext>>,
+    winit_platform: WinitPlatform,
 
     shader_modules: Rc<(vulkan::ShaderModule, vulkan::ShaderModule)>,
     texture_atlas: Rc<Resource<vulkan::Texture>>,
@@ -38,12 +50,13 @@ impl ImguiLayer {
             device.create_shader_module(crate::shader::IMGUI_FRAG),
         ));
 
-        let imgui_context = Rc::new(RefCell::new(imgui_context));
+        let imgui_context = Rc::new(RefCell::new(ImguiContext {
+            context: imgui_context,
+            needs_render: false,
+        }));
         Self {
             imgui_context,
             winit_platform,
-
-            needs_render: false,
 
             shader_modules,
             texture_atlas,
@@ -56,13 +69,17 @@ impl ImguiLayer {
         window: &winit::window::Window,
         event: &winit::event::Event<()>,
     ) {
-        self.winit_platform
-            .handle_event(self.imgui_context.borrow_mut().io_mut(), window, event);
+        self.winit_platform.handle_event(
+            self.imgui_context.borrow_mut().context.io_mut(),
+            window,
+            event,
+        );
     }
 
     pub(crate) fn update_time(&self, last_frame_time: Duration) {
         self.imgui_context
             .borrow_mut()
+            .context
             .io_mut()
             .update_delta_time(last_frame_time);
     }
@@ -75,19 +92,26 @@ impl ImguiLayer {
         let mut imgui_context = self.imgui_context.borrow_mut();
 
         //If the last frame didn't render call render to clear the frame data
-        if self.needs_render {
+        if imgui_context.needs_render {
             let _ = imgui_context.render();
         }
 
         self.winit_platform
-            .prepare_frame(imgui_context.io_mut(), window)
+            .prepare_frame(imgui_context.context.io_mut(), window)
             .expect("Failed to prepare frame");
-        let ui = imgui_context.frame();
+        let ui = imgui_context.context.frame();
 
         callback(ui);
 
         self.winit_platform.prepare_render(ui, window);
-        self.needs_render = true;
+        imgui_context.needs_render = true;
+    }
+
+    pub fn render_frame(
+        &mut self,
+        render_graph_builder: &mut RenderGraphBuilder,
+        render_target: TextureId,
+    ) {
     }
 }
 

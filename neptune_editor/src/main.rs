@@ -37,6 +37,9 @@ fn main() {
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
+    let triangle_vertex_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_VERT));
+    let triangle_fragment_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_FRAG));
+
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
@@ -75,9 +78,19 @@ fn main() {
                     });
                 });
 
+                let vert_module_ref = triangle_vertex_module.clone();
+                let frag_module_ref = triangle_fragment_module.clone();
+
                 //Render Frame
-                device_ref.render(move |_vulkan_render_graph| {
-                    neptune_graphics::render_graph_test(_vulkan_render_graph);
+                device_ref.render(move |render_graph| {
+                    let (swapchain_id, _swapchain_size) = render_graph.get_swapchain_image();
+                    //neptune_graphics::render_graph_test(render_graph);
+                    neptune_graphics::render_triangle_test(
+                        render_graph,
+                        swapchain_id,
+                        vert_module_ref,
+                        frag_module_ref,
+                    );
                 });
             }
             Event::RedrawRequested(_window_id) => {}

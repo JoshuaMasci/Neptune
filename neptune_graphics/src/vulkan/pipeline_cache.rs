@@ -1,4 +1,5 @@
-use crate::pipeline::{BlendFactor, BlendOp, CullMode, DepthTestOp, VertexElement};
+use crate::pipeline::{BlendFactor, BlendOp, CullMode, DepthTestOp, PipelineState, VertexElement};
+use crate::vulkan::ShaderModule;
 use ash::vk;
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -10,7 +11,7 @@ pub struct VertexLayout {
     vertex_elements: Vec<VertexElement>,
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Clone)]
 pub struct FramebufferLayout {
     pub color_attachments: Vec<vk::Format>,
     pub depth_stencil_attachment: Option<vk::Format>,
@@ -42,15 +43,15 @@ impl PipelineCache {
 
     pub fn get_graphics(
         &mut self,
-        vertex_module: vk::ShaderModule,
-        fragment_module: vk::ShaderModule,
+        vertex_module: Rc<ShaderModule>,
+        fragment_module: Option<Rc<ShaderModule>>,
         vertex_elements: Vec<VertexElement>,
         state: crate::pipeline::PipelineState,
         framebuffer_layout: FramebufferLayout,
     ) -> vk::Pipeline {
         let pipeline_hash = GraphicsPipelineHash {
-            vertex_module,
-            fragment_module: Some(fragment_module),
+            vertex_module: vertex_module.module,
+            fragment_module: fragment_module.map(|module| module.module),
             vertex_elements,
             state,
             framebuffer_layout,
@@ -112,9 +113,12 @@ impl PipelineCache {
             .input_rate(vk::VertexInputRate::VERTEX)
             .build()];
 
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder()
-            .vertex_binding_descriptions(&binding_desc)
-            .vertex_attribute_descriptions(&attribute_description);
+        let mut vertex_input_info = vk::PipelineVertexInputStateCreateInfo::builder();
+        if !pipeline_description.vertex_elements.is_empty() {
+            vertex_input_info = vertex_input_info
+                .vertex_binding_descriptions(&binding_desc)
+                .vertex_attribute_descriptions(&attribute_description);
+        }
 
         let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)

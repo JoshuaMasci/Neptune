@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 pub struct ShaderModule {
     device: Rc<ash::Device>,
-    module: ash::vk::ShaderModule,
+    pub(crate) module: ash::vk::ShaderModule,
 }
 
 impl ShaderModule {

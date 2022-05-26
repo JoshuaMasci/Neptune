@@ -1,9 +1,12 @@
+use crate::pipeline::{PipelineState, VertexElement};
 use crate::render_graph::render_pass::{ColorAttachment, DepthStencilAttachment};
 use crate::render_graph::{
     BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
     ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
+use crate::vulkan::ShaderModule;
 use crate::{BufferDescription, TextureDescription};
+use std::rc::Rc;
 
 pub(crate) enum BufferResourceDescription {
     New(BufferDescription),
@@ -28,17 +31,28 @@ pub(crate) struct TextureResource {
     pub(crate) access_list: Vec<ResourceAccessType<TextureAccess>>,
 }
 
+pub struct RasterPipeline {
+    pub(crate) vertex_module: Rc<ShaderModule>,
+    pub(crate) fragment_module: Option<Rc<ShaderModule>>,
+    pub(crate) vertex_elements: Vec<VertexElement>,
+    pub(crate) pipeline_state: PipelineState,
+    pub(crate) raster_fn: Box<RasterFn>,
+}
+
 pub enum RenderPassData {
     Raster {
         color_attachments: Vec<ColorAttachment>,
         depth_stencil_attachment: Option<DepthStencilAttachment>,
-        raster_fn: Option<Box<RasterFn>>,
+        pipelines: Vec<RasterPipeline>,
     },
 }
 
 pub(crate) struct RenderPass {
     pub(crate) id: PassId,
+
+    #[allow(dead_code)]
     pub(crate) name: String,
+
     pub(crate) data: RenderPassData,
     pub(crate) buffer_accesses: Vec<(BufferId, BufferAccess)>,
     pub(crate) texture_accesses: Vec<(TextureId, TextureAccess)>,
@@ -172,11 +186,6 @@ impl RenderGraphBuilder {
 
     pub fn add_raster_pass(&mut self, mut pass_builder: RasterPassBuilder) {
         let name = pass_builder.name;
-        let data = RenderPassData::Raster {
-            color_attachments: pass_builder.color_attachments.clone(),
-            depth_stencil_attachment: pass_builder.depth_stencil_attachment.clone(),
-            raster_fn: pass_builder.raster_fn.take(),
-        };
 
         let mut buffer_accesses: Vec<(BufferId, BufferAccess)> = pass_builder
             .shader_reads
@@ -216,12 +225,18 @@ impl RenderGraphBuilder {
                 .collect(),
         );
 
-        if let Some(depth_attachment) = pass_builder.depth_stencil_attachment {
+        if let Some(depth_attachment) = &pass_builder.depth_stencil_attachment {
             texture_access.push((
                 depth_attachment.id,
                 TextureAccess::DepthStencilAttachmentWrite,
             ));
         }
+
+        let data = RenderPassData::Raster {
+            color_attachments: pass_builder.color_attachments,
+            depth_stencil_attachment: pass_builder.depth_stencil_attachment,
+            pipelines: pass_builder.pipelines,
+        };
 
         self.add_render_pass(name, data, buffer_accesses, texture_access);
     }

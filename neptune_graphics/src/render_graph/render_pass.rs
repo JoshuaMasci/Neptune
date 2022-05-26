@@ -1,10 +1,12 @@
-use crate::render_graph::{BufferId, RasterFn, TextureId};
+use crate::render_graph::{BufferId, TextureId};
 use std::rc::Rc;
 
 //TODO: use abstract types
-use crate::vulkan::FramebufferLayout;
-use crate::vulkan::PipelineCache;
-use ash::vk;
+use crate::pipeline::{PipelineState, VertexElement};
+use crate::vulkan::ShaderModule;
+use crate::vulkan::VulkanRasterCommandBuffer;
+
+use crate::render_graph::render_graph::RasterPipeline;
 
 #[derive(Clone, Debug)]
 pub struct ColorAttachment {
@@ -20,68 +22,70 @@ pub struct DepthStencilAttachment {
 
 pub struct RasterPassBuilder {
     pub(crate) name: String,
-    pub(crate) raster_fn: Option<Box<RasterFn>>,
+
     pub(crate) color_attachments: Vec<ColorAttachment>,
     pub(crate) depth_stencil_attachment: Option<DepthStencilAttachment>,
 
     pub(crate) vertex_buffers: Vec<BufferId>,
     pub(crate) index_buffers: Vec<BufferId>,
     pub(crate) shader_reads: (Vec<BufferId>, Vec<TextureId>),
+
+    pub(crate) pipelines: Vec<RasterPipeline>,
 }
 
 impl RasterPassBuilder {
     pub fn new(name: &str) -> Self {
         Self {
             name: String::from(name),
-            raster_fn: None,
             color_attachments: vec![],
             depth_stencil_attachment: None,
             vertex_buffers: vec![],
             index_buffers: vec![],
             shader_reads: (vec![], vec![]),
+            pipelines: vec![],
         }
     }
 
     pub fn attachments(
-        mut self,
+        &mut self,
         color_attachments: &[ColorAttachment],
         depth_stencil_attachment: Option<DepthStencilAttachment>,
-    ) -> Self {
+    ) {
         self.color_attachments = color_attachments.to_vec();
         self.depth_stencil_attachment = depth_stencil_attachment;
-        self
     }
 
-    pub fn vertex_buffer(mut self, buffer_id: BufferId) -> Self {
+    pub fn vertex_buffer(&mut self, buffer_id: BufferId) {
         self.vertex_buffers.push(buffer_id);
-        self
     }
 
-    pub fn index_buffer(mut self, buffer_id: BufferId) -> Self {
+    pub fn index_buffer(&mut self, buffer_id: BufferId) {
         self.index_buffers.push(buffer_id);
-        self
     }
 
-    pub fn shader_read_buffer(mut self, buffer_id: BufferId) -> Self {
+    pub fn shader_read_buffer(&mut self, buffer_id: BufferId) {
         self.shader_reads.0.push(buffer_id);
-        self
     }
 
-    pub fn shader_read_texture(mut self, texture_id: TextureId) -> Self {
+    pub fn shader_read_texture(&mut self, texture_id: TextureId) {
         self.shader_reads.1.push(texture_id);
-        self
     }
 
-    pub fn raster_fn(
-        mut self,
-        raster_fn: impl FnOnce(&Rc<ash::Device>, vk::CommandBuffer, &mut PipelineCache, &FramebufferLayout)
-            + 'static,
-    ) -> Self {
-        assert!(
-            self.raster_fn.replace(Box::new(raster_fn)).is_none(),
-            "Already set raster function"
-        );
-        self
+    pub fn pipeline(
+        &mut self,
+        vertex_module: Rc<ShaderModule>,
+        fragment_module: Option<Rc<ShaderModule>>,
+        vertex_elements: Vec<VertexElement>,
+        pipeline_state: PipelineState,
+        raster_fn: impl FnOnce(&mut VulkanRasterCommandBuffer) + 'static,
+    ) {
+        self.pipelines.push(RasterPipeline {
+            vertex_module,
+            fragment_module,
+            vertex_elements,
+            pipeline_state,
+            raster_fn: Box::new(raster_fn),
+        });
     }
 }
 
