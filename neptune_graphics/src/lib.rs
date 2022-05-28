@@ -97,6 +97,12 @@ pub fn render_triangle_test(
     vertex_module: Rc<ShaderModule>,
     fragment_module: Rc<ShaderModule>,
 ) {
+    let vertex_buffer = render_graph.create_buffer(BufferDescription {
+        size: 16,
+        usage: BufferUsages::VERTEX | BufferUsages::TRANSFER_DST,
+        memory_type: MemoryType::GpuOnly,
+    });
+
     let mut raster_pass = RasterPassBuilder::new("Test");
     raster_pass.attachments(
         &[ColorAttachment {

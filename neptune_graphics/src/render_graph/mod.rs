@@ -9,7 +9,7 @@ pub(crate) use render_graph::BufferResourceDescription;
 pub(crate) use render_graph::RenderPass;
 pub(crate) use render_graph::TextureResourceDescription;
 
-use crate::vulkan::RasterFnVulkan;
+use crate::vulkan::{BufferUploadFnVulkan, RasterFnVulkan, TextureUploadFnVulkan};
 pub use render_graph::RenderGraphBuilder;
 pub use render_graph::RenderPassData;
 pub use render_pass::ColorAttachment;
@@ -23,6 +23,8 @@ pub type TextureId = usize;
 
 //TODO: use abstract types
 pub type RasterFn = RasterFnVulkan;
+pub type BufferUploadFn = BufferUploadFnVulkan;
+pub type TextureUploadFn = TextureUploadFnVulkan;
 
 pub type ImportedBuffer = Rc<Resource<crate::vulkan::Buffer>>;
 pub type ImportedTexture = Rc<Resource<crate::vulkan::Texture>>;

@@ -11,8 +11,11 @@ mod swapchain;
 mod texture;
 
 pub use command_buffer::VulkanRasterCommandBuffer;
-pub use graph::RasterFnVulkan;
 pub use pipeline_cache::PipelineCache;
+
+pub use graph::BufferUploadFnVulkan;
+pub use graph::RasterFnVulkan;
+pub use graph::TextureUploadFnVulkan;
 
 pub use buffer::Buffer;
 pub use device::Device;

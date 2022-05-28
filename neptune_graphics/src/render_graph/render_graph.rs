@@ -1,16 +1,27 @@
 use crate::pipeline::{PipelineState, VertexElement};
 use crate::render_graph::render_pass::{ColorAttachment, DepthStencilAttachment};
 use crate::render_graph::{
-    BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
-    ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
+    BufferAccess, BufferId, BufferUploadFn, ImportedBuffer, ImportedTexture, PassId, RasterFn,
+    RasterPassBuilder, ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
+    TextureUploadFn,
 };
+use crate::vulkan::Buffer;
 use crate::vulkan::ShaderModule;
-use crate::{BufferDescription, TextureDescription};
+use crate::{BufferDescription, BufferUsages, MemoryType, TextureDescription};
 use std::rc::Rc;
 
 pub(crate) enum BufferResourceDescription {
     New(BufferDescription),
     Imported(ImportedBuffer),
+}
+
+impl BufferResourceDescription {
+    fn get_size(&self) -> usize {
+        match self {
+            BufferResourceDescription::New(description) => description.size,
+            BufferResourceDescription::Imported(buffer) => buffer.description.size,
+        }
+    }
 }
 
 pub(crate) enum TextureResourceDescription {
@@ -40,6 +51,12 @@ pub struct RasterPipeline {
 }
 
 pub enum RenderPassData {
+    BufferUpload {
+        src_buffer: BufferId,
+        upload_fn: Box<BufferUploadFn>,
+        dst_buffer: BufferId,
+        dst_offset: usize,
+    },
     Raster {
         color_attachments: Vec<ColorAttachment>,
         depth_stencil_attachment: Option<DepthStencilAttachment>,
@@ -182,6 +199,36 @@ impl RenderGraphBuilder {
             buffer_accesses,
             texture_accesses,
         });
+    }
+
+    pub(crate) fn add_buffer_upload_pass(
+        &mut self,
+        dst_buffer: BufferId,
+        dst_offset: usize,
+        upload_fn: impl FnOnce(&Buffer) + 'static,
+    ) {
+        let dst_buffer_size = self.buffers[dst_buffer].description.get_size();
+
+        let src_buffer = self.create_buffer(BufferDescription {
+            size: dst_buffer_size - dst_offset,
+            usage: BufferUsages::TRANSFER_SRC,
+            memory_type: MemoryType::CpuToGpu,
+        });
+
+        self.add_render_pass(
+            format!("Buffer Upload Id: {}", dst_buffer),
+            RenderPassData::BufferUpload {
+                src_buffer,
+                upload_fn: Box::new(upload_fn),
+                dst_buffer,
+                dst_offset,
+            },
+            vec![
+                (src_buffer, BufferAccess::TransferRead),
+                (dst_buffer, BufferAccess::TransferWrite),
+            ],
+            Vec::new(),
+        );
     }
 
     pub fn add_raster_pass(&mut self, mut pass_builder: RasterPassBuilder) {

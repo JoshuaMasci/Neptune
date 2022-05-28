@@ -4,15 +4,24 @@ use crate::render_graph::{
 };
 use crate::resource::Resource;
 use crate::vulkan::pipeline_cache::{FramebufferLayout, PipelineCache};
-use crate::vulkan::{Buffer, ShaderModule, Texture, VulkanRasterCommandBuffer};
-use crate::TextureDimensions;
+use crate::vulkan::{Buffer, Device, ShaderModule, Texture, VulkanRasterCommandBuffer};
+use crate::{BufferDescription, TextureDimensions};
 use ash::vk;
 use std::rc::Rc;
 
 pub type RasterFnVulkan = dyn FnOnce(&mut VulkanRasterCommandBuffer);
+pub type BufferUploadFnVulkan = dyn FnOnce(&Buffer);
+pub type TextureUploadFnVulkan = dyn FnOnce(&Texture);
 
 enum PassData {
     None,
+    BufferUpload {
+        src_buffer: vk::Buffer,
+        upload_fn: Box<BufferUploadFnVulkan>,
+        dst_buffer: vk::Buffer,
+        dst_offset: usize,
+        copy_size: usize,
+    },
     Raster {
         render_area: vk::Rect2D,
         color_attachments: Vec<vk::RenderingAttachmentInfoKHR>,
@@ -47,6 +56,18 @@ impl Pass {
         Self {
             id: render_pass.id,
             data: match render_pass.data {
+                RenderPassData::BufferUpload {
+                    src_buffer,
+                    upload_fn,
+                    dst_buffer,
+                    dst_offset,
+                } => PassData::BufferUpload {
+                    src_buffer: buffers[src_buffer as usize].get_handle(),
+                    upload_fn,
+                    dst_buffer: buffers[dst_buffer as usize].get_handle(),
+                    dst_offset,
+                    copy_size: buffers[src_buffer as usize].get_size(),
+                },
                 RenderPassData::Raster {
                     color_attachments,
                     depth_stencil_attachment,
@@ -205,6 +226,14 @@ impl BufferStorage {
             BufferStorage::Unused => panic!("Tried to access Unused Buffer"),
             BufferStorage::Temporary(buffer) => buffer.handle,
             BufferStorage::Imported(buffer) => buffer.handle,
+        }
+    }
+
+    pub(crate) fn get_size(&self) -> usize {
+        match self {
+            BufferStorage::Unused => panic!("Tried to access Unused Buffer"),
+            BufferStorage::Temporary(buffer) => buffer.description.size,
+            BufferStorage::Imported(buffer) => buffer.description.size,
         }
     }
 }
@@ -440,6 +469,24 @@ impl Graph {
                 //println!("Render Pass {}: {}", pass.id, pass.name);
                 match &mut pass.data {
                     PassData::None => {}
+                    PassData::BufferUpload {
+                        src_buffer,
+                        upload_fn,
+                        dst_buffer,
+                        dst_offset,
+                        copy_size,
+                    } => unsafe {
+                        device.cmd_copy_buffer(
+                            command_buffer,
+                            *src_buffer,
+                            *dst_buffer,
+                            &[vk::BufferCopy {
+                                src_offset: 0,
+                                dst_offset: *dst_offset as vk::DeviceSize,
+                                size: *copy_size as vk::DeviceSize,
+                            }],
+                        );
+                    },
                     PassData::Raster {
                         render_area,
                         color_attachments,
