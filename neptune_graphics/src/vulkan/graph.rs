@@ -12,6 +12,11 @@ use std::rc::Rc;
 
 pub type RasterFnVulkan = dyn FnOnce(&mut VulkanRasterCommandBuffer);
 
+struct PipelinePass {
+    pipeline: vk::Pipeline,
+    render_fn: Box<RasterFnVulkan>,
+}
+
 enum PassData {
     None,
     BufferCopy {
@@ -25,12 +30,7 @@ enum PassData {
         render_area: vk::Rect2D,
         color_attachments: Vec<vk::RenderingAttachmentInfoKHR>,
         depth_stencil_attachment: Option<vk::RenderingAttachmentInfoKHR>,
-        pipelines: Vec<(
-            vk::Pipeline,
-            Box<RasterFnVulkan>,
-            Rc<ShaderModule>,
-            Option<Rc<ShaderModule>>,
-        )>,
+        pipelines: Vec<PipelinePass>,
     },
     Compute {
         pipeline: vk::Pipeline,
@@ -176,19 +176,15 @@ impl Pass {
 
                     let pipelines = pipelines
                         .drain(..)
-                        .map(|pipeline_description| {
-                            (
-                                pipeline_cache.get_graphics(
-                                    pipeline_description.vertex_module.clone(),
-                                    pipeline_description.fragment_module.clone(),
-                                    pipeline_description.vertex_elements,
-                                    pipeline_description.pipeline_state,
-                                    framebuffer_layout.clone(),
-                                ),
-                                pipeline_description.raster_fn,
-                                pipeline_description.vertex_module,
-                                pipeline_description.fragment_module,
-                            )
+                        .map(|pipeline_description| PipelinePass {
+                            pipeline: pipeline_cache.get_graphics(
+                                pipeline_description.vertex_module.clone(),
+                                pipeline_description.fragment_module.clone(),
+                                pipeline_description.vertex_elements,
+                                pipeline_description.pipeline_state,
+                                framebuffer_layout.clone(),
+                            ),
+                            render_fn: pipeline_description.raster_fn,
                         })
                         .collect();
 
@@ -541,7 +537,7 @@ impl Graph {
                             &self.textures,
                         );
 
-                        for pipeline in pipelines.drain(..) {
+                        for pipeline_pass in pipelines.drain(..) {
                             unsafe {
                                 device.cmd_bind_descriptor_sets(
                                     command_buffer,
@@ -555,7 +551,7 @@ impl Graph {
                                 device.cmd_bind_pipeline(
                                     command_buffer,
                                     vk::PipelineBindPoint::GRAPHICS,
-                                    pipeline.0,
+                                    pipeline_pass.pipeline,
                                 );
 
                                 device.cmd_set_viewport(
@@ -572,7 +568,7 @@ impl Graph {
                                 );
                                 device.cmd_set_scissor(command_buffer, 0, &[*render_area]);
 
-                                pipeline.1(raster_command_buffer);
+                                (pipeline_pass.render_fn)(raster_command_buffer);
                             }
                         }
 
