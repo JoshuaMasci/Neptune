@@ -9,9 +9,10 @@ pub(crate) use render_graph::BufferResourceDescription;
 pub(crate) use render_graph::RenderPass;
 pub(crate) use render_graph::TextureResourceDescription;
 
-use crate::vulkan::{BufferUploadFnVulkan, RasterFnVulkan, TextureUploadFnVulkan};
+use crate::vulkan::RasterFnVulkan;
 pub use render_graph::RenderGraphBuilder;
 pub use render_graph::RenderPassData;
+pub use render_graph::UploadData;
 pub use render_pass::ColorAttachment;
 pub use render_pass::ComputePassBuilder;
 pub use render_pass::DepthStencilAttachment;
@@ -23,8 +24,6 @@ pub type TextureId = usize;
 
 //TODO: use abstract types
 pub type RasterFn = RasterFnVulkan;
-pub type BufferUploadFn = BufferUploadFnVulkan;
-pub type TextureUploadFn = TextureUploadFnVulkan;
 
 pub type ImportedBuffer = Rc<Resource<crate::vulkan::Buffer>>;
 pub type ImportedTexture = Rc<Resource<crate::vulkan::Texture>>;

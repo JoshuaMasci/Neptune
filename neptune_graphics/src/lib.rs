@@ -12,8 +12,8 @@ pub use crate::render_graph::{
 };
 use std::rc::Rc;
 
-use crate::pipeline::PipelineState;
-use crate::render_graph::TextureId;
+use crate::pipeline::{PipelineState, VertexElement};
+use crate::render_graph::{TextureId, UploadData};
 use crate::vulkan::ShaderModule;
 pub use buffer::BufferDescription;
 pub use buffer::BufferUsages;
@@ -97,13 +97,20 @@ pub fn render_triangle_test(
     vertex_module: Rc<ShaderModule>,
     fragment_module: Rc<ShaderModule>,
 ) {
+    let vertex_data = vec![
+        0.0, -0.5, 0.0, 1.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, -0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
+    ];
+
     let vertex_buffer = render_graph.create_buffer(BufferDescription {
-        size: 16,
+        size: std::mem::size_of::<f32>() * vertex_data.len(),
         usage: BufferUsages::VERTEX | BufferUsages::TRANSFER_DST,
         memory_type: MemoryType::GpuOnly,
     });
 
+    render_graph.add_buffer_upload_pass(vertex_buffer, 0, UploadData::F32(vertex_data));
+
     let mut raster_pass = RasterPassBuilder::new("Test");
+    raster_pass.vertex_buffer(vertex_buffer);
     raster_pass.attachments(
         &[ColorAttachment {
             id: render_target,
@@ -114,9 +121,12 @@ pub fn render_triangle_test(
     raster_pass.pipeline(
         vertex_module,
         Some(fragment_module),
-        Vec::new(),
+        vec![VertexElement::Float3; 2],
         PipelineState::default(),
-        |command_buffer| command_buffer.draw(3, 0, 1, 0),
+        move |command_buffer| {
+            command_buffer.bind_vertex_buffers(vertex_buffer, 0);
+            command_buffer.draw(3, 0, 1, 0)
+        },
     );
     render_graph.add_raster_pass(raster_pass);
 }

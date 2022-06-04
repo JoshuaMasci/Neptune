@@ -1,11 +1,9 @@
 use crate::pipeline::{PipelineState, VertexElement};
 use crate::render_graph::render_pass::{ColorAttachment, DepthStencilAttachment};
 use crate::render_graph::{
-    BufferAccess, BufferId, BufferUploadFn, ImportedBuffer, ImportedTexture, PassId, RasterFn,
-    RasterPassBuilder, ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
-    TextureUploadFn,
+    BufferAccess, BufferId, ImportedBuffer, ImportedTexture, PassId, RasterFn, RasterPassBuilder,
+    ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
-use crate::vulkan::Buffer;
 use crate::vulkan::ShaderModule;
 use crate::{BufferDescription, BufferUsages, MemoryType, TextureDescription};
 use std::rc::Rc;
@@ -42,6 +40,22 @@ pub(crate) struct TextureResource {
     pub(crate) access_list: Vec<ResourceAccessType<TextureAccess>>,
 }
 
+pub enum UploadData {
+    U8(Vec<u8>),
+    U32(Vec<f32>),
+    F32(Vec<f32>),
+}
+
+impl UploadData {
+    pub fn get_size(&self) -> usize {
+        match self {
+            UploadData::U8(data) => std::mem::size_of::<u8>() * data.len(),
+            UploadData::U32(data) => std::mem::size_of::<u32>() * data.len(),
+            UploadData::F32(data) => std::mem::size_of::<f32>() * data.len(),
+        }
+    }
+}
+
 pub struct RasterPipeline {
     pub(crate) vertex_module: Rc<ShaderModule>,
     pub(crate) fragment_module: Option<Rc<ShaderModule>>,
@@ -53,7 +67,7 @@ pub struct RasterPipeline {
 pub enum RenderPassData {
     BufferUpload {
         src_buffer: BufferId,
-        upload_fn: Box<BufferUploadFn>,
+        src_data: UploadData,
         dst_buffer: BufferId,
         dst_offset: usize,
     },
@@ -205,12 +219,10 @@ impl RenderGraphBuilder {
         &mut self,
         dst_buffer: BufferId,
         dst_offset: usize,
-        upload_fn: impl FnOnce(&Buffer) + 'static,
+        src_data: UploadData,
     ) {
-        let dst_buffer_size = self.buffers[dst_buffer].description.get_size();
-
         let src_buffer = self.create_buffer(BufferDescription {
-            size: dst_buffer_size - dst_offset,
+            size: src_data.get_size(),
             usage: BufferUsages::TRANSFER_SRC,
             memory_type: MemoryType::CpuToGpu,
         });
@@ -219,7 +231,7 @@ impl RenderGraphBuilder {
             format!("Buffer Upload Id: {}", dst_buffer),
             RenderPassData::BufferUpload {
                 src_buffer,
-                upload_fn: Box::new(upload_fn),
+                src_data,
                 dst_buffer,
                 dst_offset,
             },

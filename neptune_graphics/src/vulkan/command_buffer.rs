@@ -1,25 +1,42 @@
 use crate::render_graph::BufferId;
+use crate::vulkan::graph::{BufferStorage, TextureStorage};
 use crate::IndexSize;
 use ash::vk;
 use std::rc::Rc;
 
-pub struct VulkanRasterCommandBuffer {
+pub struct VulkanRasterCommandBuffer<'a> {
     device: Rc<ash::Device>,
     command_buffer: vk::CommandBuffer,
+    buffers: &'a [BufferStorage],
+    textures: &'a [TextureStorage],
 }
 
-impl VulkanRasterCommandBuffer {
-    pub(crate) fn new(device: Rc<ash::Device>, command_buffer: vk::CommandBuffer) -> Self {
+impl<'a> VulkanRasterCommandBuffer<'a> {
+    pub(crate) fn new(
+        device: Rc<ash::Device>,
+        command_buffer: vk::CommandBuffer,
+        buffers: &'a [BufferStorage],
+        textures: &'a [TextureStorage],
+    ) -> Self {
         Self {
             device,
             command_buffer,
+            buffers,
+            textures,
         }
     }
 
     //TODO: push descriptor interface
 
-    pub fn bind_vertex_buffers(&mut self, buffers: &[(BufferId, u32)]) {
-        todo!()
+    pub fn bind_vertex_buffers(&mut self, buffer: BufferId, offset: u32) {
+        unsafe {
+            self.device.cmd_bind_vertex_buffers(
+                self.command_buffer,
+                0,
+                &[self.buffers[buffer].get_handle()],
+                &[offset as vk::DeviceSize],
+            );
+        }
     }
 
     pub fn bind_index_buffer(&mut self, buffer: BufferId, offset: u32, index_type: IndexSize) {

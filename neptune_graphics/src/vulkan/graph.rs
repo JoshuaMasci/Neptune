@@ -5,19 +5,18 @@ use crate::render_graph::{
 use crate::resource::Resource;
 use crate::vulkan::pipeline_cache::{FramebufferLayout, PipelineCache};
 use crate::vulkan::{Buffer, Device, ShaderModule, Texture, VulkanRasterCommandBuffer};
-use crate::{BufferDescription, TextureDimensions};
+use crate::{BufferDescription, TextureDimensions, UploadData};
 use ash::vk;
+use std::cmp::min;
 use std::rc::Rc;
 
 pub type RasterFnVulkan = dyn FnOnce(&mut VulkanRasterCommandBuffer);
-pub type BufferUploadFnVulkan = dyn FnOnce(&Buffer);
-pub type TextureUploadFnVulkan = dyn FnOnce(&Texture);
 
 enum PassData {
     None,
-    BufferUpload {
+    BufferCopy {
         src_buffer: vk::Buffer,
-        upload_fn: Box<BufferUploadFnVulkan>,
+        src_offset: usize,
         dst_buffer: vk::Buffer,
         dst_offset: usize,
         copy_size: usize,
@@ -58,16 +57,35 @@ impl Pass {
             data: match render_pass.data {
                 RenderPassData::BufferUpload {
                     src_buffer,
-                    upload_fn,
+                    src_data,
                     dst_buffer,
                     dst_offset,
-                } => PassData::BufferUpload {
-                    src_buffer: buffers[src_buffer as usize].get_handle(),
-                    upload_fn,
-                    dst_buffer: buffers[dst_buffer as usize].get_handle(),
-                    dst_offset,
-                    copy_size: buffers[src_buffer as usize].get_size(),
-                },
+                } => {
+                    match src_data {
+                        UploadData::U8(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                        UploadData::F32(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                        UploadData::U32(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                    }
+
+                    let copy_size = min(
+                        buffers[src_buffer as usize].get_size(),
+                        buffers[dst_buffer as usize].get_size() - dst_offset,
+                    );
+
+                    PassData::BufferCopy {
+                        src_buffer: buffers[src_buffer as usize].get_handle(),
+                        src_offset: 0,
+                        dst_buffer: buffers[dst_buffer as usize].get_handle(),
+                        dst_offset,
+                        copy_size,
+                    }
+                }
                 RenderPassData::Raster {
                     color_attachments,
                     depth_stencil_attachment,
@@ -221,6 +239,14 @@ pub(crate) enum BufferStorage {
 }
 
 impl BufferStorage {
+    pub(crate) fn fill_cpu_visible<T>(&self, data: &[T]) {
+        match self {
+            BufferStorage::Unused => panic!("Tried to access Unused Buffer"),
+            BufferStorage::Temporary(buffer) => buffer.fill(data),
+            BufferStorage::Imported(buffer) => buffer.fill(data),
+        }
+    }
+
     pub(crate) fn get_handle(&self) -> vk::Buffer {
         match self {
             BufferStorage::Unused => panic!("Tried to access Unused Buffer"),
@@ -469,9 +495,9 @@ impl Graph {
                 //println!("Render Pass {}: {}", pass.id, pass.name);
                 match &mut pass.data {
                     PassData::None => {}
-                    PassData::BufferUpload {
+                    PassData::BufferCopy {
                         src_buffer,
-                        upload_fn,
+                        src_offset,
                         dst_buffer,
                         dst_offset,
                         copy_size,
@@ -481,7 +507,7 @@ impl Graph {
                             *src_buffer,
                             *dst_buffer,
                             &[vk::BufferCopy {
-                                src_offset: 0,
+                                src_offset: *src_offset as vk::DeviceSize,
                                 dst_offset: *dst_offset as vk::DeviceSize,
                                 size: *copy_size as vk::DeviceSize,
                             }],
@@ -508,8 +534,12 @@ impl Graph {
                             device.cmd_begin_rendering(command_buffer, &rendering_info);
                         }
 
-                        let raster_command_buffer =
-                            &mut VulkanRasterCommandBuffer::new(device.clone(), command_buffer);
+                        let raster_command_buffer = &mut VulkanRasterCommandBuffer::new(
+                            device.clone(),
+                            command_buffer,
+                            &self.buffers,
+                            &self.textures,
+                        );
 
                         for pipeline in pipelines.drain(..) {
                             unsafe {

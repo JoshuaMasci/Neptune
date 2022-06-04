@@ -16,6 +16,9 @@ impl BufferUsages {
         if self.contains(BufferUsages::STORAGE) {
             result |= vk::BufferUsageFlags::STORAGE_BUFFER;
         }
+        if self.contains(BufferUsages::VERTEX) {
+            result |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        }
         if self.contains(BufferUsages::INDEX) {
             result |= vk::BufferUsageFlags::INDEX_BUFFER;
         }
