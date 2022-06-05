@@ -42,7 +42,7 @@ pub(crate) struct TextureResource {
 
 pub enum UploadData {
     U8(Vec<u8>),
-    U32(Vec<f32>),
+    U32(Vec<u32>),
     F32(Vec<f32>),
 }
 

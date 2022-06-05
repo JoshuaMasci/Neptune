@@ -25,6 +25,7 @@ pub use texture::Texture;
 pub(crate) use graph::Graph;
 
 use crate::render_graph::{BufferAccess, TextureAccess};
+use crate::IndexSize;
 use ash::vk;
 
 impl BufferAccess {
@@ -103,6 +104,15 @@ impl TextureAccess {
                 vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                 vk::ImageLayout::GENERAL,
             ),
+        }
+    }
+}
+
+impl IndexSize {
+    pub(crate) fn to_vk(&self) -> vk::IndexType {
+        match self {
+            IndexSize::U16 => vk::IndexType::UINT16,
+            IndexSize::U32 => vk::IndexType::UINT32,
         }
     }
 }

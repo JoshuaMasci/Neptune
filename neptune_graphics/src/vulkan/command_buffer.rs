@@ -40,7 +40,14 @@ impl<'a> VulkanRasterCommandBuffer<'a> {
     }
 
     pub fn bind_index_buffer(&mut self, buffer: BufferId, offset: u32, index_type: IndexSize) {
-        todo!()
+        unsafe {
+            self.device.cmd_bind_index_buffer(
+                self.command_buffer,
+                self.buffers[buffer].get_handle(),
+                offset as vk::DeviceSize,
+                index_type.to_vk(),
+            );
+        }
     }
 
     pub fn draw(
@@ -64,11 +71,20 @@ impl<'a> VulkanRasterCommandBuffer<'a> {
     pub fn draw_indexed(
         &mut self,
         index_count: u32,
-        first_index: u32,
+        index_offset: u32,
         vertex_offset: i32,
         instance_count: u32,
         instance_offset: u32,
     ) {
-        todo!()
+        unsafe {
+            self.device.cmd_draw_indexed(
+                self.command_buffer,
+                index_count,
+                instance_count,
+                index_offset,
+                vertex_offset,
+                instance_offset,
+            );
+        }
     }
 }
