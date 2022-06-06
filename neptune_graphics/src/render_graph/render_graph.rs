@@ -71,6 +71,11 @@ pub enum RenderPassData {
         dst_buffer: BufferId,
         dst_offset: usize,
     },
+    TextureUpload {
+        src_buffer: BufferId,
+        src_data: UploadData,
+        dst_texture: TextureId,
+    },
     Raster {
         color_attachments: Vec<ColorAttachment>,
         depth_stencil_attachment: Option<DepthStencilAttachment>,
@@ -240,6 +245,25 @@ impl RenderGraphBuilder {
                 (dst_buffer, BufferAccess::TransferWrite),
             ],
             Vec::new(),
+        );
+    }
+
+    pub(crate) fn add_texture_upload_pass(&mut self, dst_texture: TextureId, src_data: UploadData) {
+        let src_buffer = self.create_buffer(BufferDescription {
+            size: src_data.get_size(),
+            usage: BufferUsages::TRANSFER_SRC,
+            memory_type: MemoryType::CpuToGpu,
+        });
+
+        self.add_render_pass(
+            format!("Texture Upload Id: {}", dst_texture),
+            RenderPassData::TextureUpload {
+                src_buffer,
+                src_data,
+                dst_texture,
+            },
+            vec![(src_buffer, BufferAccess::TransferRead)],
+            vec![(dst_texture, TextureAccess::TransferWrite)],
         );
     }
 

@@ -26,6 +26,12 @@ enum PassData {
         dst_offset: usize,
         copy_size: usize,
     },
+    BufferToImage {
+        src_buffer: vk::Buffer,
+        src_offset: usize,
+        dst_image: vk::Image,
+        copy: vk::BufferImageCopy,
+    },
     Raster {
         render_area: vk::Rect2D,
         color_attachments: Vec<vk::RenderingAttachmentInfoKHR>,
@@ -84,6 +90,47 @@ impl Pass {
                         dst_buffer: buffers[dst_buffer as usize].get_handle(),
                         dst_offset,
                         copy_size,
+                    }
+                }
+                RenderPassData::TextureUpload {
+                    src_buffer,
+                    src_data,
+                    dst_texture,
+                } => {
+                    match src_data {
+                        UploadData::U8(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                        UploadData::F32(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                        UploadData::U32(data) => {
+                            buffers[src_buffer as usize].fill_cpu_visible(&data);
+                        }
+                    }
+
+                    let texture_range = textures[dst_texture as usize].get_texture_range();
+                    let (texture_size, _, _) =
+                        textures[dst_texture as usize].get_texture_size().to_vk();
+                    PassData::BufferToImage {
+                        src_buffer: buffers[src_buffer as usize].get_handle(),
+                        src_offset: 0,
+                        dst_image: textures[dst_texture as usize].get_handle(),
+                        copy: vk::BufferImageCopy::builder()
+                            .buffer_offset(0)
+                            .buffer_row_length(0)
+                            .buffer_image_height(0)
+                            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                            .image_extent(texture_size)
+                            .image_subresource(
+                                vk::ImageSubresourceLayers::builder()
+                                    .layer_count(1)
+                                    .base_array_layer(0)
+                                    .mip_level(0)
+                                    .aspect_mask(texture_range.aspect_mask)
+                                    .build(),
+                            )
+                            .build(),
                     }
                 }
                 RenderPassData::Raster {
@@ -314,8 +361,8 @@ impl TextureStorage {
                 base_array_layer: 0,
                 layer_count: 1,
             },
-            TextureStorage::Temporary(texture) => texture.sub_resource_range,
-            TextureStorage::Imported(texture) => texture.sub_resource_range,
+            TextureStorage::Temporary(texture) => texture.subresource_range,
+            TextureStorage::Imported(texture) => texture.subresource_range,
         }
     }
 }
@@ -507,6 +554,20 @@ impl Graph {
                                 dst_offset: *dst_offset as vk::DeviceSize,
                                 size: *copy_size as vk::DeviceSize,
                             }],
+                        );
+                    },
+                    PassData::BufferToImage {
+                        src_buffer,
+                        src_offset,
+                        dst_image,
+                        copy,
+                    } => unsafe {
+                        device.cmd_copy_buffer_to_image(
+                            command_buffer,
+                            *src_buffer,
+                            *dst_image,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[*copy],
                         );
                     },
                     PassData::Raster {

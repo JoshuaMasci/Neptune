@@ -107,6 +107,8 @@ pub fn render_triangle_test(
         memory_type: MemoryType::GpuOnly,
     });
 
+    render_graph.add_buffer_upload_pass(vertex_buffer, 0, UploadData::F32(vertex_data));
+
     let index_data = vec![0u32, 1u32, 2u32];
 
     let index_buffer = render_graph.create_buffer(BufferDescription {
@@ -115,7 +117,6 @@ pub fn render_triangle_test(
         memory_type: MemoryType::GpuOnly,
     });
 
-    render_graph.add_buffer_upload_pass(vertex_buffer, 0, UploadData::F32(vertex_data));
     render_graph.add_buffer_upload_pass(index_buffer, 0, UploadData::U32(index_data));
 
     let mut raster_pass = RasterPassBuilder::new("Test");

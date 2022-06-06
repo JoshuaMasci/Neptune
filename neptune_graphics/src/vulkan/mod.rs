@@ -25,7 +25,7 @@ pub use texture::Texture;
 pub(crate) use graph::Graph;
 
 use crate::render_graph::{BufferAccess, TextureAccess};
-use crate::IndexSize;
+use crate::{IndexSize, TextureDimensions};
 use ash::vk;
 
 impl BufferAccess {
@@ -116,3 +116,25 @@ impl IndexSize {
         }
     }
 }
+
+// impl TextureDimensions {
+//     pub(crate) fn to_vk(&self) -> vk::Extent3D {
+//         match self {
+//             TextureDimensions::D1(x) => vk::Extent3D {
+//                 width: *x,
+//                 height: 1,
+//                 depth: 1,
+//             },
+//             TextureDimensions::D2(x, y) => vk::Extent3D {
+//                 width: *x,
+//                 height: *y,
+//                 depth: 1,
+//             },
+//             TextureDimensions::D3(x, y, z) => vk::Extent3D {
+//                 width: *x,
+//                 height: *y,
+//                 depth: *z,
+//             },
+//         }
+//     }
+// }

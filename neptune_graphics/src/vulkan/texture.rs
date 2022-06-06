@@ -152,11 +152,11 @@ pub struct Texture {
     pub storage_binding: Option<Binding>,
     pub sampled_binding: Option<Binding>,
     pub format: vk::Format,
-    pub sub_resource_range: vk::ImageSubresourceRange,
+    pub subresource_range: vk::ImageSubresourceRange,
 }
 
 impl TextureDimensions {
-    fn to_vk(self) -> (vk::Extent3D, vk::ImageType, vk::ImageViewType) {
+    pub fn to_vk(self) -> (vk::Extent3D, vk::ImageType, vk::ImageViewType) {
         match self {
             TextureDimensions::D1(width) => (
                 vk::Extent3D {
@@ -282,7 +282,7 @@ impl Texture {
             storage_binding: None,
             sampled_binding: None,
             format,
-            sub_resource_range,
+            subresource_range: sub_resource_range,
         }
     }
 }

@@ -7,7 +7,7 @@ use crate::vulkan::pipeline_cache::PipelineCache;
 use crate::vulkan::shader::ShaderModule;
 use crate::vulkan::swapchain::Swapchain;
 use crate::vulkan::texture::Texture;
-use crate::{BufferUsages, TextureDimensions, TextureUsages};
+use crate::{BufferUsages, MemoryType, TextureDimensions, TextureUsages};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -32,6 +32,7 @@ impl Drop for DeviceDrop {
 struct CommandPool {
     device: Rc<ash::Device>,
     command_pool: vk::CommandPool,
+    freed_command_buffers: Vec<vk::CommandBuffer>,
 }
 impl CommandPool {
     fn new(device: Rc<ash::Device>, graphics_queue_family_index: u32) -> Self {
@@ -49,20 +50,27 @@ impl CommandPool {
         Self {
             device,
             command_pool,
+            freed_command_buffers: vec![],
         }
     }
 
-    fn create_command_buffer(&self) -> vk::CommandBuffer {
-        unsafe {
-            self.device.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(self.command_pool)
-                    .command_buffer_count(1)
-                    .level(vk::CommandBufferLevel::PRIMARY)
-                    .build(),
-            )
-        }
-        .expect("Failed to allocate command_buffers")[0]
+    fn create_command_buffer(&mut self) -> vk::CommandBuffer {
+        self.freed_command_buffers.pop().unwrap_or_else(|| {
+            unsafe {
+                self.device.allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::builder()
+                        .command_pool(self.command_pool)
+                        .command_buffer_count(1)
+                        .level(vk::CommandBufferLevel::PRIMARY)
+                        .build(),
+                )
+            }
+            .expect("Failed to allocate command_buffers")[0]
+        })
+    }
+
+    fn free_command_buffer(&mut self, command_buffer: vk::CommandBuffer) {
+        self.freed_command_buffers.push(command_buffer);
     }
 }
 
@@ -77,6 +85,7 @@ impl Drop for CommandPool {
 pub struct Device {
     device: Rc<ash::Device>,
     resource_deleter: ResourceDeleter,
+    command_pool: Rc<RefCell<CommandPool>>,
     descriptor_set: DescriptorSet,
 
     swapchain: Swapchain,
@@ -206,10 +215,10 @@ impl Device {
             )),
         );
 
-        let command_pool = Rc::new(CommandPool::new(
+        let command_pool = Rc::new(RefCell::new(CommandPool::new(
             device.clone(),
             graphics_queue_family_index,
-        ));
+        )));
 
         let frames: Vec<Frame> = (0..frame_in_flight_count)
             .map(|_| Frame::new(device.clone(), command_pool.clone()))
@@ -236,6 +245,7 @@ impl Device {
         Self {
             device,
             resource_deleter,
+            command_pool,
             descriptor_set,
             swapchain,
             frame_index: 0,
@@ -275,6 +285,111 @@ impl Device {
         }
 
         self.resource_deleter.create_resource(texture)
+    }
+
+    pub fn create_texture_with_data<T>(
+        &mut self,
+        description: TextureDescription,
+        data: &[T],
+    ) -> Resource<Texture> {
+        let staging_buffer = self.create_buffer(BufferDescription {
+            size: data.len() * std::mem::size_of::<T>(),
+            usage: BufferUsages::TRANSFER_SRC,
+            memory_type: MemoryType::CpuToGpu,
+        });
+        staging_buffer.fill(data);
+
+        let texture = self.create_texture(description);
+
+        let command_buffer = self.command_pool.borrow_mut().create_command_buffer();
+
+        unsafe {
+            self.device
+                .begin_command_buffer(
+                    command_buffer,
+                    &vk::CommandBufferBeginInfo::builder().build(),
+                )
+                .unwrap();
+
+            self.device.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::builder()
+                    .image_memory_barriers(&[vk::ImageMemoryBarrier2::builder()
+                        .image(texture.handle)
+                        .subresource_range(texture.subresource_range)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                        .src_access_mask(vk::AccessFlags2::NONE)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .build()])
+                    .build(),
+            );
+
+            self.device.cmd_copy_buffer_to_image(
+                command_buffer,
+                staging_buffer.handle,
+                texture.handle,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::BufferImageCopy::builder()
+                    .buffer_offset(0)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                    .image_extent(texture.description.size.to_vk().0)
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::builder()
+                            .layer_count(1)
+                            .base_array_layer(0)
+                            .mip_level(0)
+                            .aspect_mask(texture.subresource_range.aspect_mask)
+                            .build(),
+                    )
+                    .build()],
+            );
+
+            self.device.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::builder()
+                    .image_memory_barriers(&[vk::ImageMemoryBarrier2::builder()
+                        .image(texture.handle)
+                        .subresource_range(texture.subresource_range)
+                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .new_layout(vk::ImageLayout::GENERAL)
+                        .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                        .dst_access_mask(vk::AccessFlags2::NONE)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .build()])
+                    .build(),
+            );
+
+            self.device.end_command_buffer(command_buffer).unwrap();
+
+            self.device
+                .queue_submit2(
+                    self.graphics_queue,
+                    &[vk::SubmitInfo2::builder()
+                        .command_buffer_infos(&[vk::CommandBufferSubmitInfo::builder()
+                            .command_buffer(command_buffer)
+                            .build()])
+                        .build()],
+                    vk::Fence::null(),
+                )
+                .unwrap();
+            self.device.queue_wait_idle(self.graphics_queue).unwrap();
+        }
+
+        self.command_pool
+            .borrow_mut()
+            .free_command_buffer(command_buffer);
+
+        texture
     }
 
     pub fn create_shader_module(&mut self, code: &[u32]) -> ShaderModule {
@@ -435,7 +550,7 @@ impl Drop for Device {
 }
 
 struct Frame {
-    command_pool: Rc<CommandPool>,
+    command_pool: Rc<RefCell<CommandPool>>,
     device: Rc<ash::Device>,
     frame_done_fence: vk::Fence,
     graphics_command_buffer: vk::CommandBuffer,
@@ -444,7 +559,7 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(device: Rc<ash::Device>, command_pool: Rc<CommandPool>) -> Self {
+    fn new(device: Rc<ash::Device>, command_pool: Rc<RefCell<CommandPool>>) -> Self {
         let frame_done_fence = unsafe {
             device.create_fence(
                 &vk::FenceCreateInfo::builder()
@@ -462,7 +577,7 @@ impl Frame {
             unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None) }
                 .expect("Failed to create semaphore");
 
-        let graphics_command_buffer = command_pool.create_command_buffer();
+        let graphics_command_buffer = command_pool.borrow_mut().create_command_buffer();
 
         Self {
             command_pool,
@@ -482,7 +597,9 @@ impl Drop for Frame {
             self.device
                 .destroy_semaphore(self.image_ready_semaphore, None);
             self.device.destroy_semaphore(self.present_semaphore, None);
-            let _ = self.command_pool.command_pool;
+            self.command_pool
+                .borrow_mut()
+                .free_command_buffer(self.graphics_command_buffer);
         }
     }
 }

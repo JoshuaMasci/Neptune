@@ -40,6 +40,19 @@ fn main() {
     let triangle_vertex_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_VERT));
     let triangle_fragment_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_FRAG));
 
+    let test_texture = {
+        let test_image = image::open("neptune_editor/resource/1k_grid.png").unwrap();
+        device_ref.create_texture_with_data(
+            TextureDescription {
+                format: TextureFormat::Rgba8Unorm,
+                size: TextureDimensions::D2(test_image.width(), test_image.height()),
+                usage: TextureUsages::SAMPLED | TextureUsages::TRANSFER_DST,
+                memory_type: MemoryType::GpuOnly,
+            },
+            test_image.as_rgba8().unwrap(),
+        )
+    };
+
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {

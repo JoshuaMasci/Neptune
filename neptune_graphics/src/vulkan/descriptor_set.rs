@@ -61,9 +61,9 @@ pub struct DescriptorSet {
 
 impl DescriptorSet {
     const STORAGE_BUFFER_BINDING: u32 = 0;
-    const STORAGE_IMAGE_BINDING: u32 = 2;
-    const SAMPLED_IMAGE_BINDING: u32 = 3;
-    const SAMPLER_BINDING: u32 = 4;
+    const STORAGE_IMAGE_BINDING: u32 = 1;
+    const SAMPLED_IMAGE_BINDING: u32 = 2;
+    const SAMPLER_BINDING: u32 = 3;
 
     pub(crate) fn new(
         device: Rc<ash::Device>,
