@@ -7,15 +7,16 @@ layout(location = 2) in vec4 in_color;
 layout(location = 0) out vec2 out_uv;
 layout(location = 1) out vec4 out_color;
 
-layout(push_constant) uniform Offset
+layout(push_constant) uniform PushData
 {
 	vec4 scale_translate;
-} offset;
+	uint texture;
+} push_data;
 
 void main()
 {
-	vec2 scale = offset.scale_translate.xy;
-	vec2 translate = offset.scale_translate.zw;
+	vec2 scale = push_data.scale_translate.xy;
+	vec2 translate = push_data.scale_translate.zw;
 
 	gl_Position = vec4((in_position  * scale) + translate, 0.0, 1.0);
 	out_uv = in_uv;

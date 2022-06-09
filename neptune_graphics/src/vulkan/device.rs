@@ -136,6 +136,7 @@ impl Device {
             .descriptor_binding_storage_image_update_after_bind(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
             .descriptor_binding_update_unused_while_pending(true)
+            .runtime_descriptor_array(true)
             .build();
 
         let mut synchronization2_features =

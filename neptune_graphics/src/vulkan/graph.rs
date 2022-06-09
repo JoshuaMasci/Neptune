@@ -593,6 +593,7 @@ impl Graph {
 
                         let raster_command_buffer = &mut VulkanRasterCommandBuffer::new(
                             device.clone(),
+                            pipeline_layout,
                             command_buffer,
                             &self.buffers,
                             &self.textures,

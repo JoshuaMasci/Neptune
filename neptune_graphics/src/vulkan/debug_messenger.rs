@@ -15,8 +15,10 @@ impl DebugMessenger {
                 .create_debug_utils_messenger(
                     &vk::DebugUtilsMessengerCreateInfoEXT::builder()
                         .message_severity(
-                            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                                | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING, //| vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
+                            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                                | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                                | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                                | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE,
                         )
                         .message_type(
                             vk::DebugUtilsMessageTypeFlagsEXT::GENERAL

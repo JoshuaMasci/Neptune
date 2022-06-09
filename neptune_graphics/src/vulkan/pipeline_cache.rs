@@ -268,6 +268,10 @@ impl BlendOp {
 impl VertexElement {
     fn get_vk_type(&self) -> vk::Format {
         match self {
+            VertexElement::Byte => vk::Format::R8_UNORM,
+            VertexElement::Byte2 => vk::Format::R8G8_UNORM,
+            VertexElement::Byte3 => vk::Format::R8G8B8_UNORM,
+            VertexElement::Byte4 => vk::Format::R8G8B8A8_UNORM,
             VertexElement::Float => vk::Format::R32_SFLOAT,
             VertexElement::Float2 => vk::Format::R32G32_SFLOAT,
             VertexElement::Float3 => vk::Format::R32G32B32_SFLOAT,

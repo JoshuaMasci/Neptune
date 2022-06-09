@@ -25,7 +25,7 @@ pub use texture::Texture;
 pub(crate) use graph::Graph;
 
 use crate::render_graph::{BufferAccess, TextureAccess};
-use crate::{IndexSize, TextureDimensions};
+use crate::IndexSize;
 use ash::vk;
 
 impl BufferAccess {

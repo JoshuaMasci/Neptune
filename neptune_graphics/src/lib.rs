@@ -12,11 +12,13 @@ pub use crate::render_graph::{
 };
 use std::rc::Rc;
 
-use crate::pipeline::{PipelineState, VertexElement};
-use crate::render_graph::{TextureId, UploadData};
+pub use crate::pipeline::{PipelineState, VertexElement};
 use crate::vulkan::ShaderModule;
 pub use buffer::BufferDescription;
 pub use buffer::BufferUsages;
+pub use render_graph::BufferId;
+pub use render_graph::TextureId;
+pub use render_graph::UploadData;
 pub use resource::Resource;
 pub use texture::TextureDescription;
 pub use texture::TextureDimensions;
@@ -93,6 +95,7 @@ pub fn render_graph_test(render_graph: &mut RenderGraphBuilder) {
 
 pub fn render_triangle_test(
     render_graph: &mut RenderGraphBuilder,
+    sampled_texture: TextureId,
     render_target: TextureId,
     vertex_module: Rc<ShaderModule>,
     fragment_module: Rc<ShaderModule>,
@@ -110,6 +113,7 @@ pub fn render_triangle_test(
     render_graph.add_buffer_upload_pass(vertex_buffer, 0, UploadData::F32(vertex_data));
 
     let index_data = vec![0u32, 1u32, 2u32];
+    let index_len = index_data.len();
 
     let index_buffer = render_graph.create_buffer(BufferDescription {
         size: std::mem::size_of::<u32>() * index_data.len(),
@@ -122,6 +126,7 @@ pub fn render_triangle_test(
     let mut raster_pass = RasterPassBuilder::new("Test");
     raster_pass.vertex_buffer(vertex_buffer);
     raster_pass.index_buffer(index_buffer);
+    raster_pass.shader_read_texture(sampled_texture);
     raster_pass.attachments(
         &[ColorAttachment {
             id: render_target,
@@ -135,9 +140,10 @@ pub fn render_triangle_test(
         vec![VertexElement::Float3; 2],
         PipelineState::default(),
         move |command_buffer| {
+            command_buffer.push_texture(0, sampled_texture);
             command_buffer.bind_index_buffer(index_buffer, 0, IndexSize::U32);
             command_buffer.bind_vertex_buffers(vertex_buffer, 0);
-            command_buffer.draw_indexed(3, 0, 0, 1, 0);
+            command_buffer.draw_indexed(index_len as u32, 0, 0, 1, 0);
         },
     );
     render_graph.add_raster_pass(raster_pass);

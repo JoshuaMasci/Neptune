@@ -32,7 +32,6 @@ fn main() {
     let device_ref = &mut device;
 
     let mut imgui_layer = ImguiLayer::new(device_ref);
-    let imgui_ref = &mut imgui_layer;
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
@@ -42,7 +41,7 @@ fn main() {
 
     let test_texture = {
         let test_image = image::open("neptune_editor/resource/1k_grid.png").unwrap();
-        device_ref.create_texture_with_data(
+        Rc::new(device_ref.create_texture_with_data(
             TextureDescription {
                 format: TextureFormat::Rgba8Unorm,
                 size: TextureDimensions::D2(test_image.width(), test_image.height()),
@@ -50,7 +49,7 @@ fn main() {
                 memory_type: MemoryType::GpuOnly,
             },
             test_image.as_rgba8().unwrap(),
-        )
+        ))
     };
 
     event_loop.run_return(move |event, _, control_flow| {
@@ -68,7 +67,7 @@ fn main() {
                     frame_count_time = (0, 0.0);
                 }
 
-                imgui_ref.update_time(last_frame_time);
+                imgui_layer.update_time(last_frame_time);
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -79,7 +78,7 @@ fn main() {
             }
             Event::MainEventsCleared => {
                 //Build Imgui
-                imgui_ref.build_frame(&window, move |ui| {
+                imgui_layer.build_frame(&window, move |ui| {
                     ui.window("Hello World1").build(|| {
                         ui.text("This...is...imgui-rs!");
                         ui.separator();
@@ -93,22 +92,26 @@ fn main() {
 
                 let vert_module_ref = triangle_vertex_module.clone();
                 let frag_module_ref = triangle_fragment_module.clone();
+                let test_texture_ref = test_texture.clone();
+                let imgui_ref = &mut imgui_layer;
 
                 //Render Frame
                 device_ref.render(move |render_graph| {
+                    let texture_id = render_graph.import_texture(test_texture_ref);
                     let (swapchain_id, _swapchain_size) = render_graph.get_swapchain_image();
-                    //neptune_graphics::render_graph_test(render_graph);
                     neptune_graphics::render_triangle_test(
                         render_graph,
+                        texture_id,
                         swapchain_id,
                         vert_module_ref,
                         frag_module_ref,
                     );
+                    imgui_ref.render_frame(render_graph, swapchain_id);
                 });
             }
             Event::RedrawRequested(_window_id) => {}
             event => {
-                imgui_ref.handle_event(&window, &event);
+                imgui_layer.handle_event(&window, &event);
             }
         }
     });

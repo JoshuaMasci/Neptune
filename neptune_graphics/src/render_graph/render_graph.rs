@@ -5,7 +5,7 @@ use crate::render_graph::{
     ResourceAccess, ResourceAccessType, TextureAccess, TextureId,
 };
 use crate::vulkan::ShaderModule;
-use crate::{BufferDescription, BufferUsages, MemoryType, TextureDescription};
+use crate::{BufferDescription, BufferUsages, MemoryType, Resource, TextureDescription};
 use std::rc::Rc;
 
 pub(crate) enum BufferResourceDescription {
@@ -139,6 +139,16 @@ impl RenderGraphBuilder {
         new_id
     }
 
+    pub fn import_texture(&mut self, texture: ImportedTexture) -> TextureId {
+        let new_id = self.textures.len();
+        self.textures.push(TextureResource {
+            id: new_id,
+            description: TextureResourceDescription::Imported(texture),
+            access_list: vec![],
+        });
+        new_id
+    }
+
     fn add_render_pass(
         &mut self,
         name: String,
@@ -220,7 +230,7 @@ impl RenderGraphBuilder {
         });
     }
 
-    pub(crate) fn add_buffer_upload_pass(
+    pub fn add_buffer_upload_pass(
         &mut self,
         dst_buffer: BufferId,
         dst_offset: usize,
@@ -267,7 +277,7 @@ impl RenderGraphBuilder {
         );
     }
 
-    pub fn add_raster_pass(&mut self, mut pass_builder: RasterPassBuilder) {
+    pub fn add_raster_pass(&mut self, pass_builder: RasterPassBuilder) {
         let name = pass_builder.name;
 
         let mut buffer_accesses: Vec<(BufferId, BufferAccess)> = pass_builder

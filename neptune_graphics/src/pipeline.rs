@@ -10,6 +10,19 @@ pub struct PipelineState {
     pub blend_op: BlendOp,
 }
 
+impl PipelineState {
+    pub fn alpha_blending_basic() -> Self {
+        Self {
+            cull_mode: CullMode::None,
+            depth_mode: DepthTestMode::None,
+            depth_op: DepthTestOp::Never,
+            src_factor: BlendFactor::AlphaSrc,
+            dst_factor: BlendFactor::OneMinusAlphaSrc,
+            blend_op: BlendOp::Add,
+        }
+    }
+}
+
 impl Default for PipelineState {
     fn default() -> Self {
         Self {
@@ -74,8 +87,13 @@ pub enum BlendOp {
     Max,
 }
 
+//TODO: Rename these elements
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum VertexElement {
+    Byte,
+    Byte2,
+    Byte3,
+    Byte4,
     Float,
     Float2,
     Float3,
@@ -84,12 +102,17 @@ pub enum VertexElement {
 
 impl VertexElement {
     pub fn get_size_bytes(&self) -> u32 {
-        let float_size = std::mem::size_of::<f32>() as u32;
+        const BYTE_SIZE: u32 = std::mem::size_of::<u8>() as u32;
+        const FLOAT_SIZE: u32 = std::mem::size_of::<f32>() as u32;
         match self {
-            VertexElement::Float => float_size,
-            VertexElement::Float2 => float_size * 2,
-            VertexElement::Float3 => float_size * 3,
-            VertexElement::Float4 => float_size * 4,
+            VertexElement::Byte => BYTE_SIZE,
+            VertexElement::Byte2 => BYTE_SIZE * 2,
+            VertexElement::Byte3 => BYTE_SIZE * 3,
+            VertexElement::Byte4 => BYTE_SIZE * 4,
+            VertexElement::Float => FLOAT_SIZE,
+            VertexElement::Float2 => FLOAT_SIZE * 2,
+            VertexElement::Float3 => FLOAT_SIZE * 3,
+            VertexElement::Float4 => FLOAT_SIZE * 4,
         }
     }
 }
