@@ -1,5 +1,78 @@
+mod device;
+mod instance;
+
 use std::borrow::BorrowMut;
 use std::sync::{Arc, Mutex};
+
+pub use device::Device;
+pub use instance::Instance;
+
+pub type ResourceId = u32;
+pub struct Resource {
+    pub(crate) id: ResourceId,
+    pub(crate) deleted_list: Arc<Mutex<Vec<ResourceId>>>,
+}
+
+impl Drop for Resource {
+    fn drop(&mut self) {
+        self.deleted_list.borrow_mut().lock().unwrap().push(self.id)
+    }
+}
+
+pub struct Surface(pub(crate) Resource);
+
+pub struct GraphicsShader(pub(crate) Resource);
+pub struct ComputeShader(pub(crate) Resource);
+pub struct Buffer(pub(crate) Resource);
+pub struct Texture(pub(crate) Resource);
+pub struct Sampler(pub(crate) Resource);
+
+#[derive(Debug, Clone, Copy)]
+pub enum DeviceType {
+    Integrated,
+    Discrete,
+    Unknown,
+}
+
+//Features and Extensions supported by the device
+#[derive(Debug, Clone)]
+pub struct DeviceFeatures {
+    pub raytracing: bool,
+    pub variable_rate_shading: bool,
+}
+
+//Limits of the device
+#[derive(Debug, Clone)]
+pub struct DeviceProperties {
+    pub vram_size: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DeviceVendor {
+    AMD,
+    Arm,
+    ImgTec,
+    Intel,
+    Nvidia,
+    Qualcomm,
+    Unknown(u32),
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    pub name: String,
+    pub vendor: DeviceVendor,
+    pub device_type: DeviceType,
+    //pub features: DeviceFeatures,
+    //pub properties: DeviceProperties,
+}
+
+//TODO: Return Result not Option
+//TODO: Decide between Dynamic and Static Dispatch!!!!!!!!!
+//IDEA: Use Static Dispatch and Compile Time since the majority of platforms will only support 1 backend (Since OpenGL will never be supported).
+//      Then for Windows which will support Vulkan and Dx12 make a Backend Wrapper that can support both with 2 modes
+//          1. Use only 1
+//          2. Use both at the same time(Not sure this will work???)
 
 // Welcome to the Prototype for the Gen3? RenderGraph powered render abstraction
 // This is meant to be a platform/api agnostic rendering interface, think WGPU with RenderGraphs.
@@ -11,6 +84,7 @@ use std::sync::{Arc, Mutex};
 // 1.  Safety
 //      a. Synchronization: Using a RenderGraph(and internal state tracking) will allow automatic gpu sync that will/should prevent any gpu data race conditions
 //      b. Lazy Resource Deletion: Internal Resource tracking will prevent any resource from being freed while currently in use by a frame render or referenced by another resource
+//      c. TODO: Type Safety for buffers and textures?????
 // 2. Simple
 //      a. Render commands should be written at a high level
 //      c. Reduces the amount of boilerplate code needed
@@ -27,57 +101,7 @@ use std::sync::{Arc, Mutex};
 
 //TODO: needs ability to create and support new windows/surfaces
 //TODO: Async Upload and Compute
-
-pub enum DeviceType {
-    Integrated,
-    Dedicated,
-}
-
-//Features and Extensions supported by the device
-pub struct DeviceFeatures {
-    pub raytracing: bool,
-    pub variable_rate_shading: bool,
-}
-
-//Limits of the device
-pub struct DeviceProperies {
-    pub vram_size: usize,
-}
-
-pub struct DeviceInfo {
-    pub name: String,
-    pub vendor: String,
-    pub device_type: DeviceType,
-    pub features: DeviceFeatures,
-    pub properties: DeviceProperies,
-}
-
-pub struct Surface(usize);
-
-pub trait Instance {
-    fn create_surface() -> Option<Arc<Surface>>;
-
-    //Evaluates all available devices and assigns a score them, 0 means device is not usable, highest scoring device is initialized and returned.
-    //Scoring function should take into account total Vram, Supported Features, DeviceType, etc.
-    //If surface is not provided, device will run in headless mode.
-    fn create_device(
-        surface: Option<Arc<Surface>>,
-        score_function: impl Fn(&DeviceInfo) -> u32,
-    ) -> Option<()>;
-}
-
-pub struct Resource {
-    id: usize,
-    deleted_list: Arc<Mutex<Vec<usize>>>,
-}
-
-impl Drop for Resource {
-    fn drop(&mut self) {
-        self.deleted_list.borrow_mut().lock().unwrap().push(self.id)
-    }
-}
-pub type ShaderModule = Resource;
-pub type Sampler = Resource;
+//TODO: Support f16/half-float as well
 
 // TODO: Use From<> Trait instead????
 /// A buffer type that can be bound for render graph passes
@@ -86,37 +110,13 @@ pub trait BufferGraphResource {
 }
 
 // Buffer type can't be bound for rendering since it must be imported into render graph for synchronization
-pub struct Buffer(Resource);
-
 // StaticBuffer is filled during creation and will be immutable, therefore no synchronization is required after filling
-pub struct StaticBuffer(Resource);
-impl BufferGraphResource for StaticBuffer {
-    fn get_handle(&self) -> usize {
-        self.0.id
-    }
-}
-
-pub type Texture = Resource;
-
-//Device interface
-//TODO: Return Result not Option
-pub trait Device {
-    fn get_info() -> DeviceInfo;
-
-    fn add_surface(new_surface: Arc<Surface>) -> Result<(), ()>;
-
-    fn create_shader_module() -> Option<Arc<ShaderModule>>;
-    fn create_buffer() -> Option<Arc<Buffer>>;
-    fn create_texture() -> Option<Arc<Texture>>;
-    fn create_sampler() -> Option<Arc<Sampler>>;
-
-    //TODO: Should this also/only have an async version?
-    //Should these even exist or do they just complicated this even more
-    fn create_static_buffer<T>(data: &[T]) -> Option<Arc<StaticBuffer>>;
-    fn create_static_texture<T>(data: &[T]) -> Option<Arc<Texture>>;
-
-    fn draw_frame() -> Option<()>;
-}
+// pub struct StaticBuffer(Resource);
+// impl BufferGraphResource for StaticBuffer {
+//     fn get_handle(&self) -> usize {
+//         self.0.id
+//     }
+// }
 
 //The interface containing all draw commands for raster based rendering after a raster pipeline has been bound
 pub trait RasterCommandBuffer {
@@ -139,8 +139,18 @@ pub trait RasterCommandBuffer {
 //Can store data (f32,i32,u32...) and Resources(Buffers and Textures)
 //Will store the Arc<Buffer>/Arc<Texture>/ETC so that those resources aren't deleted while in use
 //TODO: how to make this not suck for data only things (I.E. Vertex/Index buffers or Texture Upload)
+//Trait functions to be filled by
 pub trait GpuData {
-    fn get_gpu_size() -> usize;
+    type PackedType;
+
+    //TODO: no way to get bindings, need to rework this
+    fn get_gpu_packed(&mut self) -> Self::PackedType;
+
+    fn append_resources(
+        buffers: &mut Vec<Arc<Buffer>>,
+        textures: &mut Vec<Arc<Texture>>,
+        samplers: &mut Vec<Arc<Sampler>>,
+    );
 }
 
 //2 Types of GPU data
@@ -167,6 +177,44 @@ struct TestDataStruct {
     matrix: [f32; 16],
 }
 
+//Example of what should be created by the impl
+#[repr(C)]
+struct TestDataStructPacked {
+    buffer_binding: u32,
+    texture_binding: u32,
+    sampler_binding: u32,
+    float: f32,
+    ints_array: [i32; 2],
+    uints_array: [u32; 4],
+    matrix: [f32; 16],
+}
+
+impl GpuData for TestDataStruct {
+    type PackedType = TestDataStructPacked;
+
+    fn get_gpu_packed(&mut self) -> Self::PackedType {
+        Self::PackedType {
+            buffer_binding: 0,
+            texture_binding: 0,
+            sampler_binding: 0,
+            float: 0.0,
+            ints_array: [0; 2],
+            uints_array: [0; 4],
+            matrix: [0.0; 16],
+        }
+    }
+
+    fn append_resources(
+        buffers: &mut Vec<Arc<Buffer>>,
+        textures: &mut Vec<Arc<Texture>>,
+        samplers: &mut Vec<Arc<Sampler>>,
+    ) {
+        todo!()
+    }
+}
+
+//End Example
+
 //Here is example definition for the Gpu Data Packed Array Element
 //This can be used for the layout of a buffer or push data
 //This can be uploaded as the raw bytes to the
@@ -179,3 +227,31 @@ struct TestDataPackedVertex {
     pos: [f32; 3],
     uv: [f32; 2],
 }
+
+//Empty trait, just to make sure nothing invalid gets used
+pub trait GpuDataPacked {}
+impl GpuDataPacked for i8 {}
+impl GpuDataPacked for u8 {}
+impl GpuDataPacked for i32 {}
+impl GpuDataPacked for u32 {}
+impl GpuDataPacked for f32 {}
+impl GpuDataPacked for f64 {}
+
+//TODO: Separate functions for GpuData and GpuDataPacked????
+// pub fn data_to_bytes_test<T: GpuDataPacked + Sized>(data: &[T]) {
+//     let byte_slice: &[u8] = unsafe {
+//         std::slice::from_raw_parts(
+//             data.as_ptr() as *const u8,
+//             std::mem::size_of::<T>() * data.len(),
+//         )
+//     };
+//     println!("{} to Bytes: {:?}", std::any::type_name::<T>(), byte_slice);
+// }
+// pub fn test_gpu_packed_function() {
+//     data_to_bytes_test(&[0u8, 1u8, 2u8]);
+//     data_to_bytes_test(&[0i8, 1i8, 2i8]);
+//     data_to_bytes_test(&[0i32, 1i32, 2i32]);
+//     data_to_bytes_test(&[0u32, 1u32, 2u32]);
+//     data_to_bytes_test(&[0f32, 1f32, 2f32]);
+//     data_to_bytes_test(&[0f64, 1f64, 2f64]);
+// }

@@ -15,6 +15,8 @@ pub use winit::{
 };
 
 fn main() {
+    neptune_graphics::render_interface_test::test_render_interface();
+
     neptune_core::setup_logger().expect("Failed to init logger");
 
     let mut event_loop = winit::event_loop::EventLoop::new();

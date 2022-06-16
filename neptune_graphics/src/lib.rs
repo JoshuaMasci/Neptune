@@ -1,10 +1,12 @@
 mod buffer;
 mod id_pool;
-mod interface;
 mod pipeline;
 mod render_graph;
 mod resource;
 mod texture;
+
+pub mod interface;
+pub mod render_interface_test;
 pub mod vulkan;
 
 pub use crate::render_graph::{
