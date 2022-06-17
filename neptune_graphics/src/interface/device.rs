@@ -1,4 +1,7 @@
-use crate::interface::{Buffer, DeviceInfo, GraphicsShader, Sampler, Surface, Texture};
+use crate::interface::{
+    Buffer, ComputeShader, DeviceInfo, GraphicsShader, RenderGraphBuilder, Sampler, Surface,
+    Texture,
+};
 use std::sync::Arc;
 
 pub trait Device {
@@ -11,9 +14,14 @@ pub trait Device {
         vertex_code: &[u8],
         fragment_code: Option<&[u8]>,
     ) -> Option<Arc<GraphicsShader>>;
+    fn create_compute_shader(&self, code: &[u8]) -> Option<Arc<ComputeShader>>;
+
     fn create_buffer(&self) -> Option<Arc<Buffer>>;
     fn create_texture(&self) -> Option<Arc<Texture>>;
     fn create_sampler(&self) -> Option<Arc<Sampler>>;
 
-    fn draw_frame(&self) -> Option<()>;
+    fn render_frame(
+        &self,
+        build_render_graph_fn: impl FnOnce(&mut RenderGraphBuilder),
+    ) -> Result<(), ()>;
 }

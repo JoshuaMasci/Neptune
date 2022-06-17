@@ -255,3 +255,67 @@ impl GpuDataPacked for f64 {}
 //     data_to_bytes_test(&[0f32, 1f32, 2f32]);
 //     data_to_bytes_test(&[0f64, 1f64, 2f64]);
 // }
+
+//RENDER GRAPH BUILDER TEST
+//No implementation
+pub struct RenderGraphBuilder {}
+
+impl RenderGraphBuilder {
+    pub fn create_buffer(&mut self) -> ResourceId {
+        0
+    }
+
+    pub fn import_buffer(&mut self, buffer: Arc<Buffer>) -> ResourceId {
+        0
+    }
+
+    //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
+    pub fn create_texture(&mut self) -> ResourceId {
+        0
+    }
+
+    pub fn import_texture(&mut self, texture: Arc<Texture>) -> ResourceId {
+        0
+    }
+
+    pub fn create_compute_pass<T: GpuData>(
+        &mut self,
+        name: &str,
+        shader: Arc<ComputeShader>,
+        dispatch_size: &[u32; 3],
+        push_data: Option<T>,
+    ) {
+    }
+
+    pub fn create_graphics_pass(
+        &mut self,
+        name: &str,
+        color_attachments: &[ResourceId],
+        depth_stencil_attachment: Option<ResourceId>,
+    ) -> GraphicsPassBuilder {
+        GraphicsPassBuilder {
+            render_graph_builder: self,
+        }
+    }
+}
+
+pub struct GraphicsPassBuilder<'a> {
+    render_graph_builder: &'a mut RenderGraphBuilder,
+}
+
+impl<'a> GraphicsPassBuilder<'a> {
+    //TODO: replace temp values
+    pub fn pipeline(
+        self,
+        shaders: Arc<GraphicsShader>,
+        pipeline_settings: u8,
+        vertex_layout: &[u8],
+        render_fn: impl FnOnce() + 'static,
+    ) -> Self {
+        self
+    }
+
+    pub fn build(self) {
+        drop(self);
+    }
+}

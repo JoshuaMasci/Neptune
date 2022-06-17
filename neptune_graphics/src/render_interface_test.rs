@@ -1,6 +1,6 @@
 use crate::interface::{
-    Buffer, Device, DeviceInfo, DeviceType, DeviceVendor, GraphicsShader, Instance, Resource,
-    Sampler, Surface, Texture,
+    Buffer, ComputeShader, Device, DeviceInfo, DeviceType, DeviceVendor, GpuData, GraphicsShader,
+    Instance, RenderGraphBuilder, Resource, ResourceId, Sampler, Surface, Texture,
 };
 use std::sync::{Arc, Mutex};
 
@@ -20,7 +20,6 @@ pub fn test_render_interface() {
         println!("Failed to find a suitable device");
         return;
     }
-
     let device = device_search_result.unwrap();
     println!("Selected Device: {:#?}", device);
 
@@ -28,6 +27,61 @@ pub fn test_render_interface() {
     let graphics_shader = device
         .create_graphics_shader(&[1, 2, 3], Some(&[1, 2, 3]))
         .expect("Failed to create Graphics Shaders");
+
+    let compute_shader = device
+        .create_compute_shader(&[1, 2, 3])
+        .expect("Failed to create Compute Shaders");
+
+    //TODO: Resource Description
+    let compute_buffer = device.create_buffer().expect("Failed to create Buffer");
+
+    device
+        .render_frame(|render_graph_builder| {
+            let temp_buffer = render_graph_builder.create_buffer();
+
+            render_graph_builder.create_compute_pass(
+                "ComputePass",
+                compute_shader.clone(),
+                &[128, 256, 512],
+                Some(ComputePushData {
+                    first_buffer: compute_buffer.clone(),
+                    temp_buffer,
+                    some_data: 1.0,
+                }),
+            );
+
+            //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
+            let temp_image = render_graph_builder.create_texture();
+
+            render_graph_builder
+                .create_graphics_pass("Graphics Pass", &[temp_image], None)
+                .pipeline(graphics_shader.clone(), 0, &[], || {
+                    println!("Render Function");
+                })
+                .build();
+        })
+        .expect("Failed to render frames");
+}
+
+//TODO: write/use #[derive(GpuData)]
+struct ComputePushData {
+    //TODO: unify both resource types
+    first_buffer: Arc<Buffer>, //Static Buffer?
+    temp_buffer: ResourceId,   //Mutable Buffer?
+    some_data: f32,
+}
+
+impl GpuData for ComputePushData {
+    type PackedType = u32;
+    fn get_gpu_packed(&mut self) -> Self::PackedType {
+        0
+    }
+    fn append_resources(
+        buffers: &mut Vec<Arc<Buffer>>,
+        textures: &mut Vec<Arc<Texture>>,
+        samplers: &mut Vec<Arc<Sampler>>,
+    ) {
+    }
 }
 
 struct NullInstance {
@@ -104,6 +158,13 @@ impl Device for NullDevice {
         })))
     }
 
+    fn create_compute_shader(&self, code: &[u8]) -> Option<Arc<ComputeShader>> {
+        Some(Arc::new(ComputeShader(Resource {
+            id: 0,
+            deleted_list: Arc::new(Mutex::new(vec![])),
+        })))
+    }
+
     fn create_buffer(&self) -> Option<Arc<Buffer>> {
         Some(Arc::new(Buffer(Resource {
             id: 0,
@@ -125,7 +186,12 @@ impl Device for NullDevice {
         })))
     }
 
-    fn draw_frame(&self) -> Option<()> {
-        todo!()
+    fn render_frame(
+        &self,
+        build_render_graph_fn: impl FnOnce(&mut RenderGraphBuilder),
+    ) -> Result<(), ()> {
+        let mut render_graph_builder = RenderGraphBuilder {};
+        build_render_graph_fn(&mut render_graph_builder);
+        Ok(())
     }
 }
