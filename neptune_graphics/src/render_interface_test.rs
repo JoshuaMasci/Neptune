@@ -1,8 +1,47 @@
 use crate::interface::{
     Buffer, ComputeShader, Device, DeviceInfo, DeviceType, DeviceVendor, GpuData, GraphicsShader,
-    Instance, RenderGraphBuilder, Resource, ResourceId, Sampler, Surface, Texture,
+    Instance, RenderGraphBuilder, Resource, Sampler, Surface, Texture,
 };
+use crate::IndexSize;
 use std::sync::{Arc, Mutex};
+
+struct VertexData {
+    position: [f32; 3],
+}
+
+impl GpuData for VertexData {
+    type PackedType = u32;
+
+    fn get_gpu_packed(&mut self) -> Self::PackedType {
+        0
+    }
+    fn append_resources(
+        buffers: &mut Vec<Buffer>,
+        textures: &mut Vec<Texture>,
+        samplers: &mut Vec<Sampler>,
+    ) {
+        todo!()
+    }
+}
+
+struct FragmentData {
+    texture: Texture,
+}
+
+impl GpuData for FragmentData {
+    type PackedType = u32;
+
+    fn get_gpu_packed(&mut self) -> Self::PackedType {
+        0
+    }
+    fn append_resources(
+        buffers: &mut Vec<Buffer>,
+        textures: &mut Vec<Texture>,
+        samplers: &mut Vec<Sampler>,
+    ) {
+        todo!()
+    }
+}
 
 ///This is mostly a test of the traits to see how nice it is to write code in this api
 pub fn test_render_interface() {
@@ -35,6 +74,17 @@ pub fn test_render_interface() {
     //TODO: Resource Description
     let compute_buffer = device.create_buffer().expect("Failed to create Buffer");
 
+    //TODO: Data upload / Async upload option
+    let vertex_buffer = device
+        .create_static_buffer()
+        .expect("Failed to create Vertex Buffer");
+    let index_buffer = device
+        .create_static_buffer()
+        .expect("Failed to create Vertex Buffer");
+    let base_texture = device
+        .create_static_texture()
+        .expect("Failed to create Base Texture");
+
     device
         .render_frame(|render_graph_builder| {
             let temp_buffer = render_graph_builder.create_buffer();
@@ -53,21 +103,30 @@ pub fn test_render_interface() {
             //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
             let temp_image = render_graph_builder.create_texture();
 
+            let base_texture_clone = base_texture.clone();
+
             render_graph_builder
                 .create_graphics_pass("Graphics Pass", &[temp_image], None)
-                .pipeline(graphics_shader.clone(), 0, &[], || {
+                .add_pipeline(graphics_shader.clone(), 0, &[], |raster_api| {
                     println!("Render Function");
-                })
-                .build();
+                    raster_api.bind_vertex_buffers(&[(vertex_buffer, 0)]);
+                    raster_api.bind_index_buffer(index_buffer, 0, IndexSize::U32);
+
+                    raster_api.push_vertex_data(VertexData { position: [0.0; 3] });
+                    raster_api.push_fragment_data(FragmentData {
+                        texture: base_texture_clone,
+                    });
+
+                    raster_api.draw_indexed(3, 0, 0, 1, 0);
+                });
         })
         .expect("Failed to render frames");
 }
 
 //TODO: write/use #[derive(GpuData)]
 struct ComputePushData {
-    //TODO: unify both resource types
-    first_buffer: Arc<Buffer>, //Static Buffer?
-    temp_buffer: ResourceId,   //Mutable Buffer?
+    first_buffer: Buffer,
+    temp_buffer: Buffer,
     some_data: f32,
 }
 
@@ -77,9 +136,9 @@ impl GpuData for ComputePushData {
         0
     }
     fn append_resources(
-        buffers: &mut Vec<Arc<Buffer>>,
-        textures: &mut Vec<Arc<Texture>>,
-        samplers: &mut Vec<Arc<Sampler>>,
+        buffers: &mut Vec<Buffer>,
+        textures: &mut Vec<Texture>,
+        samplers: &mut Vec<Sampler>,
     ) {
     }
 }
@@ -165,22 +224,35 @@ impl Device for NullDevice {
         })))
     }
 
-    fn create_buffer(&self) -> Option<Arc<Buffer>> {
-        Some(Arc::new(Buffer(Resource {
+    fn create_buffer(&self) -> Option<Buffer> {
+        Some(Buffer::Mutable(Arc::new(Resource {
             id: 0,
             deleted_list: Arc::new(Mutex::new(vec![])),
         })))
     }
 
-    fn create_texture(&self) -> Option<Arc<Texture>> {
-        Some(Arc::new(Texture(Resource {
+    fn create_static_buffer(&self) -> Option<Buffer> {
+        Some(Buffer::Static(Arc::new(Resource {
             id: 0,
             deleted_list: Arc::new(Mutex::new(vec![])),
         })))
     }
 
-    fn create_sampler(&self) -> Option<Arc<Sampler>> {
-        Some(Arc::new(Sampler(Resource {
+    fn create_texture(&self) -> Option<Texture> {
+        Some(Texture::Mutable(Arc::new(Resource {
+            id: 0,
+            deleted_list: Arc::new(Mutex::new(vec![])),
+        })))
+    }
+    fn create_static_texture(&self) -> Option<Texture> {
+        Some(Texture::Static(Arc::new(Resource {
+            id: 0,
+            deleted_list: Arc::new(Mutex::new(vec![])),
+        })))
+    }
+
+    fn create_sampler(&self) -> Option<Sampler> {
+        Some(Sampler(Arc::new(Resource {
             id: 0,
             deleted_list: Arc::new(Mutex::new(vec![])),
         })))

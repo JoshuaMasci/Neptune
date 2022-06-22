@@ -16,9 +16,13 @@ pub trait Device {
     ) -> Option<Arc<GraphicsShader>>;
     fn create_compute_shader(&self, code: &[u8]) -> Option<Arc<ComputeShader>>;
 
-    fn create_buffer(&self) -> Option<Arc<Buffer>>;
-    fn create_texture(&self) -> Option<Arc<Texture>>;
-    fn create_sampler(&self) -> Option<Arc<Sampler>>;
+    fn create_buffer(&self) -> Option<Buffer>;
+    fn create_static_buffer(&self) -> Option<Buffer>;
+
+    fn create_texture(&self) -> Option<Texture>;
+    fn create_static_texture(&self) -> Option<Texture>;
+
+    fn create_sampler(&self) -> Option<Sampler>;
 
     fn render_frame(
         &self,

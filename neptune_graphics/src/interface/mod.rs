@@ -2,15 +2,32 @@ mod device;
 mod instance;
 
 use std::borrow::BorrowMut;
+use std::fmt::Formatter;
 use std::sync::{Arc, Mutex};
 
+use crate::IndexSize;
 pub use device::Device;
 pub use instance::Instance;
 
 pub type ResourceId = u32;
+
 pub struct Resource {
     pub(crate) id: ResourceId,
     pub(crate) deleted_list: Arc<Mutex<Vec<ResourceId>>>,
+}
+
+impl Eq for Resource {}
+
+impl PartialEq for Resource {
+    fn eq(&self, other: &Self) -> bool {
+        self.id.eq(&other.id)
+    }
+}
+
+impl std::fmt::Debug for Resource {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Resource").field("id", &self.id).finish()
+    }
 }
 
 impl Drop for Resource {
@@ -23,9 +40,29 @@ pub struct Surface(pub(crate) Resource);
 
 pub struct GraphicsShader(pub(crate) Resource);
 pub struct ComputeShader(pub(crate) Resource);
-pub struct Buffer(pub(crate) Resource);
-pub struct Texture(pub(crate) Resource);
-pub struct Sampler(pub(crate) Resource);
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct BufferHandle(u32);
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct TextureHandle(u32);
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Buffer {
+    Static(Arc<Resource>),
+    Mutable(Arc<Resource>),
+    Temporary(u32),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Texture {
+    Static(Arc<Resource>),
+    Mutable(Arc<Resource>),
+    Temporary(u32),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Sampler(pub(crate) Arc<Resource>);
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeviceType {
@@ -103,37 +140,6 @@ pub struct DeviceInfo {
 //TODO: Async Upload and Compute
 //TODO: Support f16/half-float as well
 
-// TODO: Use From<> Trait instead????
-/// A buffer type that can be bound for render graph passes
-pub trait BufferGraphResource {
-    fn get_handle(&self) -> usize;
-}
-
-// Buffer type can't be bound for rendering since it must be imported into render graph for synchronization
-// StaticBuffer is filled during creation and will be immutable, therefore no synchronization is required after filling
-// pub struct StaticBuffer(Resource);
-// impl BufferGraphResource for StaticBuffer {
-//     fn get_handle(&self) -> usize {
-//         self.0.id
-//     }
-// }
-
-//The interface containing all draw commands for raster based rendering after a raster pipeline has been bound
-pub trait RasterCommandBuffer {
-    fn bind_vertex_buffers(&self, buffer_offsets: &[(usize, u32)]);
-    fn bind_index_buffer(&self, buffer: usize, offset: u32, index_type: u32);
-    fn set_scissor(&self, offset: [i32; 2], extent: [u32; 2]);
-    fn draw(&self, vertex_count: u32, first_vertex: u32, instance_count: u32, first_instance: u32);
-    fn draw_indexed(
-        &self,
-        index_count: u32,
-        index_offset: u32,
-        vertex_offset: i32,
-        instance_count: u32,
-        instance_offset: u32,
-    );
-}
-
 //Will likely become a derive macro
 //The interface for all data that will be uploaded to the gpu for either buffer or push constants (Not texture)
 //Can store data (f32,i32,u32...) and Resources(Buffers and Textures)
@@ -147,9 +153,9 @@ pub trait GpuData {
     fn get_gpu_packed(&mut self) -> Self::PackedType;
 
     fn append_resources(
-        buffers: &mut Vec<Arc<Buffer>>,
-        textures: &mut Vec<Arc<Texture>>,
-        samplers: &mut Vec<Arc<Sampler>>,
+        buffers: &mut Vec<Buffer>,
+        textures: &mut Vec<Texture>,
+        samplers: &mut Vec<Sampler>,
     );
 }
 
@@ -168,9 +174,9 @@ pub trait GpuData {
 //TODO: Figure out Struct alignment/packing and nested types
 //#[derive(GpuData)]
 struct TestDataStruct {
-    buffer_binding: Arc<Buffer>,
-    texture_binding: Arc<Texture>,
-    sampler_binding: Arc<Sampler>,
+    buffer_binding: Buffer,
+    texture_binding: Texture,
+    sampler_binding: Sampler,
     float: f32,
     ints_array: [i32; 2],
     uints_array: [u32; 4],
@@ -205,9 +211,9 @@ impl GpuData for TestDataStruct {
     }
 
     fn append_resources(
-        buffers: &mut Vec<Arc<Buffer>>,
-        textures: &mut Vec<Arc<Texture>>,
-        samplers: &mut Vec<Arc<Sampler>>,
+        buffers: &mut Vec<Buffer>,
+        textures: &mut Vec<Texture>,
+        samplers: &mut Vec<Sampler>,
     ) {
         todo!()
     }
@@ -261,21 +267,14 @@ impl GpuDataPacked for f64 {}
 pub struct RenderGraphBuilder {}
 
 impl RenderGraphBuilder {
-    pub fn create_buffer(&mut self) -> ResourceId {
-        0
-    }
-
-    pub fn import_buffer(&mut self, buffer: Arc<Buffer>) -> ResourceId {
-        0
+    pub fn create_buffer(&mut self) -> Buffer {
+        Buffer::Temporary(0)
     }
 
     //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
-    pub fn create_texture(&mut self) -> ResourceId {
-        0
-    }
-
-    pub fn import_texture(&mut self, texture: Arc<Texture>) -> ResourceId {
-        0
+    // Or do we clear in the render pass like normal
+    pub fn create_texture(&mut self) -> Texture {
+        Texture::Temporary(0)
     }
 
     pub fn create_compute_pass<T: GpuData>(
@@ -290,8 +289,8 @@ impl RenderGraphBuilder {
     pub fn create_graphics_pass(
         &mut self,
         name: &str,
-        color_attachments: &[ResourceId],
-        depth_stencil_attachment: Option<ResourceId>,
+        color_attachments: &[Texture],
+        depth_stencil_attachment: Option<Texture>,
     ) -> GraphicsPassBuilder {
         GraphicsPassBuilder {
             render_graph_builder: self,
@@ -299,23 +298,53 @@ impl RenderGraphBuilder {
     }
 }
 
+// pub struct ComputePassBuilder<'a> {
+//     render_graph_builder: &'a mut RenderGraphBuilder,
+// }
+// impl<'a> ComputePassBuilder<'a> {}
+
 pub struct GraphicsPassBuilder<'a> {
     render_graph_builder: &'a mut RenderGraphBuilder,
 }
 
 impl<'a> GraphicsPassBuilder<'a> {
     //TODO: replace temp values
-    pub fn pipeline(
+    pub fn add_pipeline(
         self,
         shaders: Arc<GraphicsShader>,
         pipeline_settings: u8,
         vertex_layout: &[u8],
-        render_fn: impl FnOnce() + 'static,
+        render_fn: impl FnOnce(&mut RasterApi) + 'static,
     ) -> Self {
         self
     }
+}
 
-    pub fn build(self) {
-        drop(self);
+pub struct RasterApi {}
+
+impl RasterApi {
+    pub fn push_vertex_data<T: GpuData>(&mut self, data: T) {}
+    pub fn push_fragment_data<T: GpuData>(&mut self, data: T) {}
+
+    pub fn bind_vertex_buffers(&mut self, buffer_offsets: &[(Buffer, u32)]) {}
+    pub fn bind_index_buffer(&mut self, Buffer: Buffer, offset: u32, index_type: IndexSize) {}
+
+    pub fn set_scissor(&mut self, offset: [i32; 2], extent: [u32; 2]) {}
+    pub fn draw(
+        &mut self,
+        vertex_count: u32,
+        first_vertex: u32,
+        instance_count: u32,
+        first_instance: u32,
+    ) {
+    }
+    pub fn draw_indexed(
+        &mut self,
+        index_count: u32,
+        index_offset: u32,
+        vertex_offset: i32,
+        instance_count: u32,
+        instance_offset: u32,
+    ) {
     }
 }
