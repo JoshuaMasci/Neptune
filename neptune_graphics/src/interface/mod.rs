@@ -1,6 +1,7 @@
 mod device;
 mod instance;
 
+use std::any::Any;
 use std::borrow::BorrowMut;
 use std::fmt::Formatter;
 use std::sync::{Arc, Mutex};
@@ -347,4 +348,42 @@ impl RasterApi {
         instance_offset: u32,
     ) {
     }
+}
+
+pub struct BufferInfo {
+    buffer: Buffer,
+    offset: u32,
+}
+
+pub struct ScissorInfo {
+    vertex_count: u32,
+    first_vertex: u32,
+    instance_count: u32,
+    first_instance: u32,
+}
+
+pub struct DrawInfo {
+    vertex_count: u32,
+    first_vertex: u32,
+    instance_count: u32,
+    first_instance: u32,
+}
+
+pub struct DrawIndexedInfo {
+    index_count: u32,
+    index_offset: u32,
+    vertex_offset: i32,
+    instance_count: u32,
+    instance_offset: u32,
+}
+
+pub enum RasterCommand {
+    //TODO make dyn GpuData Box
+    SetVertexData(Box<dyn Any>),
+    SetFragmentData(Box<dyn Any>),
+    SetVertexBuffers(Vec<BufferInfo>),
+    SetIndexBuffer(BufferInfo, IndexSize),
+    SetScissor(ScissorInfo),
+    Draw(DrawInfo),
+    DrawIndexed(DrawIndexedInfo),
 }

@@ -1,6 +1,6 @@
 use crate::interface::{
     Buffer, ComputeShader, Device, DeviceInfo, DeviceType, DeviceVendor, GpuData, GraphicsShader,
-    Instance, RenderGraphBuilder, Resource, Sampler, Surface, Texture,
+    Instance, RasterCommand, RenderGraphBuilder, Resource, Sampler, Surface, Texture,
 };
 use crate::IndexSize;
 use std::sync::{Arc, Mutex};
@@ -43,8 +43,17 @@ impl GpuData for FragmentData {
     }
 }
 
+//TODO: The Raster Pass Builder doesn't know what resources are consumed by a pass at GraphBuild time. Need to figure out a way to allow passes to be aware of used resources without requiring "registering" them with the pass.
+//The leading solution is to have each RasterPass "Subpass" Build it's command list before graph build time (Not after in current design), But this will consume lots of memory with larger command lists. A quick test puts it at 32 per command in the enum.
+//I'm sure that this could be reduced but it will still be a lot.
+
 ///This is mostly a test of the traits to see how nice it is to write code in this api
 pub fn test_render_interface() {
+    println!(
+        "RasterCommandSize: {}",
+        std::mem::size_of::<RasterCommand>()
+    );
+
     let mut test_instance = NullInstance::new();
     let device_search_result = test_instance.select_and_create_device(None, |device_info| {
         println!("Device: {}", device_info.name);
@@ -85,43 +94,52 @@ pub fn test_render_interface() {
         .create_static_texture()
         .expect("Failed to create Base Texture");
 
-    device
-        .render_frame(|render_graph_builder| {
-            let temp_buffer = render_graph_builder.create_buffer();
+    for _ in 0..10 {
+        let vertex_buffer_clone = vertex_buffer.clone();
+        let index_buffer_clone = index_buffer.clone();
 
-            render_graph_builder.create_compute_pass(
-                "ComputePass",
-                compute_shader.clone(),
-                &[128, 256, 512],
-                Some(ComputePushData {
-                    first_buffer: compute_buffer.clone(),
-                    temp_buffer,
-                    some_data: 1.0,
-                }),
-            );
+        device
+            .render_frame(|render_graph_builder| {
+                let temp_buffer = render_graph_builder.create_buffer();
 
-            //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
-            let temp_image = render_graph_builder.create_texture();
+                render_graph_builder.create_compute_pass(
+                    "ComputePass",
+                    compute_shader.clone(),
+                    &[128, 256, 512],
+                    Some(ComputePushData {
+                        first_buffer: compute_buffer.clone(),
+                        temp_buffer,
+                        some_data: 1.0,
+                    }),
+                );
 
-            let base_texture_clone = base_texture.clone();
+                //TODO: add clear color value to create info, the graph will determine which pass may needed to be cleared
+                let temp_image = render_graph_builder.create_texture();
 
-            render_graph_builder
-                .create_graphics_pass("Graphics Pass", &[temp_image], None)
-                .add_pipeline(graphics_shader.clone(), 0, &[], |raster_api| {
-                    println!("Render Function");
-                    raster_api.bind_vertex_buffers(&[(vertex_buffer, 0)]);
-                    raster_api.bind_index_buffer(index_buffer, 0, IndexSize::U32);
+                let base_texture_clone = base_texture.clone();
 
-                    raster_api.push_vertex_data(VertexData { position: [0.0; 3] });
-                    raster_api.push_fragment_data(FragmentData {
-                        texture: base_texture_clone,
+                render_graph_builder
+                    .create_graphics_pass("Graphics Pass", &[temp_image], None)
+                    .add_pipeline(graphics_shader.clone(), 0, &[], |raster_api| {
+                        println!("Render Function");
+                        raster_api.bind_vertex_buffers(&[(vertex_buffer_clone, 0)]);
+                        raster_api.bind_index_buffer(index_buffer_clone, 0, IndexSize::U32);
+
+                        raster_api.push_vertex_data(VertexData { position: [0.0; 3] });
+                        raster_api.push_fragment_data(FragmentData {
+                            texture: base_texture_clone,
+                        });
+
+                        raster_api.draw_indexed(3, 0, 0, 1, 0);
                     });
-
-                    raster_api.draw_indexed(3, 0, 0, 1, 0);
-                });
-        })
-        .expect("Failed to render frames");
+            })
+            .expect("Failed to render frame");
+    }
 }
+
+/*
+let render_graph = device.begin_render_graph();
+ */
 
 //TODO: write/use #[derive(GpuData)]
 struct ComputePushData {
