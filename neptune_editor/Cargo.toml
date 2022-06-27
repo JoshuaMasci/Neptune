@@ -4,15 +4,13 @@ version = "0.1.0"
 authors = ["Joshua_Masci <iamshortman@gmail.com>"]
 edition = "2021"
 
-[build-dependencies]
-shaderc = "0.8.0"
-
 [dependencies]
-winit = "0.26"
 neptune_core = { path = "../neptune_core"}
-neptune_graphics = { path = "../neptune_graphics"}
+winit = "0.26"
+wgpu = "0.12"
+env_logger = "0.9"
+pollster = "0.2"
+bytemuck = { version = "1.9", features = ["derive"] }
 
-imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
-imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }
-
+glam = "0.21.2"
 image = "0.24.2"

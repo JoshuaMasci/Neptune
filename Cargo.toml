@@ -1,7 +1,7 @@
 [workspace]
+resolver = "2"
 
 members = [
     "neptune_core",
-    "neptune_graphics",
     "neptune_editor",
 ]
