@@ -15,6 +15,9 @@ pub(crate) struct Renderer {
     config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
 
+    scene_buffer: wgpu::Buffer,
+    scene_bind_group: wgpu::BindGroup,
+
     mesh_pipeline: wgpu::RenderPipeline,
     cube_mesh: Mesh,
     tri_mesh: Mesh,
@@ -54,22 +57,24 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let (vertex_data, index_data) = create_vertices();
-        let cube_mesh = Mesh::new(&device, &vertex_data, &index_data);
-
-        let tri_mesh = Mesh::new(
-            &device,
-            &[
-                vertex([0.0, 0.5, 0.0], [1.0, 0.0, 0.0, 0.0]),
-                vertex([-0.5, -0.5, 0.0], [0.0, 0.0, 1.0, 0.0]),
-                vertex([0.5, -0.5, 0.0], [0.0, 1.0, 0.0, 0.0]),
-            ],
-            &[0, 1, 2],
-        );
+        let scene_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Scene Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&scene_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -119,6 +124,39 @@ impl Renderer {
             multiview: None,
         });
 
+        let scene_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SceneBuffer"),
+            size: std::mem::size_of::<SceneBuffer>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &scene_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &scene_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
+        let (vertex_data, index_data) = create_vertices();
+        let cube_mesh = Mesh::new(&device, &vertex_data, &index_data);
+
+        let tri_mesh = Mesh::new(
+            &device,
+            &[
+                vertex([0.0, 0.5, 0.0], [1.0, 0.0, 0.0, 0.0]),
+                vertex([-0.5, -0.5, 0.0], [0.0, 0.0, 1.0, 0.0]),
+                vertex([0.5, -0.5, 0.0], [0.0, 1.0, 0.0, 0.0]),
+            ],
+            &[0, 1, 2],
+        );
+
         Self {
             surface,
             device,
@@ -126,6 +164,8 @@ impl Renderer {
             config,
             size,
             mesh_pipeline,
+            scene_buffer,
+            scene_bind_group,
             cube_mesh,
             tri_mesh,
         }
@@ -174,12 +214,8 @@ impl Renderer {
             });
 
             render_pass.set_pipeline(&self.mesh_pipeline);
-            render_pass.set_vertex_buffer(0, self.tri_mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(
-                self.tri_mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint16,
-            );
-            render_pass.draw_indexed(0..self.tri_mesh.index_count as u32, 0, 0..1);
+            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
+            self.tri_mesh.draw(&mut render_pass);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -215,7 +251,24 @@ impl Mesh {
             index_count: indices.len(),
         }
     }
+
+    fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..self.index_count as u32, 0, 0..1);
+    }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SceneBuffer {
+    view_matrix: glam::Mat4,
+    projection_matrix: glam::Mat4,
+    model_matrices: [glam::Mat4; 16],
+}
+
+unsafe impl bytemuck::Zeroable for SceneBuffer {}
+unsafe impl bytemuck::Pod for SceneBuffer {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

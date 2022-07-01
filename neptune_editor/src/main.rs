@@ -2,6 +2,8 @@ mod editor;
 mod renderer;
 mod world;
 
+extern crate nalgebra_glm as glm;
+
 use crate::editor::Editor;
 pub use neptune_core::log::{debug, error, info, trace, warn};
 use winit::event::ScanCode;
