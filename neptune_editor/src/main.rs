@@ -2,7 +2,7 @@ mod editor;
 mod renderer;
 mod world;
 
-extern crate nalgebra_glm as glm;
+extern crate nalgebra as na;
 
 use crate::editor::Editor;
 pub use neptune_core::log::{debug, error, info, trace, warn};

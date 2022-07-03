@@ -126,8 +126,8 @@ impl Renderer {
 
         let scene_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SceneBuffer"),
-            size: std::mem::size_of::<SceneBuffer>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM,
+            size: std::mem::size_of::<SceneData>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -136,11 +136,7 @@ impl Renderer {
             layout: &scene_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &scene_buffer,
-                    offset: 0,
-                    size: None,
-                }),
+                resource: scene_buffer.as_entire_binding(),
             }],
         });
 
@@ -183,7 +179,15 @@ impl Renderer {
     pub(crate) fn update(&mut self) {}
 
     pub(crate) fn render(&mut self, world: &World) -> Result<(), wgpu::SurfaceError> {
+        {
+            let scene_data =
+                SceneData::from_world(world, self.config.width as f32 / self.config.height as f32);
+            self.queue
+                .write_buffer(&self.scene_buffer, 0, bytemuck::cast_slice(&[scene_data]));
+        }
+
         let output = self.surface.get_current_texture()?;
+
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -261,14 +265,37 @@ impl Mesh {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct SceneBuffer {
-    view_matrix: glam::Mat4,
-    projection_matrix: glam::Mat4,
-    model_matrices: [glam::Mat4; 16],
+struct SceneData {
+    view_matrix: na::Matrix4<f32>,
+    projection_matrix: na::Matrix4<f32>,
+    model_matrices: [na::Matrix4<f32>; 16],
 }
 
-unsafe impl bytemuck::Zeroable for SceneBuffer {}
-unsafe impl bytemuck::Pod for SceneBuffer {}
+unsafe impl bytemuck::Zeroable for SceneData {}
+unsafe impl bytemuck::Pod for SceneData {}
+
+impl SceneData {
+    fn from_world(world: &World, aspect_ratio: f32) -> Self {
+        let view_matrix = world.camera_transform.get_centered_view_matrix();
+        let projection_matrix = world.camera.get_perspective_matrix(aspect_ratio);
+        let mut model_matrices = [Default::default(); 16];
+
+        let camera_transform = world.camera_transform.position;
+
+        for (i, transform) in world.entities.iter().enumerate() {
+            if i >= model_matrices.len() {
+                break;
+            }
+            model_matrices[i] = transform.get_offset_model_matrix(camera_transform);
+        }
+
+        Self {
+            view_matrix,
+            projection_matrix,
+            model_matrices,
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
