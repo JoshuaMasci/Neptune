@@ -2,6 +2,7 @@ use bytemuck::{Pod, Zeroable};
 pub use neptune_core::log::{debug, error, info, trace, warn};
 use std::borrow::Cow;
 use std::iter;
+use std::ops::Range;
 use wgpu::util::DeviceExt;
 use wgpu::Device;
 
@@ -27,9 +28,7 @@ impl Renderer {
     pub(crate) fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::DX12);
+        let instance = wgpu::Instance::new(wgpu::Backends::all());
         let surface = unsafe { instance.create_surface(window) };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -50,7 +49,7 @@ impl Renderer {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_preferred_format(&adapter).unwrap(),
+            format: surface.get_supported_formats(&adapter)[0],
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Mailbox,
@@ -78,7 +77,7 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
                 "../shader/triangle.wgsl"
@@ -113,7 +112,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[config.format.into()],
+                targets: &[Some(config.format.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 cull_mode: Some(wgpu::Face::Back),
@@ -201,7 +200,7 @@ impl Renderer {
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
-                color_attachments: &[wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -213,13 +212,14 @@ impl Renderer {
                         }),
                         store: true,
                     },
-                }],
+                })],
                 depth_stencil_attachment: None,
             });
 
             render_pass.set_pipeline(&self.mesh_pipeline);
             render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-            self.tri_mesh.draw(&mut render_pass);
+            self.tri_mesh
+                .draw(&mut render_pass, 0..world.entities.len() as u32);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -256,10 +256,10 @@ impl Mesh {
         }
     }
 
-    fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, instances: Range<u32>) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..self.index_count as u32, 0, 0..1);
+        render_pass.draw_indexed(0..self.index_count as u32, 0, instances);
     }
 }
 

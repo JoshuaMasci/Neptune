@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 neptune_core = { path = "../neptune_core"}
 winit = "0.26"
-wgpu = "0.12"
+wgpu = "0.13.1"
 env_logger = "0.9"
 pollster = "0.2"
 bytemuck = { version = "1.9", features = ["derive"] }

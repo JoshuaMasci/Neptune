@@ -1,7 +1,8 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
 
 use crate::renderer::Renderer;
-use crate::world::World;
+use crate::world::{Transform, World};
+use winit::window::CursorIcon::Default;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
@@ -15,8 +16,15 @@ pub(crate) struct Editor {
 
 impl Editor {
     pub(crate) fn new(window: &Window) -> Self {
+        let mut world = World::default();
+        world.entities.push(Transform {
+            position: na::Vector3::new(0.0, 0.0, 5.0),
+            rotation: na::UnitQuaternion::default(),
+            scale: na::Vector3::new(1.0, 1.0, 1.0),
+        });
+
         Self {
-            world: Default::default(),
+            world,
             renderer: Renderer::new(window),
         }
     }
