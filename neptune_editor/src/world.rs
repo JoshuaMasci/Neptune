@@ -52,9 +52,10 @@ impl Transform {
     }
 
     pub fn get_centered_view_matrix(&self) -> na::Matrix4<f32> {
-        let target = na::Point3::from(self.rotation * na::Vector3::z_axis().into_inner());
+        let eye = na::Point3::from(na::Vector3::zeros());
+        let target = na::Point3::from(self.rotation * -na::Vector3::z_axis().into_inner());
         let up = self.rotation * na::Vector3::y_axis();
-        na::Matrix4::look_at_lh(&na::Point3::default(), &target, &up)
+        na::Matrix4::look_at_lh(&eye, &target, &up)
     }
 }
 

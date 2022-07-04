@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::iter;
 use std::ops::Range;
 use wgpu::util::DeviceExt;
-use wgpu::Device;
+use wgpu::{Device, TextureDimension};
 
 use crate::world::World;
 use winit::window::Window;
@@ -115,10 +115,15 @@ impl Renderer {
                 targets: &[Some(config.format.into())],
             }),
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
@@ -184,6 +189,21 @@ impl Renderer {
                 .write_buffer(&self.scene_buffer, 0, bytemuck::cast_slice(&[scene_data]));
         }
 
+        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24Plus,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let output = self.surface.get_current_texture()?;
 
         let view = output
@@ -212,12 +232,19 @@ impl Renderer {
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
+                }),
             });
 
             render_pass.set_pipeline(&self.mesh_pipeline);
             render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-            self.tri_mesh
+            self.cube_mesh
                 .draw(&mut render_pass, 0..world.entities.len() as u32);
         }
 
@@ -313,35 +340,35 @@ fn vertex(pos: [f32; 3], color: [f32; 4]) -> Vertex {
 fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
-        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 0.0, 0.0]),
+        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
+        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
+        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
+        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
         // bottom (0.0, 0.0, -1.0)
-        vertex([-1.0, 1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
-        // right (1.0, 0.0, 0.0)
-        vertex([1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, 1.0], [0.0, 1.0, 0.0, 0.0]),
-        // left (-1.0, 0.0, 0.0)
-        vertex([-1.0, -1.0, 1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
         vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
+        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
+        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
+        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
+        // right (1.0, 0.0, 0.0)
+        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
+        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
+        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
+        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
+        // left (-1.0, 0.0, 0.0)
+        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
+        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
+        vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
+        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
         // front (0.0, 1.0, 0.0)
-        vertex([1.0, 1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0]),
+        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
+        vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
+        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
+        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
         // back (0.0, -1.0, 0.0)
-        vertex([1.0, -1.0, 1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, 1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
+        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
+        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
+        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
+        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
     ];
 
     let index_data: &[u16] = &[

@@ -2,12 +2,7 @@ pub use neptune_core::log::{debug, error, info, trace, warn};
 
 use crate::renderer::Renderer;
 use crate::world::{Transform, World};
-use winit::window::CursorIcon::Default;
-use winit::{
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::Window,
-};
+use winit::{event::*, window::Window};
 
 pub(crate) struct Editor {
     world: World,
@@ -19,7 +14,13 @@ impl Editor {
         let mut world = World::default();
 
         world.entities.push(Transform {
-            position: na::Vector3::new(0.0, 0.0, -5.0),
+            position: na::Vector3::new(0.0, 0.0, 10.0),
+            rotation: na::UnitQuaternion::default(),
+            scale: na::Vector3::new(1.0, 1.0, 1.0),
+        });
+
+        world.entities.push(Transform {
+            position: na::Vector3::new(0.0, 2.0, 10.0),
             rotation: na::UnitQuaternion::default(),
             scale: na::Vector3::new(1.0, 1.0, 1.0),
         });
