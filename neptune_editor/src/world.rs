@@ -17,10 +17,11 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub fn get_perspective_matrix(&self, aspect_ratio: f32) -> Matrix4<f32> {
+    pub fn get_perspective_matrix(&self, size: [u32; 2]) -> Matrix4<f32> {
+        let aspect_ratio = size[0] as f32 / size[1] as f32;
         *na::Perspective3::new(
             aspect_ratio,
-            f32::atan(f32::tan(self.fov_x_deg.to_radians() / 2.0) * aspect_ratio) * 2.0,
+            f32::atan(f32::tan(self.fov_x_deg.to_radians() / 2.0) / aspect_ratio) * 2.0,
             self.z_near,
             self.z_far,
         )
@@ -44,6 +45,7 @@ impl Transform {
             position.y as f32,
             position.z as f32,
         ));
+
         let rotation: na::Matrix4<f32> = self.rotation.to_homogeneous();
         let scale: na::Matrix4<f32> = na::Matrix4::new_nonuniform_scaling(&self.scale);
         scale * rotation * translation

@@ -179,8 +179,7 @@ impl Renderer {
 
     pub(crate) fn render(&mut self, world: &World) -> Result<(), wgpu::SurfaceError> {
         {
-            let scene_data =
-                SceneData::from_world(world, self.config.width as f32 / self.config.height as f32);
+            let scene_data = SceneData::from_world(world, [self.config.width, self.config.height]);
             self.queue
                 .write_buffer(&self.scene_buffer, 0, bytemuck::cast_slice(&[scene_data]));
         }
@@ -275,9 +274,9 @@ unsafe impl bytemuck::Zeroable for SceneData {}
 unsafe impl bytemuck::Pod for SceneData {}
 
 impl SceneData {
-    fn from_world(world: &World, aspect_ratio: f32) -> Self {
+    fn from_world(world: &World, size: [u32; 2]) -> Self {
         let view_matrix = world.camera_transform.get_centered_view_matrix();
-        let projection_matrix = world.camera.get_perspective_matrix(aspect_ratio);
+        let projection_matrix = world.camera.get_perspective_matrix(size);
         let mut model_matrices = [Default::default(); 16];
 
         let camera_transform = world.camera_transform.position;

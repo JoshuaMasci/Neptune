@@ -17,8 +17,9 @@ pub(crate) struct Editor {
 impl Editor {
     pub(crate) fn new(window: &Window) -> Self {
         let mut world = World::default();
+
         world.entities.push(Transform {
-            position: na::Vector3::new(0.0, 0.0, 5.0),
+            position: na::Vector3::new(0.0, 0.0, -5.0),
             rotation: na::UnitQuaternion::default(),
             scale: na::Vector3::new(1.0, 1.0, 1.0),
         });

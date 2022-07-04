@@ -16,9 +16,11 @@ struct VertexOutput {
 fn vs_main(
     @location(0) position: vec4<f32>,
     @location(1) color: vec4<f32>,
+    @builtin(instance_index) index: u32
 ) -> VertexOutput {
+    var mvp_matrix: mat4x4<f32> = scene_matrices.projection * scene_matrices.view * scene_matrices.instances[index];
     var result: VertexOutput;
-    result.position = position;
+    result.position = mvp_matrix * position;
     result.color = color;
     return result;
 }
