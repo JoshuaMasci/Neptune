@@ -4,12 +4,13 @@ use std::borrow::Cow;
 use std::iter;
 use std::ops::Range;
 use wgpu::util::DeviceExt;
-use wgpu::{Device, TextureDimension};
+use wgpu::Device;
 
 use crate::world::World;
 use winit::window::Window;
 
 pub(crate) struct Renderer {
+    instance: wgpu::Instance,
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -120,7 +121,7 @@ impl Renderer {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: wgpu::CompareFunction::Greater,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -158,6 +159,7 @@ impl Renderer {
         );
 
         Self {
+            instance,
             surface,
             device,
             queue,
@@ -235,7 +237,7 @@ impl Renderer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: true,
                     }),
                     stencil_ops: None,
@@ -289,12 +291,14 @@ impl Mesh {
     }
 }
 
+pub const MAX_ENTITY_COUNT: usize = 512;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SceneData {
-    view_matrix: na::Matrix4<f32>,
-    projection_matrix: na::Matrix4<f32>,
-    model_matrices: [na::Matrix4<f32>; 16],
+    view_matrix: glam::Mat4,
+    projection_matrix: glam::Mat4,
+    model_matrices: [glam::Mat4; MAX_ENTITY_COUNT],
 }
 
 unsafe impl bytemuck::Zeroable for SceneData {}
@@ -303,16 +307,16 @@ unsafe impl bytemuck::Pod for SceneData {}
 impl SceneData {
     fn from_world(world: &World, size: [u32; 2]) -> Self {
         let view_matrix = world.camera_transform.get_centered_view_matrix();
-        let projection_matrix = world.camera.get_perspective_matrix(size);
-        let mut model_matrices = [Default::default(); 16];
+        let projection_matrix = world.camera.get_infinite_reverse_perspective_matrix(size);
+        let mut model_matrices = [Default::default(); MAX_ENTITY_COUNT];
 
-        let camera_transform = world.camera_transform.position;
+        let camera_position = world.camera_transform.position;
 
         for (i, transform) in world.entities.iter().enumerate() {
             if i >= model_matrices.len() {
                 break;
             }
-            model_matrices[i] = transform.get_offset_model_matrix(camera_transform);
+            model_matrices[i] = transform.get_offset_model_matrix(camera_position);
         }
 
         Self {

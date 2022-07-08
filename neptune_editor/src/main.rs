@@ -2,23 +2,19 @@ mod editor;
 mod renderer;
 mod world;
 
-extern crate nalgebra as na;
-
 use crate::editor::Editor;
 pub use neptune_core::log::{debug, error, info, trace, warn};
-use winit::event::ScanCode;
-use winit::event::WindowEvent::KeyboardInput;
 use winit::event_loop::EventLoop;
+use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
 };
 
 fn main() {
-    //IDK why wgpu has to spam the logs
-    env_logger::init();
+    neptune_core::setup_logger().expect("Failed to Setup Logger");
 
-    let event_loop = EventLoop::new();
+    let mut event_loop = EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
         .with_resizable(true)
@@ -29,21 +25,18 @@ fn main() {
 
     let mut editor = Editor::new(&window);
 
-    event_loop.run(move |event, _, control_flow| match event {
+    event_loop.run_return(move |event, _, control_flow| match event {
         Event::WindowEvent {
             event: WindowEvent::CloseRequested,
             ..
         } => *control_flow = ControlFlow::Exit,
         Event::WindowEvent {
-            event:
-                WindowEvent::KeyboardInput {
-                    device_id,
-                    input,
-                    is_synthetic,
-                },
+            event: WindowEvent::KeyboardInput { input, .. },
             ..
         } => {
-            println!("Input Event");
+            if let Some(virtual_keycode) = input.virtual_keycode {
+                editor.keyboard_input(virtual_keycode, input.state);
+            }
         }
         Event::WindowEvent {
             event: WindowEvent::Resized(physical_size),
@@ -65,4 +58,6 @@ fn main() {
         }
         _ => {}
     });
+
+    warn!("Exiting the Editor!");
 }

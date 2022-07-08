@@ -1,33 +1,57 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
+use winit::event::VirtualKeyCode;
 
-use crate::renderer::Renderer;
+use crate::renderer::{Renderer, MAX_ENTITY_COUNT};
 use crate::world::{Transform, World};
-use winit::{event::*, window::Window};
+use winit::window::Window;
 
 pub(crate) struct Editor {
+    last_frame: std::time::Instant,
+
     world: World,
     renderer: Renderer,
+
+    linear_speed: f32,
+
+    x_input: [bool; 2],
+    y_input: [bool; 2],
+    z_input: [bool; 2],
 }
 
 impl Editor {
     pub(crate) fn new(window: &Window) -> Self {
+        let world_center = glam::DVec3::splat(1_000_000_000.0);
+
         let mut world = World::default();
 
-        world.entities.push(Transform {
-            position: na::Vector3::new(0.0, 0.0, 10.0),
-            rotation: na::UnitQuaternion::default(),
-            scale: na::Vector3::new(1.0, 1.0, 1.0),
-        });
+        assert!(
+            MAX_ENTITY_COUNT.is_power_of_two(),
+            "MAX_ENTITY_COUNT must be power of 2"
+        );
 
-        world.entities.push(Transform {
-            position: na::Vector3::new(0.0, 2.0, 10.0),
-            rotation: na::UnitQuaternion::default(),
-            scale: na::Vector3::new(1.0, 1.0, 1.0),
-        });
+        const SPACING: f64 = 2.5;
+        let half = (MAX_ENTITY_COUNT as f64).sqrt() as usize;
+        for x in 0..half {
+            for y in 0..half {
+                world.entities.push(Transform {
+                    position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
+                        + world_center,
+                    rotation: glam::Quat::default(),
+                    scale: glam::Vec3::new(1.0, 1.0, 1.0),
+                });
+            }
+        }
+
+        world.camera_transform.position += world_center;
 
         Self {
+            last_frame: std::time::Instant::now(),
             world,
             renderer: Renderer::new(window),
+            linear_speed: 5.0,
+            x_input: [false, false],
+            y_input: [false, false],
+            z_input: [false, false],
         }
     }
 
@@ -35,12 +59,71 @@ impl Editor {
         self.renderer.resize(new_size);
     }
 
-    #[allow(unused_variables)]
-    pub(crate) fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+    pub(crate) fn keyboard_input(
+        &mut self,
+        key: VirtualKeyCode,
+        state: winit::event::ElementState,
+    ) {
+        let pressed = state == winit::event::ElementState::Pressed;
+        match key {
+            VirtualKeyCode::D => {
+                self.x_input[0] = pressed;
+            }
+            VirtualKeyCode::A => {
+                self.x_input[1] = pressed;
+            }
+            VirtualKeyCode::Space => {
+                self.y_input[0] = pressed;
+            }
+            VirtualKeyCode::LShift => {
+                self.y_input[1] = pressed;
+            }
+            VirtualKeyCode::W => {
+                self.z_input[0] = pressed;
+            }
+            VirtualKeyCode::S => {
+                self.z_input[1] = pressed;
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn update(&mut self) {
+        let delta_time = self.last_frame.elapsed().as_secs_f32();
+        self.last_frame = std::time::Instant::now();
+
+        let mut linear_movement = glam::Vec3::default();
+
+        if self.x_input[0] {
+            linear_movement.x += 1.0;
+        }
+        if self.x_input[1] {
+            linear_movement.x -= 1.0;
+        }
+
+        if self.y_input[0] {
+            linear_movement.y += 1.0;
+        }
+        if self.y_input[1] {
+            linear_movement.y -= 1.0;
+        }
+
+        if self.z_input[0] {
+            linear_movement.z += 1.0;
+        }
+        if self.z_input[1] {
+            linear_movement.z -= 1.0;
+        }
+
+        linear_movement *= self.linear_speed * delta_time;
+
+        self.world.camera_transform.position +=
+            self.world.camera_transform.get_right() * linear_movement.x as f64;
+        self.world.camera_transform.position +=
+            self.world.camera_transform.get_up() * linear_movement.y as f64;
+        self.world.camera_transform.position +=
+            self.world.camera_transform.get_forward() * linear_movement.z as f64;
+
         self.renderer.update();
 
         match self.renderer.render(&self.world) {

@@ -1,5 +1,3 @@
-use na::Matrix4;
-
 pub struct Camera {
     z_near: f32,
     z_far: f32,
@@ -17,45 +15,62 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub fn get_perspective_matrix(&self, size: [u32; 2]) -> Matrix4<f32> {
+    pub fn get_perspective_matrix(&self, size: [u32; 2]) -> glam::Mat4 {
         let aspect_ratio = size[0] as f32 / size[1] as f32;
-        *na::Perspective3::new(
-            aspect_ratio,
-            f32::atan(f32::tan(self.fov_x_deg.to_radians() / 2.0) / aspect_ratio) * 2.0,
-            self.z_near,
-            self.z_far,
-        )
-        .as_matrix()
+        let fov_y = f32::atan(f32::tan(self.fov_x_deg.to_radians() / 2.0) / aspect_ratio) * 2.0;
+        glam::Mat4::perspective_lh(fov_y, aspect_ratio, self.z_near, self.z_far)
+    }
+
+    pub fn get_infinite_reverse_perspective_matrix(&self, size: [u32; 2]) -> glam::Mat4 {
+        let aspect_ratio = size[0] as f32 / size[1] as f32;
+        let fov_y = f32::atan(f32::tan(self.fov_x_deg.to_radians() / 2.0) / aspect_ratio) * 2.0;
+        glam::Mat4::perspective_infinite_reverse_lh(fov_y, aspect_ratio, self.z_near)
     }
 }
 
 #[derive(Default)]
 pub struct Transform {
-    pub position: na::Vector3<f64>,
-    pub rotation: na::UnitQuaternion<f32>,
-    pub scale: na::Vector3<f32>,
+    pub position: glam::DVec3,
+    pub rotation: glam::Quat,
+    pub scale: glam::Vec3,
 }
 
 impl Transform {
-    pub fn get_offset_model_matrix(&self, position_offset: na::Vector3<f64>) -> na::Matrix4<f32> {
-        let position: na::Vector3<f64> = self.position - position_offset;
-
-        let translation: na::Matrix4<f32> = na::Matrix4::new_translation(&na::Vector3::new(
-            position.x as f32,
-            position.y as f32,
-            position.z as f32,
-        ));
-
-        let rotation: na::Matrix4<f32> = self.rotation.to_homogeneous();
-        let scale: na::Matrix4<f32> = na::Matrix4::new_nonuniform_scaling(&self.scale);
-        scale * rotation * translation
+    pub fn get_offset_model_matrix(&self, position_offset: glam::DVec3) -> glam::Mat4 {
+        glam::Mat4::from_scale_rotation_translation(
+            self.scale,
+            self.rotation,
+            (self.position - position_offset).as_vec3(),
+        )
     }
 
-    pub fn get_centered_view_matrix(&self) -> na::Matrix4<f32> {
-        let eye = na::Point3::from(na::Vector3::zeros());
-        let target = na::Point3::from(self.rotation * -na::Vector3::z_axis().into_inner());
-        let up = self.rotation * na::Vector3::y_axis();
-        na::Matrix4::look_at_lh(&eye, &target, &up)
+    pub fn get_view_matrix(&self) -> glam::Mat4 {
+        let position = self.position.as_vec3();
+        glam::Mat4::look_at_lh(
+            position,
+            (self.rotation * glam::Vec3::Z) + position,
+            self.rotation * glam::Vec3::Y,
+        )
+    }
+
+    pub fn get_centered_view_matrix(&self) -> glam::Mat4 {
+        glam::Mat4::look_at_lh(
+            glam::Vec3::default(),
+            self.rotation * glam::Vec3::Z,
+            self.rotation * glam::Vec3::Y,
+        )
+    }
+
+    pub fn get_right(&self) -> glam::DVec3 {
+        (self.rotation * glam::Vec3::X).as_dvec3()
+    }
+
+    pub fn get_up(&self) -> glam::DVec3 {
+        (self.rotation * glam::Vec3::Y).as_dvec3()
+    }
+
+    pub fn get_forward(&self) -> glam::DVec3 {
+        (self.rotation * glam::Vec3::Z).as_dvec3()
     }
 }
 
