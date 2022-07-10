@@ -24,11 +24,6 @@ impl Editor {
 
         let mut world = World::default();
 
-        assert!(
-            MAX_ENTITY_COUNT.is_power_of_two(),
-            "MAX_ENTITY_COUNT must be power of 2"
-        );
-
         const SPACING: f64 = 2.5;
         let half = (MAX_ENTITY_COUNT as f64).sqrt() as usize;
         for x in 0..half {

@@ -3,6 +3,7 @@ pub use neptune_core::log::{debug, error, info, trace, warn};
 use std::borrow::Cow;
 use std::iter;
 use std::ops::Range;
+use std::path::Path;
 use wgpu::util::DeviceExt;
 use wgpu::Device;
 
@@ -10,7 +11,7 @@ use crate::world::World;
 use winit::window::Window;
 
 pub(crate) struct Renderer {
-    instance: wgpu::Instance,
+    _instance: wgpu::Instance,
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -22,7 +23,6 @@ pub(crate) struct Renderer {
 
     mesh_pipeline: wgpu::RenderPipeline,
     cube_mesh: Mesh,
-    tri_mesh: Mesh,
 }
 
 impl Renderer {
@@ -91,13 +91,18 @@ impl Renderer {
             attributes: &[
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
+                    offset: memoffset::offset_of!(Vertex, _position) as wgpu::BufferAddress,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: (std::mem::size_of::<f32>() * 4) as wgpu::BufferAddress,
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: memoffset::offset_of!(Vertex, _normal) as wgpu::BufferAddress,
                     shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: memoffset::offset_of!(Vertex, _uv) as wgpu::BufferAddress,
+                    shader_location: 2,
                 },
             ],
         }];
@@ -145,21 +150,10 @@ impl Renderer {
             }],
         });
 
-        let (vertex_data, index_data) = create_vertices();
-        let cube_mesh = Mesh::new(&device, &vertex_data, &index_data);
-
-        let tri_mesh = Mesh::new(
-            &device,
-            &[
-                vertex([0.0, 0.5, 0.0], [1.0, 0.0, 0.0, 0.0]),
-                vertex([-0.5, -0.5, 0.0], [0.0, 0.0, 1.0, 0.0]),
-                vertex([0.5, -0.5, 0.0], [0.0, 1.0, 0.0, 0.0]),
-            ],
-            &[0, 1, 2],
-        );
+        let cube_mesh = Mesh::load_obj(&device, Path::new("resource/cube.obj")).unwrap();
 
         Self {
-            instance,
+            _instance: instance,
             surface,
             device,
             queue,
@@ -169,7 +163,6 @@ impl Renderer {
             scene_buffer,
             scene_bind_group,
             cube_mesh,
-            tri_mesh,
         }
     }
 
@@ -264,7 +257,10 @@ struct Mesh {
 }
 
 impl Mesh {
-    fn new(device: &Device, vertices: &[Vertex], indices: &[u16]) -> Self {
+    fn new(device: &Device, vertices: &[Vertex], indices: &[u32]) -> Self {
+        assert_ne!(vertices.len(), 0, "Mesh Vertices cannot be empty");
+        assert_ne!(indices.len(), 0, "Mesh Indices cannot be empty");
+
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(vertices),
@@ -286,8 +282,48 @@ impl Mesh {
 
     fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, instances: Range<u32>) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count as u32, 0, instances);
+    }
+
+    fn load_obj(device: &Device, file_path: &Path) -> Option<Self> {
+        let options = tobj::LoadOptions {
+            single_index: true,
+            triangulate: true,
+            ignore_points: true,
+            ignore_lines: true,
+        };
+
+        tobj::load_obj(&file_path, &options)
+            .map(|(models, _materials)| {
+                //Get the first model for now
+                let mesh = &models[0].mesh;
+
+                let vertex_count = mesh.positions.len() / 3;
+
+                let vertices: Vec<Vertex> = (0..vertex_count)
+                    .map(|i| {
+                        let i_2 = i * 2;
+                        let i_3 = i * 3;
+                        let range_2 = i_2..(i_2 + 2);
+                        let range_3 = i_3..(i_3 + 3);
+
+                        let position = glam::Vec3::from_slice(&mesh.positions[range_3.clone()]);
+                        let normal =
+                            glam::Vec3::from_slice(&mesh.normals[range_3.clone()]).normalize();
+                        let uv = glam::Vec2::from_slice(&mesh.texcoords[range_2]);
+
+                        Vertex {
+                            _position: position,
+                            _normal: normal,
+                            _uv: uv,
+                        }
+                    })
+                    .collect();
+
+                Self::new(device, &vertices, &mesh.indices)
+            })
+            .ok()
     }
 }
 
@@ -327,62 +363,13 @@ impl SceneData {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[repr(packed)]
+#[derive(Clone, Copy, Default)]
 struct Vertex {
-    _pos: [f32; 3],
-    _color: [f32; 4],
+    _position: glam::Vec3,
+    _normal: glam::Vec3,
+    _uv: glam::Vec2,
 }
 
-fn vertex(pos: [f32; 3], color: [f32; 4]) -> Vertex {
-    Vertex {
-        _pos: pos,
-        _color: color,
-    }
-}
-
-fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
-    let vertex_data = [
-        // top (0, 0, 1)
-        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
-        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
-        // bottom (0.0, 0.0, -1.0)
-        vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        // right (1.0, 0.0, 0.0)
-        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
-        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
-        // left (-1.0, 0.0, 0.0)
-        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
-        vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        // front (0.0, 1.0, 0.0)
-        vertex([1.0, 1.0, -1.0], [1.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, -1.0], [0.0, 1.0, 0.0, 0.0]),
-        vertex([-1.0, 1.0, 1.0], [0.0, 1.0, 1.0, 0.0]),
-        vertex([1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]),
-        // back (0.0, -1.0, 0.0)
-        vertex([1.0, -1.0, 1.0], [1.0, 0.0, 1.0, 0.0]),
-        vertex([-1.0, -1.0, 1.0], [0.0, 0.0, 1.0, 0.0]),
-        vertex([-1.0, -1.0, -1.0], [0.0, 0.0, 0.0, 0.0]),
-        vertex([1.0, -1.0, -1.0], [1.0, 0.0, 0.0, 0.0]),
-    ];
-
-    let index_data: &[u16] = &[
-        0, 1, 2, 2, 3, 0, // top
-        4, 5, 6, 6, 7, 4, // bottom
-        8, 9, 10, 10, 11, 8, // right
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // front
-        20, 21, 22, 22, 23, 20, // back
-    ];
-
-    (vertex_data.to_vec(), index_data.to_vec())
-}
+unsafe impl Pod for Vertex {}
+unsafe impl Zeroable for Vertex {}
