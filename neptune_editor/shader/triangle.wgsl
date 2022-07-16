@@ -27,11 +27,11 @@ fn vs_main(
     var mvp_matrix: mat4x4<f32> = camera.projection * camera.view * mesh.model;
     var result: VertexOutput;
     result.position = mvp_matrix * vec4<f32>(position, 1.0);
-    result.color = vec4<f32>(uv, 0.0, 1.0);
+    result.color = vec4<f32>(abs(normal), 1.0);
     return result;
 }
 
 @fragment
 fn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {
-    return abs(vertex.color);
+    return vertex.color;
 }

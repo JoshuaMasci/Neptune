@@ -23,15 +23,22 @@ impl Editor {
         let mut renderer = Renderer::new(window);
 
         let cube_mesh = renderer.get_mesh("resource/cube.obj").unwrap();
+        let sphere_mesh = renderer.get_mesh("resource/sphere.obj").unwrap();
 
         let world_center = glam::DVec3::splat(1_000_000_000.0);
 
         let mut world = World::default();
 
         const SPACING: f64 = 2.5;
-        let half = 512f64.sqrt() as usize;
+        let half = 128f64.sqrt() as usize;
         for x in 0..half {
             for y in 0..half {
+                let mesh = if (x + y) % 2 == 0 {
+                    cube_mesh.clone()
+                } else {
+                    sphere_mesh.clone()
+                };
+
                 world.entities.push(Entity {
                     transform: Transform {
                         position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
@@ -39,7 +46,7 @@ impl Editor {
                         rotation: glam::Quat::default(),
                         scale: glam::Vec3::new(1.0, 1.0, 1.0),
                     },
-                    mesh: cube_mesh.clone(),
+                    mesh,
                 });
             }
         }
