@@ -1,8 +1,8 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
 use winit::event::VirtualKeyCode;
 
-use crate::renderer::{Renderer, MAX_ENTITY_COUNT};
-use crate::world::{Transform, World};
+use crate::renderer::Renderer;
+use crate::world::{Entity, Transform, World};
 use winit::window::Window;
 
 pub(crate) struct Editor {
@@ -20,19 +20,26 @@ pub(crate) struct Editor {
 
 impl Editor {
     pub(crate) fn new(window: &Window) -> Self {
+        let mut renderer = Renderer::new(window);
+
+        let cube_mesh = renderer.get_mesh("resource/cube.obj").unwrap();
+
         let world_center = glam::DVec3::splat(1_000_000_000.0);
 
         let mut world = World::default();
 
         const SPACING: f64 = 2.5;
-        let half = (MAX_ENTITY_COUNT as f64).sqrt() as usize;
+        let half = 512f64.sqrt() as usize;
         for x in 0..half {
             for y in 0..half {
-                world.entities.push(Transform {
-                    position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
-                        + world_center,
-                    rotation: glam::Quat::default(),
-                    scale: glam::Vec3::new(1.0, 1.0, 1.0),
+                world.entities.push(Entity {
+                    transform: Transform {
+                        position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
+                            + world_center,
+                        rotation: glam::Quat::default(),
+                        scale: glam::Vec3::new(1.0, 1.0, 1.0),
+                    },
+                    mesh: cube_mesh.clone(),
                 });
             }
         }
@@ -42,7 +49,7 @@ impl Editor {
         Self {
             last_frame: std::time::Instant::now(),
             world,
-            renderer: Renderer::new(window),
+            renderer,
             linear_speed: 5.0,
             x_input: [false, false],
             y_input: [false, false],
@@ -118,8 +125,6 @@ impl Editor {
             self.world.camera_transform.get_up() * linear_movement.y as f64;
         self.world.camera_transform.position +=
             self.world.camera_transform.get_forward() * linear_movement.z as f64;
-
-        self.renderer.update();
 
         match self.renderer.render(&self.world) {
             Ok(_) => {}

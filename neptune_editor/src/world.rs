@@ -1,3 +1,6 @@
+use crate::renderer::Mesh;
+use std::sync::Arc;
+
 pub struct Camera {
     z_near: f32,
     z_far: f32,
@@ -78,5 +81,10 @@ impl Transform {
 pub struct World {
     pub camera: Camera,
     pub camera_transform: Transform,
-    pub entities: Vec<Transform>,
+    pub entities: Vec<Entity>,
+}
+
+pub struct Entity {
+    pub(crate) transform: Transform,
+    pub(crate) mesh: Arc<Mesh>,
 }

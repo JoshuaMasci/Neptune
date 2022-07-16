@@ -1,14 +1,37 @@
 use bytemuck::{Pod, Zeroable};
 pub use neptune_core::log::{debug, error, info, trace, warn};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::iter;
+use std::marker::PhantomData;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
-use wgpu::Device;
+use wgpu::{BindingResource, BufferBinding, Device};
 
 use crate::world::World;
 use winit::window::Window;
+
+#[repr(packed)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Vertex {
+    _position: glam::Vec3,
+    _normal: glam::Vec3,
+    _uv: glam::Vec2,
+}
+
+unsafe impl Pod for Vertex {}
+unsafe impl Zeroable for Vertex {}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CameraData {
+    view_matrix: glam::Mat4,
+    projection_matrix: glam::Mat4,
+}
+unsafe impl bytemuck::Zeroable for CameraData {}
+unsafe impl bytemuck::Pod for CameraData {}
 
 pub(crate) struct Renderer {
     _instance: wgpu::Instance,
@@ -18,14 +41,22 @@ pub(crate) struct Renderer {
     config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
 
-    scene_buffer: wgpu::Buffer,
-    scene_bind_group: wgpu::BindGroup,
+    camera_buffer: UniformBuffer<CameraData>,
+    camera_bind_group: wgpu::BindGroup,
+
+    transforms_buffer: wgpu::Buffer,
+    transforms_bind_group: wgpu::BindGroup,
 
     mesh_pipeline: wgpu::RenderPipeline,
-    cube_mesh: Mesh,
+
+    mesh_map: HashMap<PathBuf, Weak<Mesh>>,
 }
 
 impl Renderer {
+    const MAX_TRANSFORMS: usize = 4096;
+    const TRANSFORMS_BUFFER_SIZE: wgpu::BufferAddress =
+        (Self::MAX_TRANSFORMS * std::mem::size_of::<glam::Mat4>()) as wgpu::BufferAddress;
+
     pub(crate) fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
@@ -41,8 +72,11 @@ impl Renderer {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                features: wgpu::Features::empty(),
-                limits: wgpu::Limits::default(),
+                features: wgpu::Features::default(),
+                limits: wgpu::Limits {
+                    min_uniform_buffer_offset_alignment: std::mem::size_of::<glam::Mat4>() as u32,
+                    ..Default::default()
+                },
             },
             None,
         ))
@@ -72,9 +106,27 @@ impl Renderer {
                 }],
             });
 
+        let transforms_buffer_size =
+            Some(wgpu::BufferSize::new(std::mem::size_of::<glam::Mat4>() as u64).unwrap());
+
+        let transforms_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Mesh Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: transforms_buffer_size,
+                    },
+                    count: None,
+                }],
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&scene_bind_group_layout],
+            bind_group_layouts: &[&scene_bind_group_layout, &transforms_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -134,23 +186,36 @@ impl Renderer {
             multiview: None,
         });
 
-        let scene_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SceneBuffer"),
-            size: std::mem::size_of::<SceneData>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let camera_buffer = UniformBuffer::new(&device, &queue, CameraData::default());
 
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &scene_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: scene_buffer.as_entire_binding(),
+                resource: camera_buffer.buffer().as_entire_binding(),
             }],
         });
 
-        let cube_mesh = Mesh::load_obj(&device, Path::new("resource/cube.obj")).unwrap();
+        let transforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Transforms Buffer"),
+            size: Self::TRANSFORMS_BUFFER_SIZE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let transforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &transforms_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &transforms_buffer,
+                    offset: 0,
+                    size: transforms_buffer_size,
+                }),
+            }],
+        });
 
         Self {
             _instance: instance,
@@ -160,9 +225,11 @@ impl Renderer {
             config,
             size,
             mesh_pipeline,
-            scene_buffer,
-            scene_bind_group,
-            cube_mesh,
+            camera_buffer,
+            camera_bind_group,
+            transforms_buffer,
+            transforms_bind_group,
+            mesh_map: HashMap::new(),
         }
     }
 
@@ -175,13 +242,29 @@ impl Renderer {
         }
     }
 
-    pub(crate) fn update(&mut self) {}
-
     pub(crate) fn render(&mut self, world: &World) -> Result<(), wgpu::SurfaceError> {
-        {
-            let scene_data = SceneData::from_world(world, [self.config.width, self.config.height]);
-            self.queue
-                .write_buffer(&self.scene_buffer, 0, bytemuck::cast_slice(&[scene_data]));
+        let camera_data = CameraData {
+            view_matrix: world.camera_transform.get_centered_view_matrix(),
+            projection_matrix: world
+                .camera
+                .get_infinite_reverse_perspective_matrix([self.size.width, self.size.height]),
+        };
+        self.camera_buffer.write(&self.queue, camera_data);
+
+        let camera_position = world.camera_transform.position;
+
+        let entity_count = usize::min(world.entities.len(), Self::MAX_TRANSFORMS);
+
+        for i in 0..entity_count {
+            let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::BufferAddress;
+            let model_matrix = world.entities[i]
+                .transform
+                .get_offset_model_matrix(camera_position);
+            self.queue.write_buffer(
+                &self.transforms_buffer,
+                offset,
+                bytemuck::bytes_of(&model_matrix),
+            )
         }
 
         let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -238,9 +321,13 @@ impl Renderer {
             });
 
             render_pass.set_pipeline(&self.mesh_pipeline);
-            render_pass.set_bind_group(0, &self.scene_bind_group, &[]);
-            self.cube_mesh
-                .draw(&mut render_pass, 0..world.entities.len() as u32);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
+            for i in 0..entity_count {
+                let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::DynamicOffset;
+                render_pass.set_bind_group(1, &self.transforms_bind_group, &[offset]);
+                world.entities[i].mesh.draw(&mut render_pass, 0..1);
+            }
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -248,16 +335,39 @@ impl Renderer {
 
         Ok(())
     }
+
+    pub fn get_mesh(&mut self, path: &str) -> Option<Arc<Mesh>> {
+        let path_buf = PathBuf::from(path);
+
+        //If mesh is not loaded or has been unloaded this will be none
+        let mut loaded_mesh = self
+            .mesh_map
+            .get(&path_buf)
+            .map(|mesh_ref| mesh_ref.upgrade())
+            .unwrap_or_default();
+
+        //If mesh is not loaded, try to load it
+        if loaded_mesh.is_none() {
+            let is_loaded = Mesh::load_obj(&self.device, &path_buf);
+            if let Some(mesh) = is_loaded {
+                let mesh = Arc::new(mesh);
+                let _ = self.mesh_map.insert(path_buf, Arc::downgrade(&mesh));
+                loaded_mesh = Some(mesh)
+            }
+        }
+
+        loaded_mesh
+    }
 }
 
-struct Mesh {
+pub(crate) struct Mesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: usize,
 }
 
 impl Mesh {
-    fn new(device: &Device, vertices: &[Vertex], indices: &[u32]) -> Self {
+    pub(crate) fn new(device: &Device, vertices: &[Vertex], indices: &[u32]) -> Self {
         assert_ne!(vertices.len(), 0, "Mesh Vertices cannot be empty");
         assert_ne!(indices.len(), 0, "Mesh Indices cannot be empty");
 
@@ -280,13 +390,17 @@ impl Mesh {
         }
     }
 
-    fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, instances: Range<u32>) {
+    pub(crate) fn draw<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        instances: Range<u32>,
+    ) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.index_count as u32, 0, instances);
     }
 
-    fn load_obj(device: &Device, file_path: &Path) -> Option<Self> {
+    pub(crate) fn load_obj(device: &Device, file_path: &Path) -> Option<Self> {
         let options = tobj::LoadOptions {
             single_index: true,
             triangulate: true,
@@ -327,49 +441,33 @@ impl Mesh {
     }
 }
 
-pub const MAX_ENTITY_COUNT: usize = 512;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct SceneData {
-    view_matrix: glam::Mat4,
-    projection_matrix: glam::Mat4,
-    model_matrices: [glam::Mat4; MAX_ENTITY_COUNT],
+pub struct UniformBuffer<T: bytemuck::Pod> {
+    buffer: wgpu::Buffer,
+    phantom: PhantomData<T>,
 }
 
-unsafe impl bytemuck::Zeroable for SceneData {}
-unsafe impl bytemuck::Pod for SceneData {}
+impl<T: bytemuck::Pod> UniformBuffer<T> {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, data: T) -> Self {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("UniformBuffer"),
+            size: std::mem::size_of::<T>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-impl SceneData {
-    fn from_world(world: &World, size: [u32; 2]) -> Self {
-        let view_matrix = world.camera_transform.get_centered_view_matrix();
-        let projection_matrix = world.camera.get_infinite_reverse_perspective_matrix(size);
-        let mut model_matrices = [Default::default(); MAX_ENTITY_COUNT];
+        let new_self = Self {
+            buffer,
+            phantom: Default::default(),
+        };
+        new_self.write(queue, data);
+        new_self
+    }
 
-        let camera_position = world.camera_transform.position;
+    pub fn write(&self, queue: &wgpu::Queue, data: T) {
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[data]));
+    }
 
-        for (i, transform) in world.entities.iter().enumerate() {
-            if i >= model_matrices.len() {
-                break;
-            }
-            model_matrices[i] = transform.get_offset_model_matrix(camera_position);
-        }
-
-        Self {
-            view_matrix,
-            projection_matrix,
-            model_matrices,
-        }
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
     }
 }
-
-#[repr(packed)]
-#[derive(Clone, Copy, Default)]
-struct Vertex {
-    _position: glam::Vec3,
-    _normal: glam::Vec3,
-    _uv: glam::Vec2,
-}
-
-unsafe impl Pod for Vertex {}
-unsafe impl Zeroable for Vertex {}
