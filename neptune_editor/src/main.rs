@@ -1,5 +1,9 @@
+mod camera;
+mod debug_camera;
 mod editor;
+mod physics_world;
 mod renderer;
+mod transform;
 mod world;
 
 use crate::editor::Editor;

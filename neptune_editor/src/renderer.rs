@@ -10,6 +10,8 @@ use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
 use wgpu::{BindingResource, BufferBinding, Device};
 
+use crate::camera::Camera;
+use crate::transform::Transform;
 use crate::world::World;
 use winit::window::Window;
 
@@ -242,16 +244,20 @@ impl Renderer {
         }
     }
 
-    pub(crate) fn render(&mut self, world: &World) -> Result<(), wgpu::SurfaceError> {
+    pub(crate) fn render(
+        &mut self,
+        camera: &Camera,
+        camera_transform: &Transform,
+        world: &World,
+    ) -> Result<(), wgpu::SurfaceError> {
         let camera_data = CameraData {
-            view_matrix: world.camera_transform.get_centered_view_matrix(),
-            projection_matrix: world
-                .camera
+            view_matrix: camera_transform.get_centered_view_matrix(),
+            projection_matrix: camera
                 .get_infinite_reverse_perspective_matrix([self.size.width, self.size.height]),
         };
         self.camera_buffer.write(&self.queue, camera_data);
 
-        let camera_position = world.camera_transform.position;
+        let camera_position = camera_transform.position;
 
         let entity_count = usize::min(world.entities.len(), Self::MAX_TRANSFORMS);
 

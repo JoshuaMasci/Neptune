@@ -1,26 +1,24 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
 use winit::event::VirtualKeyCode;
 
+use crate::debug_camera::DebugCamera;
 use crate::renderer::Renderer;
-use crate::world::{Entity, Transform, World};
+use crate::transform::Transform;
+use crate::world::{Entity, World};
 use winit::window::Window;
 
 pub(crate) struct Editor {
     last_frame: std::time::Instant,
+    renderer: Renderer,
+    debug_camera: DebugCamera,
 
     world: World,
-    renderer: Renderer,
-
-    linear_speed: f32,
-
-    x_input: [bool; 2],
-    y_input: [bool; 2],
-    z_input: [bool; 2],
 }
 
 impl Editor {
     pub(crate) fn new(window: &Window) -> Self {
         let mut renderer = Renderer::new(window);
+        let mut debug_camera = DebugCamera::new();
 
         let cube_mesh = renderer.get_mesh("resource/cube.obj").unwrap();
         let sphere_mesh = renderer.get_mesh("resource/sphere.obj").unwrap();
@@ -51,16 +49,13 @@ impl Editor {
             }
         }
 
-        world.camera_transform.position += world_center;
+        debug_camera.transform.position += world_center;
 
         Self {
             last_frame: std::time::Instant::now(),
-            world,
             renderer,
-            linear_speed: 5.0,
-            x_input: [false, false],
-            y_input: [false, false],
-            z_input: [false, false],
+            debug_camera,
+            world,
         }
     }
 
@@ -73,67 +68,21 @@ impl Editor {
         key: VirtualKeyCode,
         state: winit::event::ElementState,
     ) {
-        let pressed = state == winit::event::ElementState::Pressed;
-        match key {
-            VirtualKeyCode::D => {
-                self.x_input[0] = pressed;
-            }
-            VirtualKeyCode::A => {
-                self.x_input[1] = pressed;
-            }
-            VirtualKeyCode::Space => {
-                self.y_input[0] = pressed;
-            }
-            VirtualKeyCode::LShift => {
-                self.y_input[1] = pressed;
-            }
-            VirtualKeyCode::W => {
-                self.z_input[0] = pressed;
-            }
-            VirtualKeyCode::S => {
-                self.z_input[1] = pressed;
-            }
-            _ => {}
-        }
+        self.debug_camera.keyboard_input(key, state);
     }
 
     pub(crate) fn update(&mut self) {
         let delta_time = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = std::time::Instant::now();
 
-        let mut linear_movement = glam::Vec3::default();
+        self.debug_camera.update(delta_time);
+        self.world.update(delta_time);
 
-        if self.x_input[0] {
-            linear_movement.x += 1.0;
-        }
-        if self.x_input[1] {
-            linear_movement.x -= 1.0;
-        }
-
-        if self.y_input[0] {
-            linear_movement.y += 1.0;
-        }
-        if self.y_input[1] {
-            linear_movement.y -= 1.0;
-        }
-
-        if self.z_input[0] {
-            linear_movement.z += 1.0;
-        }
-        if self.z_input[1] {
-            linear_movement.z -= 1.0;
-        }
-
-        linear_movement *= self.linear_speed * delta_time;
-
-        self.world.camera_transform.position +=
-            self.world.camera_transform.get_right() * linear_movement.x as f64;
-        self.world.camera_transform.position +=
-            self.world.camera_transform.get_up() * linear_movement.y as f64;
-        self.world.camera_transform.position +=
-            self.world.camera_transform.get_forward() * linear_movement.z as f64;
-
-        match self.renderer.render(&self.world) {
+        match self.renderer.render(
+            &self.debug_camera.camera,
+            &self.debug_camera.transform,
+            &self.world,
+        ) {
             Ok(_) => {}
             // Reconfigure the surface if it's lost or outdated
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
