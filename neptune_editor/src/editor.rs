@@ -1,11 +1,25 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
+use std::sync::Arc;
 use winit::event::VirtualKeyCode;
 
 use crate::debug_camera::DebugCamera;
-use crate::renderer::Renderer;
+use crate::entity::{Entity, EntityBehavior, EntityData};
+use crate::renderer::{Mesh, Renderer};
 use crate::transform::Transform;
-use crate::world::{Entity, World};
+use crate::world::World;
 use winit::window::Window;
+
+struct EditorEntity {
+    mesh: Arc<Mesh>,
+}
+
+impl EntityBehavior for EditorEntity {
+    fn update(&mut self, delta_time: f32, data: &mut EntityData) {}
+
+    fn get_mesh(&self) -> Option<Arc<Mesh>> {
+        Some(self.mesh.clone())
+    }
+}
 
 pub(crate) struct Editor {
     last_frame: std::time::Instant,
@@ -37,15 +51,15 @@ impl Editor {
                     sphere_mesh.clone()
                 };
 
-                world.entities.push(Entity {
-                    transform: Transform {
+                world.add_entity(Entity::new(
+                    Transform {
                         position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
                             + world_center,
                         rotation: glam::Quat::default(),
                         scale: glam::Vec3::new(1.0, 1.0, 1.0),
                     },
-                    mesh,
-                });
+                    EditorEntity { mesh },
+                ));
             }
         }
 

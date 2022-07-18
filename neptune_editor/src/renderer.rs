@@ -259,19 +259,19 @@ impl Renderer {
 
         let camera_position = camera_transform.position;
 
-        let entity_count = usize::min(world.entities.len(), Self::MAX_TRANSFORMS);
-
-        for i in 0..entity_count {
-            let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::BufferAddress;
-            let model_matrix = world.entities[i]
-                .transform
-                .get_offset_model_matrix(camera_position);
-            self.queue.write_buffer(
-                &self.transforms_buffer,
-                offset,
-                bytemuck::bytes_of(&model_matrix),
-            )
-        }
+        let meshes: Vec<(glam::Mat4, Arc<Mesh>)> = world
+            .entities
+            .iter()
+            .filter(|entity| entity.get_mesh().is_some())
+            .map(|entity| {
+                (
+                    entity
+                        .get_transform()
+                        .get_offset_model_matrix(camera_position),
+                    entity.get_mesh().unwrap(),
+                )
+            })
+            .collect();
 
         let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
@@ -329,10 +329,22 @@ impl Renderer {
             render_pass.set_pipeline(&self.mesh_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for i in 0..entity_count {
-                let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::DynamicOffset;
-                render_pass.set_bind_group(1, &self.transforms_bind_group, &[offset]);
-                world.entities[i].mesh.draw(&mut render_pass, 0..1);
+            for (i, (model_matrix, mesh)) in meshes.iter().enumerate() {
+                let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::BufferAddress;
+
+                self.queue.write_buffer(
+                    &self.transforms_buffer,
+                    offset,
+                    bytemuck::bytes_of(model_matrix),
+                );
+
+                render_pass.set_bind_group(
+                    1,
+                    &self.transforms_bind_group,
+                    &[offset as wgpu::DynamicOffset],
+                );
+
+                mesh.draw(&mut render_pass, 0..1);
             }
         }
 
