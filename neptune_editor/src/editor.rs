@@ -3,7 +3,7 @@ use std::sync::Arc;
 use winit::event::VirtualKeyCode;
 
 use crate::debug_camera::DebugCamera;
-use crate::entity::{Entity, EntityBehavior, EntityData};
+use crate::entity::{Entity, EntityBehavior, EntityInterface};
 use crate::renderer::{Mesh, Renderer};
 use crate::transform::Transform;
 use crate::world::World;
@@ -14,11 +14,15 @@ struct EditorEntity {
 }
 
 impl EntityBehavior for EditorEntity {
-    fn update(&mut self, delta_time: f32, data: &mut EntityData) {}
-
-    fn get_mesh(&self) -> Option<Arc<Mesh>> {
-        Some(self.mesh.clone())
+    fn add_to_world(&mut self, data: &mut EntityInterface) {
+        data.meshes.push((Transform::default(), self.mesh.clone()));
     }
+
+    fn remove_from_world(&mut self, data: &mut EntityInterface) {
+        todo!()
+    }
+
+    fn update(&mut self, delta_time: f32, data: &mut EntityInterface) {}
 }
 
 pub(crate) struct Editor {
@@ -55,8 +59,8 @@ impl Editor {
                     Transform {
                         position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
                             + world_center,
-                        rotation: glam::Quat::default(),
-                        scale: glam::Vec3::new(1.0, 1.0, 1.0),
+                        rotation: glam::Quat::IDENTITY,
+                        scale: glam::Vec3::ONE,
                     },
                     EditorEntity { mesh },
                 ));

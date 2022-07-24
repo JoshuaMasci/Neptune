@@ -1,20 +1,36 @@
 use crate::renderer::Mesh;
 use crate::transform::Transform;
+use crate::world::World;
 use std::sync::Arc;
 
 pub trait EntityBehavior {
-    fn update(&mut self, delta_time: f32, data: &mut EntityData);
-    fn get_mesh(&self) -> Option<Arc<Mesh>>;
+    fn add_to_world(&mut self, data: &mut EntityInterface);
+    fn remove_from_world(&mut self, data: &mut EntityInterface);
+    fn update(&mut self, delta_time: f32, data: &mut EntityInterface);
 }
 
-pub struct EntityData {
+pub struct EntityInterface {
+    pub(crate) has_transform_changed: bool,
     transform: Transform,
+
+    pub meshes: Vec<(Transform, Arc<Mesh>)>, //TODO: rework this later
+}
+
+impl EntityInterface {
+    pub fn get_transform(&self) -> Transform {
+        self.transform.clone()
+    }
+
+    pub fn set_transform(&mut self, transform: Transform) {
+        self.has_transform_changed = true;
+        self.transform = transform;
+    }
 }
 
 pub struct Entity {
-    entity_id: u64, //TODO: create type for this
-    behavior: Box<dyn EntityBehavior>,
-    data: EntityData,
+    pub(crate) entity_id: u64, //TODO: create type for this
+    pub(crate) behavior: Box<dyn EntityBehavior>,
+    pub(crate) interface: EntityInterface,
 }
 
 impl Entity {
@@ -22,35 +38,22 @@ impl Entity {
         Self {
             entity_id: 0,
             behavior: Box::new(behavior),
-            data: EntityData { transform },
+            interface: EntityInterface {
+                has_transform_changed: true,
+                transform,
+
+                meshes: vec![],
+            },
         }
     }
 
     pub fn get_transform(&self) -> &Transform {
-        &self.data.transform
+        &self.interface.transform
     }
 
-    pub fn update(&mut self, delta_time: f32) {
-        self.behavior.update(delta_time, &mut self.data);
-    }
-
-    pub fn get_mesh(&self) -> Option<Arc<Mesh>> {
-        self.behavior.get_mesh()
+    pub fn get_meshes(&self) -> &Vec<(Transform, Arc<Mesh>)> {
+        &self.interface.meshes
     }
 }
 
-struct TestBehavior(f32);
-impl EntityBehavior for TestBehavior {
-    fn update(&mut self, delta_time: f32, data: &mut EntityData) {
-        data.transform.position.z += (delta_time * self.0) as f64;
-    }
-
-    fn get_mesh(&self) -> Option<Arc<Mesh>> {
-        None
-    }
-}
-
-pub fn entity_test() {
-    let mut new_entity = Entity::new(Transform::default(), TestBehavior(1.0));
-    new_entity.update(1.0 / 60.0);
-}
+pub fn entity_test() {}

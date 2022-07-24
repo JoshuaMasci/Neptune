@@ -1,9 +1,19 @@
 ///A large world transform class, the position is stored in f64, while the rotation and scale are still in f32
-#[derive(Default)]
+#[derive(Clone)]
 pub struct Transform {
     pub position: glam::DVec3,
     pub rotation: glam::Quat,
     pub scale: glam::Vec3,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self {
+            position: glam::DVec3::ZERO,
+            rotation: glam::Quat::IDENTITY,
+            scale: glam::Vec3::ONE,
+        }
+    }
 }
 
 impl Transform {

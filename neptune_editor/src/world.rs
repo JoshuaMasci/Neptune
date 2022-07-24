@@ -16,14 +16,23 @@ impl Default for World {
 }
 
 impl World {
-    pub fn add_entity(&mut self, entity: Entity) {
+    pub fn add_entity(&mut self, mut entity: Entity) {
+        entity.behavior.add_to_world(&mut entity.interface);
         self.entities.push(entity);
     }
 
     pub fn update(&mut self, delta_time: f32) {
-        for entity in self.entities.iter_mut() {
-            entity.update(delta_time);
-        }
+        //Pre physics step
+
         self.physics.step(delta_time);
+
+        //Post physics step
+        for entity in self.entities.iter_mut() {
+            entity.behavior.update(delta_time, &mut entity.interface);
+            if entity.interface.has_transform_changed {
+                //do physics things
+                entity.interface.has_transform_changed = false;
+            }
+        }
     }
 }

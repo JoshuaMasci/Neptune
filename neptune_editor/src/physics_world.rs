@@ -1,3 +1,4 @@
+use crate::transform::Transform;
 use rapier3d_f64::prelude::*;
 
 pub struct PhysicsWorld {
@@ -65,4 +66,25 @@ impl PhysicsWorld {
             &event_handler,
         );
     }
+
+    // pub fn add_rigid_body(
+    //     &mut self,
+    //     transform: &Transform,
+    // ) -> rapier3d_f64::prelude::RigidBodyHandle {
+    //     self.rigid_body_set
+    //         .insert(RigidBodyBuilder::dynamic().build())
+    // }
+    //
+    // pub fn update_rigid_body_transform(
+    //     &mut self,
+    //     rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
+    //     transform: &Transform,
+    // ) {
+    //     let ref_1 = self.rigid_body_set.get_mut(rigid_body_handle).unwrap();
+    //     let ref_2 = self.rigid_body_set.get_mut(rigid_body_handle).unwrap();
+    //
+    //     if let Some(rigid_body) = self.rigid_body_set.get_mut(rigid_body_handle) {
+    //         rigid_body.set_translation();
+    //     }
+    // }
 }

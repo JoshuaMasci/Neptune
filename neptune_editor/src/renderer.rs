@@ -259,20 +259,6 @@ impl Renderer {
 
         let camera_position = camera_transform.position;
 
-        let meshes: Vec<(glam::Mat4, Arc<Mesh>)> = world
-            .entities
-            .iter()
-            .filter(|entity| entity.get_mesh().is_some())
-            .map(|entity| {
-                (
-                    entity
-                        .get_transform()
-                        .get_offset_model_matrix(camera_position),
-                    entity.get_mesh().unwrap(),
-                )
-            })
-            .collect();
-
         let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
@@ -329,22 +315,32 @@ impl Renderer {
             render_pass.set_pipeline(&self.mesh_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for (i, (model_matrix, mesh)) in meshes.iter().enumerate() {
-                let offset = (std::mem::size_of::<glam::Mat4>() * i) as wgpu::BufferAddress;
+            let mut mesh_index: usize = 0;
+            for entity in world.entities.iter() {
+                let entity_matrix = entity
+                    .get_transform()
+                    .get_offset_model_matrix(camera_position);
+                for (offset_transform, mesh) in entity.get_meshes() {
+                    let model_matrix =
+                        entity_matrix * offset_transform.get_offset_model_matrix(glam::DVec3::ZERO);
 
-                self.queue.write_buffer(
-                    &self.transforms_buffer,
-                    offset,
-                    bytemuck::bytes_of(model_matrix),
-                );
+                    let offset = std::mem::size_of::<glam::Mat4>() * mesh_index;
+                    mesh_index += 1;
 
-                render_pass.set_bind_group(
-                    1,
-                    &self.transforms_bind_group,
-                    &[offset as wgpu::DynamicOffset],
-                );
+                    self.queue.write_buffer(
+                        &self.transforms_buffer,
+                        offset as wgpu::BufferAddress,
+                        bytemuck::bytes_of(&model_matrix),
+                    );
 
-                mesh.draw(&mut render_pass, 0..1);
+                    render_pass.set_bind_group(
+                        1,
+                        &self.transforms_bind_group,
+                        &[offset as wgpu::DynamicOffset],
+                    );
+
+                    mesh.draw(&mut render_pass, 0..1);
+                }
             }
         }
 
@@ -378,7 +374,7 @@ impl Renderer {
     }
 }
 
-pub(crate) struct Mesh {
+pub struct Mesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: usize,
