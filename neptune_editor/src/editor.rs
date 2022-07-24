@@ -1,29 +1,12 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
-use std::sync::Arc;
 use winit::event::VirtualKeyCode;
 
 use crate::debug_camera::DebugCamera;
-use crate::entity::{Entity, EntityBehavior, EntityInterface};
-use crate::renderer::{Mesh, Renderer};
+use crate::entity::{Collider, Entity};
+use crate::renderer::Renderer;
 use crate::transform::Transform;
 use crate::world::World;
 use winit::window::Window;
-
-struct EditorEntity {
-    mesh: Arc<Mesh>,
-}
-
-impl EntityBehavior for EditorEntity {
-    fn add_to_world(&mut self, data: &mut EntityInterface) {
-        data.meshes.push((Transform::default(), self.mesh.clone()));
-    }
-
-    fn remove_from_world(&mut self, data: &mut EntityInterface) {
-        todo!()
-    }
-
-    fn update(&mut self, delta_time: f32, data: &mut EntityInterface) {}
-}
 
 pub(crate) struct Editor {
     last_frame: std::time::Instant,
@@ -49,10 +32,10 @@ impl Editor {
         let half = 128f64.sqrt() as usize;
         for x in 0..half {
             for y in 0..half {
-                let mesh = if (x + y) % 2 == 0 {
-                    cube_mesh.clone()
+                let (mesh, collider) = if (x + y) % 2 == 0 {
+                    (cube_mesh.clone(), Collider::Box(glam::DVec3::splat(0.5)))
                 } else {
-                    sphere_mesh.clone()
+                    (sphere_mesh.clone(), Collider::Sphere(0.5))
                 };
 
                 world.add_entity(Entity::new(
@@ -62,7 +45,8 @@ impl Editor {
                         rotation: glam::Quat::IDENTITY,
                         scale: glam::Vec3::ONE,
                     },
-                    EditorEntity { mesh },
+                    Some(mesh),
+                    Some(collider),
                 ));
             }
         }

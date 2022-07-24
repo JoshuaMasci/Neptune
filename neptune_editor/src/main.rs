@@ -17,8 +17,6 @@ pub use winit::{
 };
 
 fn main() {
-    entity::entity_test();
-
     neptune_core::setup_logger().expect("Failed to Setup Logger");
 
     let mut event_loop = EventLoop::new();
