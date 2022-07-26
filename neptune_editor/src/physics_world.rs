@@ -1,6 +1,12 @@
 use crate::transform::Transform;
-use rapier3d_f64::na::{Quaternion, UnitQuaternion, Vector3};
+use rapier3d_f64::na::{UnitQuaternion, Vector3};
 use rapier3d_f64::prelude::*;
+
+pub enum Collider {
+    Box(glam::DVec3),
+    Sphere(f64),
+    CapsuleY(f64, f64),
+}
 
 pub struct PhysicsWorld {
     rigid_body_set: RigidBodySet,
@@ -19,7 +25,7 @@ pub struct PhysicsWorld {
 impl PhysicsWorld {
     pub fn new() -> Self {
         let rigid_body_set = RigidBodySet::new();
-        let collider_set = ColliderSet::new();
+        let mut collider_set = ColliderSet::new();
 
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
@@ -29,6 +35,11 @@ impl PhysicsWorld {
         let impulse_joint_set = ImpulseJointSet::new();
         let multibody_joint_set = MultibodyJointSet::new();
         let ccd_solver = CCDSolver::new();
+
+        let ground_collider = ColliderBuilder::cuboid(128.0, 1.0, 128.0)
+            .translation(Vector::new(0.0, -10.0, 0.0))
+            .build();
+        collider_set.insert(ground_collider);
 
         Self {
             rigid_body_set,
@@ -91,66 +102,6 @@ impl PhysicsWorld {
         )
     }
 
-    pub fn add_collider(
-        &mut self,
-        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
-        transform: &Transform,
-        collider: &crate::entity::Collider,
-    ) {
-        let collider = match collider {
-            crate::entity::Collider::Box(half_extent) => {
-                ColliderBuilder::cuboid(half_extent.x, half_extent.y, half_extent.z)
-            }
-            crate::entity::Collider::Sphere(radius) => ColliderBuilder::ball(*radius),
-        }
-        .translation(Vector3::from_column_slice(&transform.position.to_array()))
-        .rotation(
-            UnitQuaternion::from_quaternion(
-                rapier3d_f64::na::Quaternion::new(
-                    transform.rotation.w,
-                    transform.rotation.x,
-                    transform.rotation.y,
-                    transform.rotation.z,
-                )
-                .cast(),
-            )
-            .scaled_axis(),
-        )
-        .build();
-
-        let _handle = self.collider_set.insert_with_parent(
-            collider,
-            rigid_body_handle,
-            &mut self.rigid_body_set,
-        );
-    }
-
-    pub fn update_rigid_body_transform(
-        &mut self,
-        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
-        transform: &Transform,
-    ) {
-        if let Some(rigid_body) = self.rigid_body_set.get_mut(rigid_body_handle) {
-            rigid_body.set_translation(
-                Vector3::from_column_slice(&transform.position.to_array()),
-                true,
-            );
-            rigid_body.set_rotation(
-                UnitQuaternion::from_quaternion(
-                    rapier3d_f64::na::Quaternion::new(
-                        transform.rotation.w,
-                        transform.rotation.x,
-                        transform.rotation.y,
-                        transform.rotation.z,
-                    )
-                    .cast(),
-                )
-                .scaled_axis(),
-                true,
-            );
-        }
-    }
-
     pub fn update_entity_transform(
         &self,
         rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
@@ -178,5 +129,77 @@ impl PhysicsWorld {
             &mut self.multibody_joint_set,
             true,
         );
+    }
+
+    pub fn add_collider(
+        &mut self,
+        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
+        transform: &Transform,
+        collider: &Collider,
+    ) -> rapier3d_f64::prelude::ColliderHandle {
+        let collider = match collider {
+            Collider::Box(half_extent) => {
+                ColliderBuilder::cuboid(half_extent.x, half_extent.y, half_extent.z)
+            }
+            Collider::Sphere(radius) => ColliderBuilder::ball(*radius),
+            Collider::CapsuleY(radius, half_height) => {
+                ColliderBuilder::capsule_y(*half_height, *radius)
+            }
+        }
+        .translation(Vector3::from_column_slice(&transform.position.to_array()))
+        .rotation(
+            UnitQuaternion::from_quaternion(
+                rapier3d_f64::na::Quaternion::new(
+                    transform.rotation.w,
+                    transform.rotation.x,
+                    transform.rotation.y,
+                    transform.rotation.z,
+                )
+                .cast(),
+            )
+            .scaled_axis(),
+        )
+        .build();
+
+        self.collider_set
+            .insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set)
+    }
+
+    pub(crate) fn remove_collider(
+        &mut self,
+        collider_handle: rapier3d_f64::prelude::ColliderHandle,
+    ) {
+        let _ = self.collider_set.remove(
+            collider_handle,
+            &mut self.island_manager,
+            &mut self.rigid_body_set,
+            true,
+        );
+    }
+
+    pub fn update_rigid_body_transform(
+        &mut self,
+        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
+        transform: &Transform,
+    ) {
+        if let Some(rigid_body) = self.rigid_body_set.get_mut(rigid_body_handle) {
+            rigid_body.set_translation(
+                Vector3::from_column_slice(&transform.position.to_array()),
+                true,
+            );
+            rigid_body.set_rotation(
+                UnitQuaternion::from_quaternion(
+                    rapier3d_f64::na::Quaternion::new(
+                        transform.rotation.w,
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                    )
+                    .cast(),
+                )
+                .scaled_axis(),
+                true,
+            );
+        }
     }
 }

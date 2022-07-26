@@ -1,6 +1,8 @@
+use crate::physics_world::Collider;
 use crate::renderer::Mesh;
 use crate::transform::Transform;
 use crate::world::World;
+use rapier3d_f64::prelude::ColliderHandle;
 use rapier3d_f64::prelude::RigidBodyHandle;
 use std::sync::Arc;
 
@@ -31,17 +33,12 @@ pub type EntityId = u32;
 // }
 
 //Temp
-pub enum Collider {
-    Box(glam::DVec3),
-    Sphere(f64),
-}
 
 pub struct Entity {
     pub(crate) entity_id: EntityId,
     transform: Transform,
     meshes: Vec<(Transform, Arc<Mesh>)>,
     pub(crate) collider: Option<Collider>,
-
     pub(crate) rigid_body: Option<RigidBodyHandle>,
 }
 

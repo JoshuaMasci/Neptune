@@ -2,7 +2,8 @@ pub use neptune_core::log::{debug, error, info, trace, warn};
 use winit::event::VirtualKeyCode;
 
 use crate::debug_camera::DebugCamera;
-use crate::entity::{Collider, Entity};
+use crate::entity::Entity;
+use crate::physics_world::Collider;
 use crate::renderer::Renderer;
 use crate::transform::Transform;
 use crate::world::World;
@@ -14,6 +15,9 @@ pub(crate) struct Editor {
     debug_camera: DebugCamera,
 
     world: World,
+
+    input: crate::game::PlayerInput,
+    game_world: crate::game::World,
 }
 
 impl Editor {
@@ -24,24 +28,29 @@ impl Editor {
         let cube_mesh = renderer.get_mesh("resource/cube.obj").unwrap();
         let sphere_mesh = renderer.get_mesh("resource/sphere.obj").unwrap();
 
-        let world_center = glam::DVec3::splat(1_000_000_000.0);
-
         let mut world = World::default();
 
         const SPACING: f64 = 2.5;
         let half = 128f64.sqrt() as usize;
+
+        debug_camera.transform.position =
+            glam::DVec3::new((half as f64) * 0.5 * SPACING, 0.0, -25.0);
+
         for x in 0..half {
-            for y in 0..half {
-                let (mesh, collider) = if (x + y) % 2 == 0 {
+            for z in 0..half {
+                let (mesh, collider) = if (x + z) % 2 == 0 {
                     (cube_mesh.clone(), Collider::Box(glam::DVec3::splat(0.5)))
                 } else {
                     (sphere_mesh.clone(), Collider::Sphere(0.5))
                 };
 
+                let x = x as f64;
+                let z = z as f64;
+                let y = x + z;
+
                 world.add_entity(Entity::new(
                     Transform {
-                        position: glam::DVec3::new(SPACING * x as f64, -1.5, SPACING * y as f64)
-                            + world_center,
+                        position: glam::DVec3::new(x * SPACING, y * SPACING, z * SPACING),
                         rotation: glam::Quat::IDENTITY,
                         scale: glam::Vec3::ONE,
                     },
@@ -51,13 +60,13 @@ impl Editor {
             }
         }
 
-        debug_camera.transform.position += world_center;
-
         Self {
             last_frame: std::time::Instant::now(),
             renderer,
             debug_camera,
             world,
+            input: Default::default(),
+            game_world: crate::game::World::new(),
         }
     }
 
@@ -70,12 +79,15 @@ impl Editor {
         key: VirtualKeyCode,
         state: winit::event::ElementState,
     ) {
+        self.input.keyboard_input(key, state);
         self.debug_camera.keyboard_input(key, state);
     }
 
     pub(crate) fn update(&mut self) {
         let delta_time = self.last_frame.elapsed().as_secs_f32();
         self.last_frame = std::time::Instant::now();
+
+        self.game_world.update(delta_time, &self.input);
 
         self.debug_camera.update(delta_time);
         self.world.update(delta_time);

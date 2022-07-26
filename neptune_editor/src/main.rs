@@ -6,6 +6,7 @@ mod physics_world;
 mod renderer;
 mod transform;
 mod world;
+mod game;
 
 use crate::editor::Editor;
 pub use neptune_core::log::{debug, error, info, trace, warn};
