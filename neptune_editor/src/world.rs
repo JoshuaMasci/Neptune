@@ -18,13 +18,6 @@ impl Default for World {
 
 impl World {
     pub fn add_entity(&mut self, mut entity: Entity) {
-        if let Some(collider) = &entity.collider {
-            let rigid_body = self.physics.add_rigid_body(entity.get_transform());
-            self.physics
-                .add_collider(rigid_body, &Transform::default(), collider);
-            entity.rigid_body = Some(rigid_body);
-        }
-
         entity.add_to_world(self);
         self.entities.push(entity);
     }
@@ -46,15 +39,9 @@ impl World {
 
     pub fn update(&mut self, delta_time: f32) {
         //Pre physics step
-
         self.physics.step(delta_time);
 
         //Post physics step
-        for entity in self.entities.iter_mut() {
-            if let Some(rigid_body) = entity.rigid_body {
-                self.physics
-                    .update_entity_transform(rigid_body, entity.get_mut_transform());
-            }
-        }
+        for entity in self.entities.iter_mut() {}
     }
 }

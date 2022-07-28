@@ -1,61 +1,57 @@
-///A large world transform class, the position is stored in f64, while the rotation and scale are still in f32
+///A large world transform class
 #[derive(Clone)]
 pub struct Transform {
     pub position: glam::DVec3,
-    pub rotation: glam::Quat,
-    pub scale: glam::Vec3,
+    pub rotation: glam::DQuat,
 }
 
 impl Default for Transform {
     fn default() -> Self {
         Self {
             position: glam::DVec3::ZERO,
-            rotation: glam::Quat::IDENTITY,
-            scale: glam::Vec3::ONE,
+            rotation: glam::DQuat::IDENTITY,
         }
     }
 }
 
 impl Transform {
-    pub fn set_position_rotation(&mut self, transform: &Self) {
-        self.position = transform.position;
-        self.rotation = transform.rotation;
-    }
-
     pub fn get_offset_model_matrix(&self, position_offset: glam::DVec3) -> glam::Mat4 {
         glam::Mat4::from_scale_rotation_translation(
-            self.scale,
-            self.rotation,
+            glam::Vec3::ZERO,
+            self.rotation.as_f32(),
             (self.position - position_offset).as_vec3(),
         )
     }
 
     pub fn get_view_matrix(&self) -> glam::Mat4 {
         let position = self.position.as_vec3();
+        let rotation = self.rotation.as_f32();
         glam::Mat4::look_at_lh(
             position,
-            (self.rotation * glam::Vec3::Z) + position,
-            self.rotation * glam::Vec3::Y,
+            (rotation * glam::Vec3::Z) + position,
+            rotation * glam::Vec3::Y,
         )
     }
 
     pub fn get_centered_view_matrix(&self) -> glam::Mat4 {
+        let rotation = self.rotation.as_f32();
+
         glam::Mat4::look_at_lh(
             glam::Vec3::default(),
-            self.rotation * glam::Vec3::Z,
-            self.rotation * glam::Vec3::Y,
+            rotation * glam::Vec3::Z,
+            rotation * glam::Vec3::Y,
         )
     }
 
     pub fn get_right(&self) -> glam::DVec3 {
-        (self.rotation * glam::Vec3::X).as_dvec3()
+        self.rotation * glam::DVec3::X
     }
 
     pub fn get_up(&self) -> glam::DVec3 {
-        (self.rotation * glam::Vec3::Y).as_dvec3()
+        self.rotation * glam::DVec3::Y
     }
 
     pub fn get_forward(&self) -> glam::DVec3 {
-        (self.rotation * glam::Vec3::Z).as_dvec3()
+        self.rotation * glam::DVec3::Z
     }
 }

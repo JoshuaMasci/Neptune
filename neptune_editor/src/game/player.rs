@@ -1,6 +1,6 @@
 use crate::camera::Camera;
+use crate::game::Transform;
 use crate::physics_world::{Collider, PhysicsWorld};
-use crate::transform::Transform;
 use rapier3d_f64::prelude::{ColliderHandle, RigidBodyHandle};
 
 #[derive(Default)]
@@ -58,7 +58,7 @@ pub struct Player {
     //TODO: need better input system
     shoot_input: bool,
     interact_input: bool,
-    linear_input: glam::DVec3,
+    linear_input: glam::Vec3,
     angular_input: glam::Vec3,
 
     //Ground Movement
@@ -80,7 +80,7 @@ impl Player {
             collider: None,
             shoot_input: false,
             interact_input: false,
-            linear_input: glam::DVec3::ZERO,
+            linear_input: glam::Vec3::ZERO,
             angular_input: glam::Vec3::ZERO,
             ground_max_speed_x: max_speed,
             ground_max_speed_z: max_speed,
@@ -108,9 +108,44 @@ impl Player {
         }
     }
 
-    pub fn update_input(&mut self, input: &PlayerInput) {}
+    pub fn update_input(&mut self, input: &PlayerInput) {
+        self.linear_input.x += bool_to_float(input.x_input[0]);
+        self.linear_input.x -= bool_to_float(input.x_input[1]);
+
+        self.linear_input.y += bool_to_float(input.y_input[0]);
+        self.linear_input.y -= bool_to_float(input.y_input[1]);
+
+        self.linear_input.z += bool_to_float(input.z_input[0]);
+        self.linear_input.z -= bool_to_float(input.z_input[1]);
+
+        self.interact_input = input.interact_button;
+        self.shoot_input = input.shoot_button;
+    }
 
     pub fn update(&mut self, delta_time: f32, physics_world: &mut PhysicsWorld) {
-        //TODO: all the movement and stuff
+        let in_gravity: bool = true;
+
+        if let Some(mut rigid_body) = physics_world.get_mut_rigid_body(self.rigid_body) {
+            rigid_body.get_transform(&mut self.transform);
+
+            if in_gravity {
+            } else {
+                let some_value = 1.0;
+
+                let linear_velocity = self.transform.rotation
+                    * (self.zero_g_max_speed * self.linear_input.as_dvec3() * delta_time as f64);
+                rigid_body.set_linear_velocity(linear_velocity);
+            }
+
+            //TODO: all the movement and stuff
+        }
+    }
+}
+
+fn bool_to_float(value: bool) -> f32 {
+    if value {
+        1.0
+    } else {
+        0.0
     }
 }

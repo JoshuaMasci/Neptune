@@ -60,13 +60,19 @@ impl Editor {
             }
         }
 
+        let mut game_world = crate::game::World::new();
+        game_world.add_player(crate::game::Player::new(
+            crate::game::Transform::default(),
+            5.0,
+        ));
+
         Self {
             last_frame: std::time::Instant::now(),
             renderer,
             debug_camera,
             world,
             input: Default::default(),
-            game_world: crate::game::World::new(),
+            game_world,
         }
     }
 

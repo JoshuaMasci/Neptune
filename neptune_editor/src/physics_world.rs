@@ -1,4 +1,4 @@
-use crate::transform::Transform;
+use crate::game::Transform;
 use rapier3d_f64::na::{UnitQuaternion, Vector3};
 use rapier3d_f64::prelude::*;
 
@@ -102,23 +102,23 @@ impl PhysicsWorld {
         )
     }
 
-    pub fn update_entity_transform(
-        &self,
-        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
-        transform: &mut Transform,
-    ) {
-        if let Some(rigid_body) = self.rigid_body_set.get(rigid_body_handle) {
-            transform.position = glam::DVec3::from_slice(rigid_body.translation().as_slice());
-            let rotation = rigid_body.rotation();
-            transform.rotation = glam::DQuat {
-                x: rotation.i,
-                y: rotation.j,
-                z: rotation.k,
-                w: rotation.w,
-            }
-            .as_f32();
-        }
-    }
+    // pub fn update_entity_transform(
+    //     &self,
+    //     rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
+    //     transform: &mut Transform,
+    // ) {
+    //     if let Some(rigid_body) = self.rigid_body_set.get(rigid_body_handle) {
+    //         transform.position = glam::DVec3::from_slice(rigid_body.translation().as_slice());
+    //         let rotation = rigid_body.rotation();
+    //         transform.rotation = glam::DQuat {
+    //             x: rotation.i,
+    //             y: rotation.j,
+    //             z: rotation.k,
+    //             w: rotation.w,
+    //         }
+    //         .as_f32();
+    //     }
+    // }
 
     pub fn remove_rigid_body(&mut self, rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle) {
         let _ = self.rigid_body_set.remove(
@@ -177,29 +177,43 @@ impl PhysicsWorld {
         );
     }
 
-    pub fn update_rigid_body_transform(
+    pub(crate) fn get_mut_rigid_body(
         &mut self,
-        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
-        transform: &Transform,
-    ) {
-        if let Some(rigid_body) = self.rigid_body_set.get_mut(rigid_body_handle) {
-            rigid_body.set_translation(
-                Vector3::from_column_slice(&transform.position.to_array()),
-                true,
-            );
-            rigid_body.set_rotation(
-                UnitQuaternion::from_quaternion(
-                    rapier3d_f64::na::Quaternion::new(
-                        transform.rotation.w,
-                        transform.rotation.x,
-                        transform.rotation.y,
-                        transform.rotation.z,
-                    )
-                    .cast(),
-                )
-                .scaled_axis(),
-                true,
-            );
+        rigid_body_handle: Option<rapier3d_f64::prelude::RigidBodyHandle>,
+    ) -> Option<RigidBodyRef> {
+        if let Some(rigid_body_handle) = rigid_body_handle {
+            self.rigid_body_set
+                .get_mut(rigid_body_handle)
+                .map(|rigid_body| RigidBodyRef { rigid_body })
+        } else {
+            None
         }
+    }
+}
+
+pub struct RigidBodyRef<'a> {
+    rigid_body: &'a mut rapier3d_f64::prelude::RigidBody,
+}
+
+impl<'a> RigidBodyRef<'a> {
+    pub fn get_transform(&self, transform: &mut Transform) {
+        let position = self.rigid_body.translation().data.0[0];
+        let rotation = self.rigid_body.rotation();
+
+        transform.position = glam::DVec3::from_array(position);
+        transform.rotation =
+            glam::DQuat::from_array([rotation.w, rotation.i, rotation.j, rotation.k]);
+    }
+
+    pub fn get_linear_velocity(&self) -> glam::DVec3 {
+        let velocity = self.rigid_body.linvel();
+        glam::DVec3::from_array(velocity.data.0[0])
+    }
+
+    pub fn set_linear_velocity(&mut self, linear_velocity: glam::DVec3) {
+        self.rigid_body.set_linvel(
+            rapier3d_f64::prelude::Vector::from_column_slice(&linear_velocity.to_array()),
+            true,
+        );
     }
 }

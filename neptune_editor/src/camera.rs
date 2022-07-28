@@ -1,4 +1,5 @@
 //TODO: add orthographic/perspective camera modes
+#[derive(Clone)]
 pub struct Camera {
     z_near: f32,
     z_far: f32,
