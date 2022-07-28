@@ -244,112 +244,6 @@ impl Renderer {
         }
     }
 
-    pub(crate) fn render(
-        &mut self,
-        camera: &Camera,
-        camera_transform: &Transform,
-        world: &World,
-    ) -> Result<(), wgpu::SurfaceError> {
-        let camera_data = CameraData {
-            view_matrix: camera_transform.get_centered_view_matrix(),
-            projection_matrix: camera
-                .get_infinite_reverse_perspective_matrix([self.size.width, self.size.height]),
-        };
-        self.camera_buffer.write(&self.queue, camera_data);
-
-        let camera_position = camera_transform.position;
-
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth24Plus,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let output = self.surface.get_current_texture()?;
-
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.01,
-                            a: 1.0,
-                        }),
-                        store: true,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: true,
-                    }),
-                    stencil_ops: None,
-                }),
-            });
-
-            render_pass.set_pipeline(&self.mesh_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-
-            let mut mesh_index: usize = 0;
-            for entity in world.entities.iter() {
-                let entity_matrix = entity
-                    .get_transform()
-                    .get_offset_model_matrix(camera_position);
-                for (offset_transform, mesh) in entity.get_meshes() {
-                    let model_matrix =
-                        entity_matrix * offset_transform.get_offset_model_matrix(glam::DVec3::ZERO);
-
-                    let offset = std::mem::size_of::<glam::Mat4>() * mesh_index;
-                    mesh_index += 1;
-
-                    self.queue.write_buffer(
-                        &self.transforms_buffer,
-                        offset as wgpu::BufferAddress,
-                        bytemuck::bytes_of(&model_matrix),
-                    );
-
-                    render_pass.set_bind_group(
-                        1,
-                        &self.transforms_bind_group,
-                        &[offset as wgpu::DynamicOffset],
-                    );
-
-                    mesh.draw(&mut render_pass, 0..1);
-                }
-            }
-        }
-
-        self.queue.submit(iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
-    }
-
     pub(crate) fn render_game_world(
         &mut self,
         camera: &Camera,
@@ -421,11 +315,37 @@ impl Renderer {
             render_pass.set_pipeline(&self.mesh_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for (index, object) in world.objects.iter().enumerate() {
+            for (index, object) in world.static_objects.iter().enumerate() {
                 if let Some(mesh) = &object.0.mesh {
                     let model_matrix = object.0.transform.get_offset_model_matrix(camera_position);
 
                     let offset = std::mem::size_of::<glam::Mat4>() * index;
+
+                    self.queue.write_buffer(
+                        &self.transforms_buffer,
+                        offset as wgpu::BufferAddress,
+                        bytemuck::bytes_of(&model_matrix),
+                    );
+
+                    render_pass.set_bind_group(
+                        1,
+                        &self.transforms_bind_group,
+                        &[offset as wgpu::DynamicOffset],
+                    );
+
+                    mesh.draw(&mut render_pass, 0..1);
+                }
+            }
+
+            let mesh_offset = world.static_objects.len();
+            for (index, object) in world.dynamic_objects.iter().enumerate() {
+                if let Some(mesh) = &object.object.mesh {
+                    let model_matrix = object
+                        .object
+                        .transform
+                        .get_offset_model_matrix(camera_position);
+
+                    let offset = std::mem::size_of::<glam::Mat4>() * (index + mesh_offset);
 
                     self.queue.write_buffer(
                         &self.transforms_buffer,

@@ -2,6 +2,7 @@ use crate::game::Transform;
 use rapier3d_f64::na::{UnitQuaternion, Vector3};
 use rapier3d_f64::prelude::*;
 
+#[derive(Clone)]
 pub enum Collider {
     Box(glam::DVec3),
     Sphere(f64),
@@ -56,7 +57,7 @@ impl PhysicsWorld {
     }
 
     pub fn step(&mut self, delta_time: f32) {
-        let gravity = vector![0.0, -9.81, 0.0];
+        let gravity = vector![0.0, -9.8, 0.0];
 
         let physics_hooks = ();
         let event_handler = ();
@@ -102,24 +103,6 @@ impl PhysicsWorld {
         )
     }
 
-    // pub fn update_entity_transform(
-    //     &self,
-    //     rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
-    //     transform: &mut Transform,
-    // ) {
-    //     if let Some(rigid_body) = self.rigid_body_set.get(rigid_body_handle) {
-    //         transform.position = glam::DVec3::from_slice(rigid_body.translation().as_slice());
-    //         let rotation = rigid_body.rotation();
-    //         transform.rotation = glam::DQuat {
-    //             x: rotation.i,
-    //             y: rotation.j,
-    //             z: rotation.k,
-    //             w: rotation.w,
-    //         }
-    //         .as_f32();
-    //     }
-    // }
-
     pub fn remove_rigid_body(&mut self, rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle) {
         let _ = self.rigid_body_set.remove(
             rigid_body_handle,
@@ -133,7 +116,7 @@ impl PhysicsWorld {
 
     pub fn add_collider(
         &mut self,
-        rigid_body_handle: rapier3d_f64::prelude::RigidBodyHandle,
+        rigid_body_handle: Option<rapier3d_f64::prelude::RigidBodyHandle>,
         transform: &Transform,
         collider: &Collider,
     ) -> rapier3d_f64::prelude::ColliderHandle {
@@ -161,8 +144,15 @@ impl PhysicsWorld {
         )
         .build();
 
-        self.collider_set
-            .insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set)
+        if let Some(rigid_body_handle) = rigid_body_handle {
+            self.collider_set.insert_with_parent(
+                collider,
+                rigid_body_handle,
+                &mut self.rigid_body_set,
+            )
+        } else {
+            self.collider_set.insert(collider)
+        }
     }
 
     pub(crate) fn remove_collider(
@@ -196,13 +186,19 @@ pub struct RigidBodyRef<'a> {
 }
 
 impl<'a> RigidBodyRef<'a> {
+    pub fn temp_player_settings(&mut self) {
+        self.rigid_body
+            .set_enabled_rotations(false, false, false, true);
+        self.rigid_body.set_gravity_scale(0.0, true);
+    }
+
     pub fn get_transform(&self, transform: &mut Transform) {
         let position = self.rigid_body.translation().data.0[0];
         let rotation = self.rigid_body.rotation();
 
         transform.position = glam::DVec3::from_array(position);
         transform.rotation =
-            glam::DQuat::from_array([rotation.w, rotation.i, rotation.j, rotation.k]);
+            glam::DQuat::from_array([rotation.i, rotation.j, rotation.k, rotation.w]);
     }
 
     pub fn get_linear_velocity(&self) -> glam::DVec3 {

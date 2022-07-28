@@ -1,5 +1,5 @@
 ///A large world transform class
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Transform {
     pub position: glam::DVec3,
     pub rotation: glam::DQuat,
@@ -17,7 +17,7 @@ impl Default for Transform {
 impl Transform {
     pub fn get_offset_model_matrix(&self, position_offset: glam::DVec3) -> glam::Mat4 {
         glam::Mat4::from_scale_rotation_translation(
-            glam::Vec3::ZERO,
+            glam::Vec3::ONE,
             self.rotation.as_f32(),
             (self.position - position_offset).as_vec3(),
         )

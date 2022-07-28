@@ -2,11 +2,11 @@ mod camera;
 mod debug_camera;
 mod editor;
 mod entity;
+mod game;
 mod physics_world;
 mod renderer;
 mod transform;
 mod world;
-mod game;
 
 use crate::editor::Editor;
 pub use neptune_core::log::{debug, error, info, trace, warn};
@@ -23,6 +23,10 @@ fn main() {
     let mut event_loop = EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
+        .with_inner_size(winit::dpi::LogicalSize {
+            width: 1920,
+            height: 1080,
+        })
         .with_resizable(true)
         .build(&event_loop)
         .unwrap();

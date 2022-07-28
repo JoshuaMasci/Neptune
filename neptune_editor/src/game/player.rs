@@ -1,6 +1,7 @@
 use crate::camera::Camera;
 use crate::game::Transform;
 use crate::physics_world::{Collider, PhysicsWorld};
+use neptune_core::log::warn;
 use rapier3d_f64::prelude::{ColliderHandle, RigidBodyHandle};
 
 #[derive(Default)]
@@ -48,8 +49,8 @@ impl PlayerInput {
 
 #[allow(dead_code)]
 pub struct Player {
-    transform: Transform,
-    camera: Camera,
+    pub(crate) transform: Transform,
+    pub(crate) camera: Camera,
     camera_offset: Transform,
 
     rigid_body: Option<RigidBodyHandle>,
@@ -92,10 +93,14 @@ impl Player {
     pub fn add_to_world(&mut self, physics_world: &mut PhysicsWorld) {
         self.rigid_body = Some(physics_world.add_rigid_body(&self.transform));
         self.collider = Some(physics_world.add_collider(
-            self.rigid_body.unwrap(),
+            self.rigid_body,
             &Transform::default(),
             &Collider::CapsuleY(0.25, 0.9),
-        ))
+        ));
+
+        if let Some(mut rigid_body) = physics_world.get_mut_rigid_body(self.rigid_body) {
+            rigid_body.temp_player_settings();
+        }
     }
 
     pub fn remove_from_world(&mut self, physics_world: &mut PhysicsWorld) {
@@ -109,6 +114,9 @@ impl Player {
     }
 
     pub fn update_input(&mut self, input: &PlayerInput) {
+        self.linear_input = glam::Vec3::ZERO;
+        self.angular_input = glam::Vec3::ZERO;
+
         self.linear_input.x += bool_to_float(input.x_input[0]);
         self.linear_input.x -= bool_to_float(input.x_input[1]);
 
@@ -123,7 +131,7 @@ impl Player {
     }
 
     pub fn update(&mut self, delta_time: f32, physics_world: &mut PhysicsWorld) {
-        let in_gravity: bool = true;
+        let in_gravity: bool = false;
 
         if let Some(mut rigid_body) = physics_world.get_mut_rigid_body(self.rigid_body) {
             rigid_body.get_transform(&mut self.transform);
@@ -133,7 +141,8 @@ impl Player {
                 let some_value = 1.0;
 
                 let linear_velocity = self.transform.rotation
-                    * (self.zero_g_max_speed * self.linear_input.as_dvec3() * delta_time as f64);
+                    * (self.zero_g_max_speed * self.linear_input.as_dvec3());
+
                 rigid_body.set_linear_velocity(linear_velocity);
             }
 
