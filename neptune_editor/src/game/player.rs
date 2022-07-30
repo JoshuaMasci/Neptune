@@ -8,9 +8,16 @@ use rapier3d_f64::prelude::{ColliderHandle, RigidBodyHandle};
 pub struct PlayerInput {
     shoot_button: bool,
     interact_button: bool,
+
+    //Linear
     x_input: [bool; 2],
     y_input: [bool; 2],
     z_input: [bool; 2],
+
+    //Angular
+    i_input: [bool; 2],
+    j_input: [bool; 2],
+    k_input: [bool; 2],
 }
 
 impl PlayerInput {
@@ -24,6 +31,8 @@ impl PlayerInput {
             winit::event::VirtualKeyCode::F => {
                 self.interact_button = pressed;
             }
+
+            //Linear
             winit::event::VirtualKeyCode::D => {
                 self.x_input[0] = pressed;
             }
@@ -42,6 +51,27 @@ impl PlayerInput {
             winit::event::VirtualKeyCode::S => {
                 self.z_input[1] = pressed;
             }
+
+            //Angular
+            winit::event::VirtualKeyCode::Up => {
+                self.i_input[0] = pressed;
+            }
+            winit::event::VirtualKeyCode::Down => {
+                self.i_input[1] = pressed;
+            }
+            winit::event::VirtualKeyCode::Right => {
+                self.j_input[0] = pressed;
+            }
+            winit::event::VirtualKeyCode::Left => {
+                self.j_input[1] = pressed;
+            }
+            winit::event::VirtualKeyCode::Q => {
+                self.k_input[0] = pressed;
+            }
+            winit::event::VirtualKeyCode::E => {
+                self.k_input[1] = pressed;
+            }
+
             _ => {}
         }
     }
@@ -69,6 +99,8 @@ pub struct Player {
 
     //Zero-G Movement
     zero_g_max_speed: glam::DVec3,
+
+    max_rotation_speed: f64,
 }
 
 impl Player {
@@ -87,6 +119,7 @@ impl Player {
             ground_max_speed_z: max_speed,
             ground_jump_power: 1.0,
             zero_g_max_speed: glam::DVec3::splat(max_speed),
+            max_rotation_speed: 1.0,
         }
     }
 
@@ -126,6 +159,15 @@ impl Player {
         self.linear_input.z += bool_to_float(input.z_input[0]);
         self.linear_input.z -= bool_to_float(input.z_input[1]);
 
+        self.angular_input.x += bool_to_float(input.i_input[0]);
+        self.angular_input.x -= bool_to_float(input.i_input[1]);
+
+        self.angular_input.y += bool_to_float(input.j_input[0]);
+        self.angular_input.y -= bool_to_float(input.j_input[1]);
+
+        self.angular_input.z += bool_to_float(input.k_input[0]);
+        self.angular_input.z -= bool_to_float(input.k_input[1]);
+
         self.interact_input = input.interact_button;
         self.shoot_input = input.shoot_button;
     }
@@ -140,13 +182,15 @@ impl Player {
             } else {
                 let some_value = 1.0;
 
-                let linear_velocity = self.transform.rotation
-                    * (self.zero_g_max_speed * self.linear_input.as_dvec3());
-
-                rigid_body.set_linear_velocity(linear_velocity);
+                rigid_body.set_linear_velocity(
+                    self.transform.rotation
+                        * (self.zero_g_max_speed * self.linear_input.as_dvec3()),
+                );
+                rigid_body.set_angular_velocity(
+                    self.transform.rotation
+                        * (self.angular_input.as_dvec3() * self.max_rotation_speed),
+                );
             }
-
-            //TODO: all the movement and stuff
         }
     }
 }

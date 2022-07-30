@@ -212,4 +212,11 @@ impl<'a> RigidBodyRef<'a> {
             true,
         );
     }
+
+    pub fn set_angular_velocity(&mut self, angular_velocity: glam::DVec3) {
+        self.rigid_body.set_angvel(
+            rapier3d_f64::prelude::Vector::from_column_slice(&angular_velocity.to_array()),
+            true,
+        );
+    }
 }
