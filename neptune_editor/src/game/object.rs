@@ -1,6 +1,6 @@
+use crate::game::physics_world::Collider;
 use crate::game::Transform;
-use crate::physics_world::Collider;
-use crate::renderer::Mesh;
+use crate::rendering::mesh::Mesh;
 use std::sync::Arc;
 
 pub struct Object {

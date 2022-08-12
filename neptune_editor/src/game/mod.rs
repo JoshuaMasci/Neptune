@@ -1,4 +1,5 @@
 mod object;
+pub mod physics_world;
 mod player;
 mod ship;
 mod transform;

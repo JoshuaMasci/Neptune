@@ -1,6 +1,6 @@
-use crate::camera::Camera;
+use crate::game::physics_world::{Collider, PhysicsWorld};
 use crate::game::Transform;
-use crate::physics_world::{Collider, PhysicsWorld};
+use crate::rendering::camera::Camera;
 use neptune_core::log::warn;
 use rapier3d_f64::prelude::{ColliderHandle, RigidBodyHandle};
 
@@ -180,8 +180,6 @@ impl Player {
 
             if in_gravity {
             } else {
-                let some_value = 1.0;
-
                 rigid_body.set_linear_velocity(
                     self.transform.rotation
                         * (self.zero_g_max_speed * self.linear_input.as_dvec3()),

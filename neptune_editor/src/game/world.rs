@@ -1,7 +1,7 @@
-use crate::camera::Camera;
+use crate::game::physics_world::PhysicsWorld;
 use crate::game::player::Player;
 use crate::game::{Object, PlayerInput, Transform};
-use crate::physics_world::PhysicsWorld;
+use crate::rendering::camera::Camera;
 use rapier3d_f64::prelude::{ColliderHandle, RigidBodyHandle};
 
 pub struct DynamicObjectInstance {

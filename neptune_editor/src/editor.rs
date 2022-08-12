@@ -1,8 +1,8 @@
 pub use neptune_core::log::{debug, error, info, trace, warn};
 
+use crate::game::physics_world::Collider;
 use crate::game::PlayerInput;
-use crate::physics_world::Collider;
-use crate::renderer::Renderer;
+use crate::rendering::renderer::Renderer;
 use winit::event::VirtualKeyCode;
 use winit::window::Window;
 
