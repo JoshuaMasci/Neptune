@@ -1,12 +1,6 @@
 mod imgui_layer;
-mod shader;
 
-use crate::imgui_layer::ImguiLayer;
 use neptune_core::log::{debug, error, info, trace, warn};
-use neptune_graphics::{
-    MemoryType, TextureDescription, TextureDimensions, TextureFormat, TextureUsages,
-};
-use std::rc::Rc;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -14,9 +8,9 @@ pub use winit::{
     event_loop::ControlFlow,
 };
 
-fn main() {
-    neptune_graphics::render_interface_test::test_render_interface();
+use neptune_graphics::DeviceTrait;
 
+fn main() {
     neptune_core::setup_logger().expect("Failed to init logger");
 
     let mut event_loop = winit::event_loop::EventLoop::new();
@@ -28,31 +22,17 @@ fn main() {
 
     window.set_maximized(true);
 
-    let instance = neptune_graphics::vulkan::Instance::new(&window, "Neptune Editor", true);
-
-    let mut device = instance.create_device(0, 3);
-    let device_ref = &mut device;
-
-    let mut imgui_layer = ImguiLayer::new(device_ref);
-
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
-    let triangle_vertex_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_VERT));
-    let triangle_fragment_module = Rc::new(device_ref.create_shader_module(shader::TRIANGLE_FRAG));
+    let mut test_device = neptune_graphics::get_test_device();
 
-    let test_texture = {
-        let test_image = image::open("neptune_editor/resource/1k_grid.png").unwrap();
-        Rc::new(device_ref.create_texture_with_data(
-            TextureDescription {
-                format: TextureFormat::Rgba8Unorm,
-                size: TextureDimensions::D2(test_image.width(), test_image.height()),
-                usage: TextureUsages::SAMPLED | TextureUsages::TRANSFER_DST,
-                memory_type: MemoryType::GpuOnly,
-            },
-            test_image.as_rgba8().unwrap(),
-        ))
-    };
+    let device: neptune_graphics::Buffer = test_device
+        .create_static_buffer(
+            neptune_graphics::MemoryLocation::GpuOnly,
+            &[0, 1, 2, 3, 4, 5],
+        )
+        .expect("Failed to create a static buffer");
 
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -68,8 +48,6 @@ fn main() {
                     info!("FPS: {}", frame_count_time.0);
                     frame_count_time = (0, 0.0);
                 }
-
-                imgui_layer.update_time(last_frame_time);
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -79,42 +57,10 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                //Build Imgui
-                imgui_layer.build_frame(&window, move |ui| {
-                    ui.window("Hello World1").build(|| {
-                        ui.text("This...is...imgui-rs!");
-                        ui.separator();
-                        let mouse_pos = ui.io().mouse_pos;
-                        ui.text(format!(
-                            "Mouse Position: ({:.1},{:.1})",
-                            mouse_pos[0], mouse_pos[1]
-                        ));
-                    });
-                });
-
-                let vert_module_ref = triangle_vertex_module.clone();
-                let frag_module_ref = triangle_fragment_module.clone();
-                let test_texture_ref = test_texture.clone();
-                let imgui_ref = &mut imgui_layer;
-
-                //Render Frame
-                device_ref.render(move |render_graph| {
-                    let texture_id = render_graph.import_texture(test_texture_ref);
-                    let (swapchain_id, _swapchain_size) = render_graph.get_swapchain_image();
-                    neptune_graphics::render_triangle_test(
-                        render_graph,
-                        texture_id,
-                        swapchain_id,
-                        vert_module_ref,
-                        frag_module_ref,
-                    );
-                    imgui_ref.render_frame(render_graph, swapchain_id);
-                });
+                test_device.render_frame(|render_graph_builder| {});
             }
             Event::RedrawRequested(_window_id) => {}
-            event => {
-                imgui_layer.handle_event(&window, &event);
-            }
+            _ => {}
         }
     });
     info!("Exiting Main Loop!");
