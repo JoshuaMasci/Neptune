@@ -1,4 +1,5 @@
 mod imgui_layer;
+mod scene_layer;
 
 use neptune_core::log::{debug, error, info, trace, warn};
 use std::time::Instant;
@@ -8,6 +9,7 @@ pub use winit::{
     event_loop::ControlFlow,
 };
 
+use crate::scene_layer::SceneLayer;
 use neptune_graphics::DeviceTrait;
 
 fn main() {
@@ -25,14 +27,9 @@ fn main() {
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
-    let mut test_device = neptune_graphics::get_test_device();
+    let mut device = neptune_graphics::get_test_device();
 
-    let device: neptune_graphics::Buffer = test_device
-        .create_static_buffer(
-            neptune_graphics::MemoryLocation::GpuOnly,
-            &[0, 1, 2, 3, 4, 5],
-        )
-        .expect("Failed to create a static buffer");
+    let mut scene_layer = SceneLayer::new(&mut device);
 
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -57,7 +54,9 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                test_device.render_frame(|render_graph_builder| {});
+                device.render_frame(|render_graph_builder| {
+                    scene_layer.build_render_graph(render_graph_builder);
+                });
             }
             Event::RedrawRequested(_window_id) => {}
             _ => {}

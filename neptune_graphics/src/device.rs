@@ -1,4 +1,5 @@
-use crate::{MemoryLocation, RenderGraphBuilder};
+use crate::render_graph_builder::RenderGraphBuilderImpl;
+use bitflags::bitflags;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeviceType {
@@ -25,32 +26,123 @@ pub struct DeviceInfo {
     pub device_type: DeviceType,
 }
 
-pub trait Device {
+pub trait DeviceTrait {
+    type ComputeShader: Sync + Clone;
+
     type Buffer: Sync + Clone;
     type Texture: Sync + Clone;
     type Sampler: Sync + Clone;
 
     fn info(&self) -> DeviceInfo;
 
-    fn create_buffer(
-        &mut self,
-        size: usize,
-        memory_location: MemoryLocation,
-    ) -> Option<Self::Buffer>;
-    fn create_static_buffer(
-        &mut self,
-        memory_location: MemoryLocation,
-        data: &[u8],
-    ) -> Option<Self::Buffer>;
+    fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Self::Buffer>;
+    fn create_static_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Option<Self::Buffer>;
 
-    fn create_texture(&mut self, memory_location: MemoryLocation) -> Option<Self::Texture>;
+    fn create_texture(&mut self, create_info: &TextureCreateInfo) -> Option<Self::Texture>;
     fn create_static_texture(
         &mut self,
-        memory_location: MemoryLocation,
+        create_info: &TextureCreateInfo,
         data: &[u8],
     ) -> Option<Self::Texture>;
 
-    fn create_sampler(&mut self) -> Option<Self::Sampler>;
+    fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Self::Sampler>;
 
-    fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilder));
+    fn create_compute_shader(&mut self, code: &[u32]) -> Option<Self::ComputeShader>;
+
+    fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>));
+}
+
+//Buffer API
+bitflags! {
+    pub struct BufferUsage: u32 {
+        const TRANSFER_READ = 1 << 0;
+        const TRANSFER_WRITE = 1 << 1; //TODO: delete this? Almost all buffers will require this, otherwise it can't be written to from the cpu
+        const VERTEX = 1 << 2;
+        const INDEX = 1 << 3;
+        const UNIFORM = 1 << 4;
+        const STORAGE = 1 << 5;
+        const INDIRECT  = 1 << 6;
+    }
+}
+
+//Texture API
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum TextureFormat {
+    Some,
+    Other,
+}
+
+bitflags! {
+    pub struct TextureUsage: u32 {
+        const TRANSFER_READ = 1 << 0;
+        const TRANSFER_WRITE = 1 << 1;
+        const SAMPLED = 1 << 2;
+        const STORAGE = 1 << 3;
+        const RENDER_ATTACHMENT = 1 << 4;
+    }
+}
+
+//TODO: Not sure mip_levels and sample counts can/should be allowable together
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub struct TextureCreateInfo {
+    pub format: TextureFormat,
+    pub size: [u32; 2],
+    pub usage: TextureUsage,
+    pub mip_levels: u32,
+    pub sample_count: u32,
+}
+
+//TODO: Create API for
+#[allow(dead_code)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub struct CubeTextureCreateInfo {
+    pub format: TextureFormat,
+    pub size: u32,
+    pub usage: TextureUsage,
+    pub mip_levels: u32,
+}
+
+//Sampler API
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum AddressMode {
+    Repeat,
+    MirrorRepeat,
+    ClampToEdge,
+    ClampToBorder,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum FilterMode {
+    Nearest,
+    Linear,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum AnisotropicFilter {
+    X1,
+    X2,
+    X4,
+    X8,
+    X16,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum BorderColor {
+    TransparentBlack,
+    OpaqueBlack,
+    OpaqueWhite,
+}
+
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub struct SamplerCreateInfo {
+    mag_filter: FilterMode,
+    min_filter: FilterMode,
+    mip_filter: FilterMode,
+    address_mode_u: AddressMode,
+    address_mode_v: AddressMode,
+    address_mode_w: AddressMode,
+    min_lod: f32,
+    max_lod: f32,
+    max_anisotropy: Option<AnisotropicFilter>,
+    boarder_color: BorderColor,
 }

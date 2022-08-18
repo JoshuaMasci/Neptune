@@ -16,3 +16,4 @@ imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
 imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }
 
 image = "0.24.2"
+bytemuck = "1.12.0"
