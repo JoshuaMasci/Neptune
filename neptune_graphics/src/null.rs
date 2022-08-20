@@ -9,6 +9,8 @@ pub struct NullDevice {}
 
 impl DeviceTrait for NullDevice {
     type ComputeShader = Arc<NullShader>;
+    type VertexShader = Arc<NullShader>;
+    type FragmentShader = Arc<NullShader>;
 
     type Buffer = Arc<NullBuffer>;
     type Texture = Arc<NullTexture>;

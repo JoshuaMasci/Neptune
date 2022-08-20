@@ -28,6 +28,8 @@ pub struct DeviceInfo {
 
 pub trait DeviceTrait {
     type ComputeShader: Sync + Clone;
+    type VertexShader: Sync + Clone;
+    type FragmentShader: Sync + Clone;
 
     type Buffer: Sync + Clone;
     type Texture: Sync + Clone;
@@ -92,7 +94,18 @@ pub struct TextureCreateInfo {
     pub sample_count: u32,
 }
 
-//TODO: Create API for
+//TODO: Create API for this
+#[allow(dead_code)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum CubeTextureFace {
+    Left,
+    Right,
+    Up,
+    Down,
+    Forward,
+    Backward,
+}
+
 #[allow(dead_code)]
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub struct CubeTextureCreateInfo {
