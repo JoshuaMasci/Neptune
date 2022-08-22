@@ -48,6 +48,14 @@ impl DeviceTrait for NullDevice {
         Some(Arc::new(NullSampler(0)))
     }
 
+    fn create_vertex_shader(&mut self, code: &[u32]) -> Option<Self::VertexShader> {
+        Some(Arc::new(NullShader(0)))
+    }
+
+    fn create_fragment_shader(&mut self, code: &[u32]) -> Option<Self::FragmentShader> {
+        Some(Arc::new(NullShader(0)))
+    }
+
     fn create_compute_shader(&mut self, code: &[u32]) -> Option<Self::ComputeShader> {
         Some(Arc::new(NullShader(0)))
     }

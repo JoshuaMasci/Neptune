@@ -49,6 +49,8 @@ pub trait DeviceTrait {
 
     fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Self::Sampler>;
 
+    fn create_vertex_shader(&mut self, code: &[u32]) -> Option<Self::VertexShader>;
+    fn create_fragment_shader(&mut self, code: &[u32]) -> Option<Self::FragmentShader>;
     fn create_compute_shader(&mut self, code: &[u32]) -> Option<Self::ComputeShader>;
 
     fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>));
