@@ -1,21 +1,12 @@
 use crate::device::{
-    BufferUsage, DeviceInfo, DeviceTrait, DeviceType, DeviceVendor, SamplerCreateInfo,
-    TextureCreateInfo,
+    Buffer, BufferUsage, DeviceInfo, DeviceTrait, DeviceType, DeviceVendor, Sampler,
+    SamplerCreateInfo, Texture, TextureCreateInfo,
 };
-use crate::render_graph_builder::RenderGraphBuilderImpl;
-use std::sync::Arc;
+use crate::handle::Handle;
 
 pub struct NullDevice {}
 
 impl DeviceTrait for NullDevice {
-    type ComputeShader = Arc<NullShader>;
-    type VertexShader = Arc<NullShader>;
-    type FragmentShader = Arc<NullShader>;
-
-    type Buffer = Arc<NullBuffer>;
-    type Texture = Arc<NullTexture>;
-    type Sampler = Arc<NullSampler>;
-
     fn info(&self) -> DeviceInfo {
         DeviceInfo {
             name: String::from("NullDevice"),
@@ -24,49 +15,32 @@ impl DeviceTrait for NullDevice {
         }
     }
 
-    fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Self::Buffer> {
-        Some(Arc::new(NullBuffer(0)))
+    fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Buffer> {
+        Some(Buffer(Handle::new_temp(0)))
     }
 
-    fn create_static_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Option<Self::Buffer> {
-        Some(Arc::new(NullBuffer(1)))
+    fn create_static_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Option<Buffer> {
+        Some(Buffer(Handle::new_temp(0)))
     }
 
-    fn create_texture(&mut self, create_info: &TextureCreateInfo) -> Option<Self::Texture> {
-        Some(Arc::new(NullTexture(0)))
+    fn create_texture(&mut self, create_info: &TextureCreateInfo) -> Option<Texture> {
+        Some(Texture(Handle::new_temp(0)))
     }
 
     fn create_static_texture(
         &mut self,
         create_info: &TextureCreateInfo,
         data: &[u8],
-    ) -> Option<Self::Texture> {
-        Some(Arc::new(NullTexture(1)))
+    ) -> Option<Texture> {
+        Some(Texture(Handle::new_temp(0)))
     }
 
-    fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Self::Sampler> {
-        Some(Arc::new(NullSampler(0)))
+    fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Sampler> {
+        Some(Sampler(Handle::new_temp(0)))
     }
 
-    fn create_vertex_shader(&mut self, code: &[u32]) -> Option<Self::VertexShader> {
-        Some(Arc::new(NullShader(0)))
-    }
-
-    fn create_fragment_shader(&mut self, code: &[u32]) -> Option<Self::FragmentShader> {
-        Some(Arc::new(NullShader(0)))
-    }
-
-    fn create_compute_shader(&mut self, code: &[u32]) -> Option<Self::ComputeShader> {
-        Some(Arc::new(NullShader(0)))
-    }
-
-    fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>)) {
-        let mut render_graph_builder = RenderGraphBuilderImpl::default();
-        build_graph_fn(&mut render_graph_builder);
-    }
+    // fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>)) {
+    //     let mut render_graph_builder = RenderGraphBuilderImpl::default();
+    //     build_graph_fn(&mut render_graph_builder);
+    // }
 }
-
-pub struct NullBuffer(u32);
-pub struct NullTexture(u32);
-pub struct NullSampler(u32);
-pub struct NullShader(u32);

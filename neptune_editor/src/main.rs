@@ -9,10 +9,13 @@ pub use winit::{
     event_loop::ControlFlow,
 };
 
-use crate::scene_layer::SceneLayer;
-use neptune_graphics::DeviceTrait;
+struct SomeType(u32);
+type OtherType = SomeType;
 
 fn main() {
+    let some = SomeType(0);
+    let other: OtherType = some;
+
     neptune_core::setup_logger().expect("Failed to init logger");
 
     let mut event_loop = winit::event_loop::EventLoop::new();
@@ -28,8 +31,6 @@ fn main() {
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
     let mut device = neptune_graphics::get_test_device();
-
-    let mut scene_layer = SceneLayer::new(&mut device);
 
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -54,9 +55,8 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                device.render_frame(|render_graph_builder| {
-                    scene_layer.build_render_graph(render_graph_builder);
-                });
+                // device.render_frame(|render_graph_builder| {
+                // });
             }
             Event::RedrawRequested(_window_id) => {}
             _ => {}

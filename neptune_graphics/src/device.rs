@@ -1,5 +1,11 @@
-use crate::render_graph_builder::RenderGraphBuilderImpl;
+use crate::handle::Handle;
 use bitflags::bitflags;
+
+pub struct Buffer(pub(crate) Handle);
+pub struct Texture(pub(crate) Handle);
+pub struct Sampler(pub(crate) Handle);
+
+pub struct ComputeShader(pub(crate) Handle);
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeviceType {
@@ -10,7 +16,7 @@ pub enum DeviceType {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeviceVendor {
-    AMD,
+    Amd,
     Arm,
     ImgTec,
     Intel,
@@ -27,33 +33,21 @@ pub struct DeviceInfo {
 }
 
 pub trait DeviceTrait {
-    type ComputeShader: Sync + Clone;
-    type VertexShader: Sync + Clone;
-    type FragmentShader: Sync + Clone;
-
-    type Buffer: Sync + Clone;
-    type Texture: Sync + Clone;
-    type Sampler: Sync + Clone;
-
     fn info(&self) -> DeviceInfo;
 
-    fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Self::Buffer>;
-    fn create_static_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Option<Self::Buffer>;
+    fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Buffer>;
+    fn create_static_buffer(&mut self, usage: BufferUsage, data: &[u8]) -> Option<Buffer>;
 
-    fn create_texture(&mut self, create_info: &TextureCreateInfo) -> Option<Self::Texture>;
+    fn create_texture(&mut self, create_info: &TextureCreateInfo) -> Option<Texture>;
     fn create_static_texture(
         &mut self,
         create_info: &TextureCreateInfo,
         data: &[u8],
-    ) -> Option<Self::Texture>;
+    ) -> Option<Texture>;
 
-    fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Self::Sampler>;
+    fn create_sampler(&mut self, create_info: &SamplerCreateInfo) -> Option<Sampler>;
 
-    fn create_vertex_shader(&mut self, code: &[u32]) -> Option<Self::VertexShader>;
-    fn create_fragment_shader(&mut self, code: &[u32]) -> Option<Self::FragmentShader>;
-    fn create_compute_shader(&mut self, code: &[u32]) -> Option<Self::ComputeShader>;
-
-    fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>));
+    //fn render_frame(&mut self, build_graph_fn: impl FnOnce(&mut RenderGraphBuilderImpl<Self>));
 }
 
 //Buffer API
