@@ -2,6 +2,7 @@ mod device;
 mod handle;
 mod null;
 mod pipeline;
+mod render_graph;
 mod render_graph_builder;
 
 pub use device::BufferUsage;

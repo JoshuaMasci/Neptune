@@ -5,6 +5,8 @@ pub struct Buffer(pub(crate) Handle);
 pub struct Texture(pub(crate) Handle);
 pub struct Sampler(pub(crate) Handle);
 
+pub struct VertexShader(pub(crate) Handle);
+pub struct FragmentShader(pub(crate) Handle);
 pub struct ComputeShader(pub(crate) Handle);
 
 #[derive(Debug, Clone, Copy)]
