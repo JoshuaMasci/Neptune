@@ -26,6 +26,7 @@ impl<T: Clone> Attachment<T> {
     }
 }
 
+//TODO: Input Attachments
 pub struct RenderPassFramebuffer {
     pub color_attachment: Vec<Attachment<[f32; 4]>>,
     pub depth_attachment: Option<Attachment<(f32, u8)>>,

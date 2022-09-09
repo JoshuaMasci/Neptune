@@ -1,8 +1,8 @@
 use crate::render_graph::framebuffer::RenderPassFramebuffer;
 use crate::render_graph::{BufferResource, TextureResource};
 
-pub trait CommandBufferInterface {}
-pub type RenderFunction = dyn FnOnce(&mut dyn CommandBufferInterface);
+pub trait CommandBufferTrait {}
+pub type RasterFunction = dyn FnOnce(&mut dyn CommandBufferTrait);
 
 pub enum BufferResourceDescription {
     New { description: usize },
@@ -46,7 +46,15 @@ pub struct RenderPass {
     texture_read: Vec<(TextureResource, TextureReadAccess)>,
     texture_write: Vec<(TextureResource, TextureWriteAccess)>,
 
-    function: Box<RenderFunction>,
+    function: Box<RasterFunction>,
+}
+
+pub enum RenderPassType {
+    Raster {
+        framebuffer: RenderPassFramebuffer,
+        function: Box<RasterFunction>,
+    },
+    Compute {},
 }
 
 struct RenderPassBuilder {}

@@ -44,3 +44,5 @@ impl DeviceTrait for NullDevice {
     //     build_graph_fn(&mut render_graph_builder);
     // }
 }
+
+pub struct NullCommandBuffer {}
