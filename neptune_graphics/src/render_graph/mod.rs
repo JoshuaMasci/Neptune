@@ -1,10 +1,7 @@
+mod builder;
 mod framebuffer;
-mod render_graph;
+mod graph;
 
-pub type ResourceId = u16;
-
-#[derive(Copy, Clone, Default)]
-pub struct BufferResource(ResourceId);
-
-#[derive(Copy, Clone, Default)]
-pub struct TextureResource(ResourceId);
+pub use builder::*;
+pub use framebuffer::*;
+pub use graph::*;

@@ -1,33 +1,37 @@
-use crate::render_graph::TextureResource;
+use crate::texture::{TextureGraphResource, TextureResource};
 
-pub enum LoadOp<T> {
+pub enum LoadOp<ClearType> {
     None,
-    Clear(T),
+    Clear(ClearType),
 }
 
-pub struct Attachment<T: Clone> {
-    pub texture: TextureResource,
-    pub clear_value: LoadOp<T>,
+pub struct Attachment<ClearType: Clone> {
+    pub texture: TextureGraphResource,
+    pub clear_value: LoadOp<ClearType>,
 }
 
-impl<T: Clone> Attachment<T> {
-    pub fn new(texture: TextureResource) -> Self {
+impl<ClearType: Clone> Attachment<ClearType> {
+    pub fn new<TextureType: TextureResource>(texture: &TextureType) -> Self {
         Self {
-            texture,
+            texture: texture.get_graph_resource(),
             clear_value: LoadOp::None,
         }
     }
 
-    pub fn new_with_clear(texture: TextureResource, clear_value: &T) -> Self {
+    pub fn new_with_clear<TextureType: TextureResource>(
+        texture: &TextureType,
+        clear_value: &ClearType,
+    ) -> Self {
         Self {
-            texture,
+            texture: texture.get_graph_resource(),
             clear_value: LoadOp::Clear(clear_value.clone()),
         }
     }
 }
 
+#[derive(Default)]
 //TODO: Input Attachments
 pub struct RenderPassFramebuffer {
     pub color_attachment: Vec<Attachment<[f32; 4]>>,
-    pub depth_attachment: Option<Attachment<(f32, u8)>>,
+    pub depth_stencil_attachment: Option<Attachment<(f32, u8)>>,
 }

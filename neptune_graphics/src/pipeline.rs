@@ -5,7 +5,7 @@ pub enum IndexSize {
 }
 
 //TODO: Better blending and stencil settings
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Clone)]
 pub struct PipelineState {
     pub cull_mode: CullMode,
     pub depth_mode: DepthTestMode,
