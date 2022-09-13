@@ -65,6 +65,7 @@ impl RasterPass {
             fragment_shader: fragment_shader.map(|fragment_shader| fragment_shader.get_handle()),
             pipeline_state: (*pipeline_state).clone(),
             vertex_layout: vertex_layout.to_vec(),
+            commands: vec![],
         });
     }
 }

@@ -125,11 +125,11 @@ fn test_render_api() {
             &[0.0, 0.0, 0.0, 1.0],
         ));
 
-        let basic_pipeline_state = PipelineState::default();
+        let default_pipeline_state = PipelineState::default();
         raster_pass.pipeline(
             &basic_vertex_shader,
             Some(&basic_fragment_shader),
-            &basic_pipeline_state,
+            &default_pipeline_state,
             &[],
             || {},
         );
