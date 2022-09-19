@@ -1,31 +1,32 @@
-use crate::buffer::{BufferGraphResource, BufferHandle};
+use crate::buffer::BufferGraphResource;
 use crate::handle::HandleType;
 use crate::render_graph::command_buffer::RasterCommand;
 use crate::render_graph::framebuffer::RenderPassFramebuffer;
-use crate::shader::ComputeShader;
+use crate::sampler::SamplerHandle;
+use crate::shader::{ComputeShader, ShaderHandle};
 use crate::texture::TextureGraphResource;
-use crate::{IndexSize, PipelineState, VertexElement};
-
-pub trait CommandBufferTrait {}
-pub type RasterFunction = dyn FnOnce(&mut dyn CommandBufferTrait);
-
-pub struct BufferResourceDeclaration {
-    pub(crate) id: usize,
-}
-
-pub struct TextureResourceDeclaration {
-    pub(crate) id: usize,
-}
+use crate::{PipelineState, VertexElement};
 
 pub enum BufferReadAccess {}
 pub enum BufferWriteAccess {}
 pub enum TextureReadAccess {}
 pub enum TextureWriteAccess {}
 
+pub enum GraphResource {
+    StorageBuffer {
+        buffer: BufferGraphResource,
+        write: bool,
+    },
+    StorageTexture {
+        texture: TextureGraphResource,
+        write: bool,
+    },
+    Sampler(SamplerHandle),
+    SampledTexture(TextureGraphResource),
+}
+
 #[derive(Default)]
 pub struct RenderGraph {
-    pub buffer_declarations: Vec<BufferResourceDeclaration>,
-    pub texture_declarations: Vec<TextureResourceDeclaration>,
     pub render_passes: Vec<RenderPass>,
 }
 
@@ -56,7 +57,8 @@ pub enum RenderPassType {
         pipelines: Vec<RasterPassPipeline>,
     },
     Compute {
-        shader: ComputeShader,
+        shader: ShaderHandle,
         dispatch: [u32; 3],
+        resources: Vec<(u32, GraphResource)>,
     },
 }

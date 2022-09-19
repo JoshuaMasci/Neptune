@@ -60,8 +60,8 @@ fn main() {
 }
 
 use neptune_graphics::{
-    AddressMode, Attachment, BorderColor, BufferUsage, DeviceTrait, FilterMode, PipelineState,
-    RasterPass, SamplerCreateInfo, TextureCreateInfo, TextureFormat, TextureUsage,
+    AddressMode, Attachment, BorderColor, BufferUsage, DeviceTrait, FilterMode, IndexSize,
+    PipelineState, RasterPass, SamplerCreateInfo, TextureCreateInfo, TextureFormat, TextureUsage,
 };
 
 //TODO: verify that this works
@@ -77,12 +77,14 @@ fn test_render_api() {
     let triangle_vertex_buffer = device
         .create_static_buffer(
             BufferUsage::VERTEX,
-            to_bytes_unsafe(&[0.0, 0.5, 0.0, -0.5, -0.5, 0.0, 0.5, -0.5, 0.0]),
+            to_bytes_unsafe(&[
+                0.0f32, 0.5f32, 0.0f32, -0.5f32, -0.5f32, 0.0f32, 0.5f32, -0.5f32, 0.0f32,
+            ]),
         )
         .unwrap();
 
     let triangle_index_buffer = device
-        .create_static_buffer(BufferUsage::INDEX, to_bytes_unsafe(&[0, 1, 2]))
+        .create_static_buffer(BufferUsage::INDEX, to_bytes_unsafe(&[0u32, 1u32, 2u32]))
         .unwrap();
 
     let purple_texture = device
@@ -132,7 +134,11 @@ fn test_render_api() {
             &default_pipeline_state,
             &[],
             |raster_command_buffer| {
-                raster_command_buffer.draw(0..3, 0..1);
+                raster_command_buffer.bind_vertex_buffer(&triangle_vertex_buffer, 0);
+                raster_command_buffer.bind_index_buffer(&triangle_index_buffer, 0, IndexSize::U32);
+                raster_command_buffer.bind_sampler(0, &linear_sampler);
+                raster_command_buffer.bind_sampled_texture(1, &purple_texture);
+                raster_command_buffer.draw_indexed(0..3, 0, 0..1);
             },
         );
 
