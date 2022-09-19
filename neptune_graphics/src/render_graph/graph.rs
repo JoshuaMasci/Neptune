@@ -1,5 +1,6 @@
 use crate::buffer::{BufferGraphResource, BufferHandle};
 use crate::handle::HandleType;
+use crate::render_graph::command_buffer::RasterCommand;
 use crate::render_graph::framebuffer::RenderPassFramebuffer;
 use crate::shader::ComputeShader;
 use crate::texture::TextureGraphResource;
@@ -38,22 +39,6 @@ pub struct RenderPass {
     pub pass_type: RenderPassType,
 }
 
-pub enum RasterPassCommand {
-    BindVertexBuffers(Vec<(BufferHandle, u32)>),
-    BindIndexBuffer(BufferHandle, u32, IndexSize),
-    //TODO: PushConstants(VK) / RootConstants?(DX12)
-    Draw {
-        vertex_range: std::ops::Range<u32>,
-        instance_range: std::ops::Range<u32>,
-    },
-    DrawIndexed {
-        index_range: std::ops::Range<u32>,
-        base_vertex: i32,
-        instance_range: std::ops::Range<u32>,
-    },
-    //TODO: Indirect draw
-}
-
 pub struct RasterPassPipeline {
     pub vertex_shader: HandleType,
     pub fragment_shader: Option<HandleType>,
@@ -61,7 +46,7 @@ pub struct RasterPassPipeline {
     pub vertex_layout: Vec<VertexElement>,
 
     //TODO: Probably shouldn't store a command list, instead using a closure, but this is easier to track resource usage for now
-    pub commands: Vec<RasterPassCommand>,
+    pub commands: Vec<RasterCommand>,
 }
 
 pub enum RenderPassType {

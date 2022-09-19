@@ -131,7 +131,9 @@ fn test_render_api() {
             Some(&basic_fragment_shader),
             &default_pipeline_state,
             &[],
-            || {},
+            |raster_command_buffer| {
+                raster_command_buffer.draw(0..3, 0..1);
+            },
         );
 
         render_graph_builder.add_raster_pass(raster_pass);

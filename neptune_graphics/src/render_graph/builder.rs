@@ -1,3 +1,4 @@
+use crate::render_graph::command_buffer::{RasterCommand, RasterCommandBuffer};
 use crate::render_graph::graph::RenderGraph;
 use crate::render_graph::{
     Attachment, RasterPassPipeline, RenderPass, RenderPassFramebuffer, RenderPassType,
@@ -58,14 +59,18 @@ impl RasterPass {
         fragment_shader: Option<&FragmentShader>,
         pipeline_state: &PipelineState,
         vertex_layout: &[VertexElement],
-        raster_fn: impl FnOnce(),
+        raster_fn: impl FnOnce(&mut RasterCommandBuffer),
     ) {
+        let mut raster_command_buffer = RasterCommandBuffer::new();
+
+        raster_fn(&mut raster_command_buffer);
+
         self.pipelines.push(RasterPassPipeline {
             vertex_shader: vertex_shader.get_handle(),
             fragment_shader: fragment_shader.map(|fragment_shader| fragment_shader.get_handle()),
             pipeline_state: (*pipeline_state).clone(),
             vertex_layout: vertex_layout.to_vec(),
-            commands: vec![],
+            commands: raster_command_buffer.commands,
         });
     }
 }
