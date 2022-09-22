@@ -1,20 +1,64 @@
 use crate::buffer::Buffer;
 use crate::device::{DeviceInfo, DeviceTrait, DeviceType, DeviceVendor};
+use crate::instance::InstanceTrait;
 use crate::render_graph::{RenderGraph, RenderGraphBuilder};
 use crate::sampler::{Sampler, SamplerCreateInfo};
 use crate::shader::{ComputeShader, FragmentShader, VertexShader};
+use crate::surface::Surface;
 use crate::texture::{SwapchainTexture, Texture};
 use crate::{BufferUsage, TextureCreateInfo};
 
-pub struct NullDevice {}
+pub struct NullInstance {}
+
+impl InstanceTrait for NullInstance {
+    type DeviceImpl = NullDevice;
+
+    fn create_surface(&mut self) -> Option<Surface> {
+        Some(Surface::new_temp(0))
+    }
+
+    fn select_and_create_device(
+        &mut self,
+        surface: Option<&Surface>,
+        score_function: impl Fn(&DeviceInfo) -> u32,
+    ) -> Option<Self::DeviceImpl> {
+        let _ = surface;
+
+        let devices = [
+            DeviceInfo {
+                name: String::from("Dummy Unknown Gpu"),
+                vendor: DeviceVendor::Unknown(256),
+                device_type: DeviceType::Unknown,
+            },
+            DeviceInfo {
+                name: String::from("Dummy Integrated Gpu"),
+                vendor: DeviceVendor::Intel,
+                device_type: DeviceType::Integrated,
+            },
+            DeviceInfo {
+                name: String::from("Dummy Discrete Gpu"),
+                vendor: DeviceVendor::Nvidia,
+                device_type: DeviceType::Discrete,
+            },
+        ];
+
+        devices
+            .iter()
+            .map(|device_info| (device_info, score_function(device_info)))
+            .max_by(|(_, score1), (_, score2)| score1.cmp(score2))
+            .map(|(device_info, _score)| NullDevice {
+                device_info: device_info.clone(),
+            })
+    }
+}
+
+pub struct NullDevice {
+    pub device_info: DeviceInfo,
+}
 
 impl DeviceTrait for NullDevice {
     fn info(&self) -> DeviceInfo {
-        DeviceInfo {
-            name: String::from("NullDevice"),
-            vendor: DeviceVendor::Unknown(0),
-            device_type: DeviceType::Discrete,
-        }
+        self.device_info.clone()
     }
 
     fn create_buffer(&mut self, size: usize, usage: BufferUsage) -> Option<Buffer> {

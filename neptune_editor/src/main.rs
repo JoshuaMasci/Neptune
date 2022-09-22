@@ -60,8 +60,9 @@ fn main() {
 }
 
 use neptune_graphics::{
-    AddressMode, Attachment, BorderColor, BufferUsage, DeviceTrait, FilterMode, IndexSize,
-    PipelineState, RasterPass, SamplerCreateInfo, TextureCreateInfo, TextureFormat, TextureUsage,
+    AddressMode, Attachment, BorderColor, BufferUsage, DeviceTrait, DeviceType, FilterMode,
+    IndexSize, InstanceTrait, PipelineState, RasterPass, SamplerCreateInfo, TextureCreateInfo,
+    TextureFormat, TextureUsage,
 };
 
 //TODO: verify that this works
@@ -72,7 +73,22 @@ fn to_bytes_unsafe<T>(data: &[T]) -> &[u8] {
 }
 
 fn test_render_api() {
-    let mut device = neptune_graphics::get_test_device();
+    let mut instance = neptune_graphics::create_instance();
+
+    let surface = instance.create_surface().unwrap();
+
+    info!("Available Devices: ");
+    let mut device = instance
+        .select_and_create_device(Some(&surface), |device_info| {
+            println!("\t\t{:?}", device_info);
+            match device_info.device_type {
+                DeviceType::Integrated => 50,
+                DeviceType::Discrete => 100,
+                DeviceType::Unknown => 0,
+            }
+        })
+        .unwrap();
+    info!("Selected Device: {:?}", device.device_info);
 
     let triangle_vertex_buffer = device
         .create_static_buffer(

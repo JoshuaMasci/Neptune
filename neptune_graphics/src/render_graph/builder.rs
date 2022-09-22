@@ -19,7 +19,7 @@ impl<'a> RenderGraphBuilder<'a> {
         Self { render_graph }
     }
 
-    pub fn add_raster_pass(&mut self, mut raster_pass: RasterPass) {
+    pub fn add_raster_pass(&mut self, raster_pass: RasterPass) {
         self.render_graph.render_passes.push(RenderPass {
             name: raster_pass.name,
             buffer_read: vec![],
