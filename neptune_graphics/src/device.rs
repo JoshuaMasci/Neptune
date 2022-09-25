@@ -27,6 +27,7 @@ pub struct DeviceInfo {
     pub name: String,
     pub vendor: DeviceVendor,
     pub device_type: DeviceType,
+    //TODO: Add VRam amount, Other Device Properties?
 }
 
 pub trait DeviceTrait {

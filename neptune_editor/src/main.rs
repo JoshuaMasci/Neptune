@@ -1,4 +1,3 @@
-mod imgui_layer;
 mod scene_layer;
 
 use neptune_core::log::{debug, error, info, trace, warn};
@@ -12,8 +11,6 @@ pub use winit::{
 fn main() {
     neptune_core::setup_logger().expect("Failed to init logger");
 
-    test_render_api();
-
     let mut event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .with_title("Neptune Editor")
@@ -22,6 +19,8 @@ fn main() {
         .unwrap();
 
     window.set_maximized(true);
+
+    test_render_api(&window);
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
@@ -72,10 +71,10 @@ fn to_bytes_unsafe<T>(data: &[T]) -> &[u8] {
     unsafe { &*std::ptr::slice_from_raw_parts(ptr as *const u8, ptr_size) }
 }
 
-fn test_render_api() {
+fn test_render_api(window: &winit::window::Window) {
     let mut instance = neptune_graphics::create_instance();
 
-    let surface = instance.create_surface().unwrap();
+    let surface = instance.create_surface(window).unwrap();
 
     info!("Available Devices: ");
     let mut device = instance
@@ -88,7 +87,7 @@ fn test_render_api() {
             }
         })
         .unwrap();
-    info!("Selected Device: {:?}", device.device_info);
+    info!("Selected Device: {:?}", device.info());
 
     let triangle_vertex_buffer = device
         .create_static_buffer(

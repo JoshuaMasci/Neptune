@@ -8,12 +8,9 @@ edition = "2021"
 shaderc = "0.8.0"
 
 [dependencies]
-winit = "0.26"
+winit = "0.27.3"
+
 neptune_core = { path = "../neptune_core"}
 neptune_graphics = { path = "../neptune_graphics"}
 
-imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
-imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }
-
 image = "0.24.2"
-bytemuck = "1.12.0"

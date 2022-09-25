@@ -10,9 +10,12 @@ mod shader;
 mod surface;
 mod texture;
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod vulkan;
+
 pub use instance::InstanceTrait;
 
-pub use surface::Surface;
+//pub use surface::Surface;
 
 pub use device::DeviceTrait;
 pub use device::DeviceType;
@@ -37,10 +40,14 @@ pub use render_graph::RasterPass;
 
 //TODO: define backends per platform
 // Use enums backends for platforms that support more than 1 render api (i.e Windows 10+ -> VK/DX12)
-pub type Instance = null::NullInstance;
-pub type Device = null::NullDevice;
-pub type CommandBuffer = null::NullCommandBuffer;
+// pub type Instance = null::NullInstance;
+// pub type Surface = null::NullSurface;
+// pub type Device = null::NullDevice;
+
+pub type Instance = vulkan::VulkanInstance;
+pub type Surface = vulkan::VulkanSurface;
+pub type Device = vulkan::VulkanDevice;
 
 pub fn create_instance() -> Instance {
-    Instance {}
+    Instance::new("Test App")
 }

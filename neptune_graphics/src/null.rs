@@ -4,7 +4,6 @@ use crate::instance::InstanceTrait;
 use crate::render_graph::{RenderGraph, RenderGraphBuilder};
 use crate::sampler::{Sampler, SamplerCreateInfo};
 use crate::shader::{ComputeShader, FragmentShader, VertexShader};
-use crate::surface::Surface;
 use crate::texture::{SwapchainTexture, Texture};
 use crate::{BufferUsage, TextureCreateInfo};
 
@@ -12,14 +11,21 @@ pub struct NullInstance {}
 
 impl InstanceTrait for NullInstance {
     type DeviceImpl = NullDevice;
+    type SurfaceImpl = NullSurface;
 
-    fn create_surface(&mut self) -> Option<Surface> {
-        Some(Surface::new_temp(0))
+    fn create_surface<
+        T: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
+    >(
+        &mut self,
+        window: &T,
+    ) -> Option<Self::SurfaceImpl> {
+        let _ = window;
+        Some(Self::SurfaceImpl {})
     }
 
     fn select_and_create_device(
         &mut self,
-        surface: Option<&Surface>,
+        surface: Option<&Self::SurfaceImpl>,
         score_function: impl Fn(&DeviceInfo) -> u32,
     ) -> Option<Self::DeviceImpl> {
         let _ = surface;
@@ -51,6 +57,8 @@ impl InstanceTrait for NullInstance {
             })
     }
 }
+
+pub struct NullSurface {}
 
 pub struct NullDevice {
     pub device_info: DeviceInfo,
@@ -109,5 +117,3 @@ impl DeviceTrait for NullDevice {
         );
     }
 }
-
-pub struct NullCommandBuffer {}
