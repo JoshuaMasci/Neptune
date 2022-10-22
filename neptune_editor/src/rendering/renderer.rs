@@ -6,9 +6,10 @@ use std::iter;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
-use wgpu::{BindingResource, BufferBinding};
+use wgpu::{BindingResource, BufferBinding, ColorTargetState};
 
 use crate::rendering::camera::Camera;
+use crate::rendering::material::Material;
 use crate::rendering::mesh::{Mesh, Vertex};
 use winit::window::Window;
 
@@ -35,8 +36,10 @@ pub(crate) struct Renderer {
     transforms_buffer: wgpu::Buffer,
     transforms_bind_group: wgpu::BindGroup,
 
-    mesh_pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    depth_format: wgpu::TextureFormat,
 
+    material_map: HashMap<PathBuf, Weak<Material>>,
     mesh_map: HashMap<PathBuf, Weak<Mesh>>,
 }
 
@@ -118,62 +121,6 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: None,
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../shader/triangle.wgsl"
-            ))),
-        });
-
-        let vertex_buffers = [wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: memoffset::offset_of!(Vertex, _position) as wgpu::BufferAddress,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: memoffset::offset_of!(Vertex, _normal) as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: memoffset::offset_of!(Vertex, _uv) as wgpu::BufferAddress,
-                    shader_location: 2,
-                },
-            ],
-        }];
-
-        let mesh_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &vertex_buffers,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(config.format.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Greater,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
-
         let camera_buffer = UniformBuffer::new(&device, &queue, CameraData::default());
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -212,11 +159,13 @@ impl Renderer {
             queue,
             config,
             size,
-            mesh_pipeline,
             camera_buffer,
             camera_bind_group,
             transforms_buffer,
             transforms_bind_group,
+            pipeline_layout,
+            depth_format: wgpu::TextureFormat::Depth24Plus,
+            material_map: HashMap::new(),
             mesh_map: HashMap::new(),
         }
     }
@@ -298,11 +247,8 @@ impl Renderer {
                 }),
             });
 
-            render_pass.set_pipeline(&self.mesh_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-
             for (index, object) in world.static_objects.iter().enumerate() {
-                if let Some(mesh) = &object.0.mesh {
+                if let Some(model) = &object.0.model {
                     let model_matrix = object.0.transform.get_offset_model_matrix(camera_position);
 
                     let offset = std::mem::size_of::<glam::Mat4>() * index;
@@ -313,19 +259,22 @@ impl Renderer {
                         bytemuck::bytes_of(&model_matrix),
                     );
 
+                    render_pass.set_pipeline(&model.material.pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
                     render_pass.set_bind_group(
                         1,
                         &self.transforms_bind_group,
                         &[offset as wgpu::DynamicOffset],
                     );
 
-                    mesh.draw(&mut render_pass, 0..1);
+                    model.mesh.draw(&mut render_pass, 0..1);
                 }
             }
 
             let mesh_offset = world.static_objects.len();
             for (index, object) in world.dynamic_objects.iter().enumerate() {
-                if let Some(mesh) = &object.object.mesh {
+                if let Some(model) = &object.object.model {
                     let model_matrix = object
                         .object
                         .transform
@@ -339,13 +288,16 @@ impl Renderer {
                         bytemuck::bytes_of(&model_matrix),
                     );
 
+                    render_pass.set_pipeline(&model.material.pipeline);
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
                     render_pass.set_bind_group(
                         1,
                         &self.transforms_bind_group,
                         &[offset as wgpu::DynamicOffset],
                     );
 
-                    mesh.draw(&mut render_pass, 0..1);
+                    model.mesh.draw(&mut render_pass, 0..1);
                 }
             }
         }
@@ -353,6 +305,88 @@ impl Renderer {
         output.present();
 
         Ok(())
+    }
+
+    pub fn get_material(&mut self, path: &str) -> Option<Arc<Material>> {
+        let path_buf = PathBuf::from(path);
+
+        //If material is not loaded or has been unloaded this will be none
+        let mut loaded_material = self
+            .material_map
+            .get(&path_buf)
+            .map(|material_ref| material_ref.upgrade())
+            .unwrap_or_default();
+
+        //If material is not loaded, try to load it
+        if loaded_material.is_none() {
+            if let Ok(code_string) = std::fs::read_to_string(path) {
+                let shader = self
+                    .device
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(path),
+                        source: wgpu::ShaderSource::Wgsl(Cow::from(code_string)),
+                    });
+
+                let vertex_buffer_layout = [wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: memoffset::offset_of!(Vertex, _position) as wgpu::BufferAddress,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: memoffset::offset_of!(Vertex, _normal) as wgpu::BufferAddress,
+                            shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x2,
+                            offset: memoffset::offset_of!(Vertex, _uv) as wgpu::BufferAddress,
+                            shader_location: 2,
+                        },
+                    ],
+                }];
+
+                let pipeline =
+                    self.device
+                        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                            label: None,
+                            layout: Some(&self.pipeline_layout),
+                            vertex: wgpu::VertexState {
+                                module: &shader,
+                                entry_point: "vs_main",
+                                buffers: &vertex_buffer_layout,
+                            },
+                            fragment: Some(wgpu::FragmentState {
+                                module: &shader,
+                                entry_point: "fs_main",
+                                targets: &[Some(ColorTargetState::from(self.config.format))],
+                            }),
+                            primitive: wgpu::PrimitiveState {
+                                ..Default::default()
+                            },
+                            depth_stencil: Some(wgpu::DepthStencilState {
+                                format: self.depth_format,
+                                depth_write_enabled: true,
+                                depth_compare: wgpu::CompareFunction::Greater,
+                                stencil: Default::default(),
+                                bias: Default::default(),
+                            }),
+                            multisample: wgpu::MultisampleState::default(),
+                            multiview: None,
+                        });
+
+                let material = Arc::new(Material { pipeline });
+                let _ = self
+                    .material_map
+                    .insert(path_buf, Arc::downgrade(&material));
+                loaded_material = Some(material)
+            }
+        }
+
+        loaded_material
     }
 
     pub fn get_mesh(&mut self, path: &str) -> Option<Arc<Mesh>> {

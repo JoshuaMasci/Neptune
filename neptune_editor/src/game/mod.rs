@@ -5,6 +5,7 @@ mod ship;
 mod transform;
 mod world;
 
+pub use object::Model;
 pub use object::Object;
 pub use player::Player;
 pub use player::PlayerInput;
