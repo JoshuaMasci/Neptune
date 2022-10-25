@@ -1,5 +1,7 @@
 use neptune_core::log::{debug, error, info, trace, warn};
-use neptune_vulkan::ash::vk::BufferUsageFlags;
+use neptune_vulkan::ash::vk::{
+    BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
+};
 use neptune_vulkan::MemoryType;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -24,11 +26,13 @@ fn main() {
     let mut instance =
         neptune_vulkan::Instance::new(APP_NAME).expect("Failed to create vulkan instance");
 
-    let surface = instance.create_surface(&window);
+    let surface = instance
+        .create_surface(&window)
+        .expect("Failed to create vulkan surface");
 
     info!("Available Devices: ");
     let device = instance
-        .select_and_create_device(None, |device_info| {
+        .select_and_create_device(Some(&surface), |device_info| {
             println!("\t\t{:?}", device_info);
             match device_info.device_type {
                 neptune_vulkan::DeviceType::Integrated => 50,
@@ -39,18 +43,36 @@ fn main() {
         .unwrap();
     info!("Selected Device: {:?}", device.info());
 
-    {
-        let buffer = device
-            .create_buffer(
-                "Some Buffer Name",
-                &neptune_vulkan::ash::vk::BufferCreateInfo::builder()
-                    .size(2 ^ 16)
-                    .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
-                    .build(),
-                MemoryType::GpuOnly,
-            )
-            .expect("Failed to create buffer!");
-    }
+    let buffer = device
+        .create_buffer(
+            "Test Buffer",
+            &neptune_vulkan::ash::vk::BufferCreateInfo::builder()
+                .size(2 ^ 16)
+                .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
+                .build(),
+            MemoryType::GpuOnly,
+        )
+        .expect("Failed to create buffer!");
+
+    let image = device
+        .create_image(
+            "Test Image",
+            &neptune_vulkan::ash::vk::ImageCreateInfo::builder()
+                .format(Format::R8G8B8A8_UNORM)
+                .extent(Extent3D {
+                    width: 1920,
+                    height: 1080,
+                    depth: 1,
+                })
+                .image_type(ImageType::TYPE_2D)
+                .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED)
+                .samples(SampleCountFlags::TYPE_1)
+                .mip_levels(1)
+                .array_layers(1)
+                .build(),
+            MemoryType::GpuOnly,
+        )
+        .unwrap();
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);

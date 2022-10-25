@@ -1,5 +1,5 @@
-use crate::Buffer;
 use crate::PhysicalDevice;
+use crate::{Buffer, Image};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -173,6 +173,21 @@ impl Device {
         memory_type: crate::MemoryType,
     ) -> Option<Arc<Buffer>> {
         Buffer::new(
+            self.device.clone(),
+            self.allocator.clone(),
+            create_info,
+            memory_type.to_gpu_alloc(),
+        )
+        .map(Arc::new)
+    }
+
+    pub fn create_image(
+        &self,
+        _name: &str,
+        create_info: &vk::ImageCreateInfo,
+        memory_type: crate::MemoryType,
+    ) -> Option<Arc<Image>> {
+        Image::new(
             self.device.clone(),
             self.allocator.clone(),
             create_info,

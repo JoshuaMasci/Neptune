@@ -1,9 +1,11 @@
 mod buffer;
 mod device;
+mod image;
 mod instance;
 
 pub use buffer::*;
 pub use device::*;
+pub use image::*;
 pub use instance::*;
 
 pub use ash;
