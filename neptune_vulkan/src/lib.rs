@@ -28,7 +28,7 @@ impl MemoryType {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum NeptuneVulkanError {
+pub enum Error {
     #[error("Vk error: {0}")]
     VkError(ash::vk::Result),
 
@@ -39,4 +39,10 @@ pub enum NeptuneVulkanError {
     StringError(String),
 }
 
-pub type Result<T> = std::result::Result<T, NeptuneVulkanError>;
+impl Error {
+    pub(crate) fn string(s: &str) -> Self {
+        self::Error::StringError(String::from(s))
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;

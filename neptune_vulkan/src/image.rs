@@ -1,4 +1,4 @@
-use crate::{AshDevice, NeptuneVulkanError};
+use crate::{AshDevice, Error};
 use ash::vk;
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +19,7 @@ impl Image {
     ) -> crate::Result<Self> {
         let handle = match unsafe { device.create_image(create_info, None) } {
             Ok(handle) => handle,
-            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => return Err(Error::VkError(e)),
         };
 
         let requirements = unsafe { device.get_image_memory_requirements(handle) };
@@ -37,7 +37,7 @@ impl Image {
                 Ok(allocation) => allocation,
                 Err(e) => {
                     unsafe { device.destroy_image(handle, None) };
-                    return Err(NeptuneVulkanError::GpuAllocError(e));
+                    return Err(Error::GpuAllocError(e));
                 }
             };
 
@@ -46,7 +46,7 @@ impl Image {
         {
             unsafe { device.destroy_image(handle, None) };
             let _ = allocator.lock().unwrap().free(allocation);
-            return Err(NeptuneVulkanError::VkError(e));
+            return Err(Error::VkError(e));
         }
 
         Ok(Self {

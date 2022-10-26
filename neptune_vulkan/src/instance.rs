@@ -1,5 +1,5 @@
 use crate::DeviceInfo;
-use crate::{Device, NeptuneVulkanError};
+use crate::{Device, Error};
 use ash::prelude::VkResult;
 use ash::{vk, Entry, LoadingError};
 use std::ffi::CString;
@@ -119,8 +119,9 @@ impl Instance {
         let entry = match unsafe { ash::Entry::load() } {
             Ok(entry) => entry,
             Err(e) => {
-                return Err(NeptuneVulkanError::StringError(String::from(
-                    "Failed to create vulkan entry",
+                return Err(Error::StringError(format!(
+                    "Failed to create vulkan entry: {}",
+                    e
                 )))
             }
         };
@@ -148,14 +149,14 @@ impl Instance {
 
         let instance: ash::Instance = match unsafe { entry.create_instance(&create_info, None) } {
             Ok(instance) => instance,
-            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => return Err(Error::VkError(e)),
         };
 
         let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
 
         let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
             Ok(physical_devices) => physical_devices,
-            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => return Err(Error::VkError(e)),
         }
         .iter()
         .map(|&physical_device| PhysicalDevice::new(&instance, physical_device))
@@ -185,7 +186,7 @@ impl Instance {
             )
         } {
             Ok(handle) => crate::Result::Ok(Surface::new(handle, self.surface_ext.clone())),
-            Err(e) => crate::Result::Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => crate::Result::Err(Error::VkError(e)),
         }
     }
 
@@ -218,7 +219,7 @@ impl Instance {
 
         match max_score {
             Some((index, _score)) => Device::new(&self.instance, &self.physical_devices[index]),
-            None => Err(NeptuneVulkanError::StringError(String::from(
+            None => Err(Error::StringError(String::from(
                 "Unable to find valid device",
             ))),
         }

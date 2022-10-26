@@ -1,5 +1,5 @@
 use crate::{Buffer, Image};
-use crate::{NeptuneVulkanError, PhysicalDevice};
+use crate::{Error, PhysicalDevice};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -135,7 +135,7 @@ impl Device {
             )
         } {
             Ok(device) => device,
-            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => return Err(Error::VkError(e)),
         };
 
         let graphics_queue =
@@ -153,7 +153,7 @@ impl Device {
             },
         ) {
             Ok(allocator) => Arc::new(Mutex::new(allocator)),
-            Err(e) => return Err(NeptuneVulkanError::GpuAllocError(e)),
+            Err(e) => return Err(Error::GpuAllocError(e)),
         };
 
         Ok(Self {

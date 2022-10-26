@@ -1,4 +1,4 @@
-use crate::{AshDevice, NeptuneVulkanError};
+use crate::{AshDevice, Error};
 use ash::vk;
 use std::sync::{Arc, Mutex};
 
@@ -19,7 +19,7 @@ impl Buffer {
     ) -> crate::Result<Self> {
         let handle = match unsafe { device.create_buffer(create_info, None) } {
             Ok(handle) => handle,
-            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+            Err(e) => return Err(Error::VkError(e)),
         };
 
         let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
@@ -37,7 +37,7 @@ impl Buffer {
                 Ok(allocation) => allocation,
                 Err(e) => {
                     unsafe { device.destroy_buffer(handle, None) };
-                    return Err(NeptuneVulkanError::GpuAllocError(e));
+                    return Err(Error::GpuAllocError(e));
                 }
             };
 
@@ -46,7 +46,7 @@ impl Buffer {
         {
             unsafe { device.destroy_buffer(handle, None) };
             let _ = allocator.lock().unwrap().free(allocation);
-            return Err(NeptuneVulkanError::VkError(e));
+            return Err(Error::VkError(e));
         }
 
         Ok(Self {
@@ -55,6 +55,17 @@ impl Buffer {
             allocation,
             handle,
         })
+    }
+
+    pub fn fill<T>(&self, data: &[T]) -> crate::Result<()> {
+        unsafe {
+            if let Some(ptr) = self.allocation.mapped_ptr() {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr.cast().as_ptr(), data.len());
+                Ok(())
+            } else {
+                Err(Error::string("Buffer memory not mapped"))
+            }
+        }
     }
 }
 

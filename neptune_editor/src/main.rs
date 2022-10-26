@@ -50,9 +50,10 @@ fn main() {
                 .size(2 ^ 16)
                 .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
                 .build(),
-            MemoryType::GpuOnly,
+            MemoryType::CpuToGpu,
         )
         .expect("Failed to create buffer!");
+    assert!(buffer.fill(&[0u32; 16]).is_ok(), "Buffer should be mapped");
 
     let image = device
         .create_image(
