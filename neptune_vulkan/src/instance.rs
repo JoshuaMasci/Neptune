@@ -1,7 +1,7 @@
-use crate::Device;
 use crate::DeviceInfo;
+use crate::{Device, NeptuneVulkanError};
 use ash::prelude::VkResult;
-use ash::vk;
+use ash::{vk, Entry, LoadingError};
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::rc::Rc;
@@ -109,14 +109,21 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(app_name: &str) -> VkResult<Self> {
+    pub fn new(app_name: &str) -> crate::Result<Self> {
         let app_name = CString::new(app_name).unwrap();
         let app_version = vk::make_api_version(0, 0, 0, 0);
 
         let engine_name: CString = CString::new("Neptune Vulkan Backend").unwrap();
         let engine_version = vk::make_api_version(0, 0, 0, 0);
 
-        let entry = unsafe { ash::Entry::load() }.expect("Failed to create Vulkan Entry!");
+        let entry = match unsafe { ash::Entry::load() } {
+            Ok(entry) => entry,
+            Err(e) => {
+                return Err(NeptuneVulkanError::StringError(String::from(
+                    "Failed to create vulkan entry",
+                )))
+            }
+        };
 
         let mut layer_names_raw = Vec::new();
 
@@ -139,14 +146,20 @@ impl Instance {
             .enabled_layer_names(&layer_names_raw)
             .enabled_extension_names(&extension_names_raw);
 
-        let instance: ash::Instance = unsafe { entry.create_instance(&create_info, None) }?;
+        let instance: ash::Instance = match unsafe { entry.create_instance(&create_info, None) } {
+            Ok(instance) => instance,
+            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+        };
 
         let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
 
-        let physical_devices = unsafe { instance.enumerate_physical_devices() }?
-            .iter()
-            .map(|&physical_device| PhysicalDevice::new(&instance, physical_device))
-            .collect();
+        let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
+            Ok(physical_devices) => physical_devices,
+            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
+        }
+        .iter()
+        .map(|&physical_device| PhysicalDevice::new(&instance, physical_device))
+        .collect();
 
         Ok(Self {
             entry,
@@ -161,8 +174,8 @@ impl Instance {
     >(
         &mut self,
         window: &T,
-    ) -> Option<Surface> {
-        unsafe {
+    ) -> crate::Result<Surface> {
+        match unsafe {
             ash_window::create_surface(
                 &self.entry,
                 &self.instance,
@@ -170,8 +183,9 @@ impl Instance {
                 window.raw_window_handle(),
                 None,
             )
-            .ok()
-            .map(|handle| Surface::new(handle, self.surface_ext.clone()))
+        } {
+            Ok(handle) => crate::Result::Ok(Surface::new(handle, self.surface_ext.clone())),
+            Err(e) => crate::Result::Err(NeptuneVulkanError::VkError(e)),
         }
     }
 
@@ -179,7 +193,7 @@ impl Instance {
         &mut self,
         surface: Option<&Surface>,
         score_function: impl Fn(&DeviceInfo) -> u32,
-    ) -> Option<Device> {
+    ) -> crate::Result<Device> {
         let max_score = self
             .physical_devices
             .iter()
@@ -201,8 +215,13 @@ impl Instance {
                 )
             })
             .max_by_key(|index_score| index_score.1);
-        max_score
-            .and_then(|(index, _score)| Device::new(&self.instance, &self.physical_devices[index]))
+
+        match max_score {
+            Some((index, _score)) => Device::new(&self.instance, &self.physical_devices[index]),
+            None => Err(NeptuneVulkanError::StringError(String::from(
+                "Unable to find valid device",
+            ))),
+        }
     }
 }
 

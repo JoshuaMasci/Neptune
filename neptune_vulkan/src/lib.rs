@@ -26,3 +26,17 @@ impl MemoryType {
         }
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum NeptuneVulkanError {
+    #[error("Vk error: {0}")]
+    VkError(ash::vk::Result),
+
+    #[error("Gpu alloc error: {0}")]
+    GpuAllocError(gpu_allocator::AllocationError),
+
+    #[error("Error: {0}")]
+    StringError(String),
+}
+
+pub type Result<T> = std::result::Result<T, NeptuneVulkanError>;

@@ -1,5 +1,5 @@
-use crate::PhysicalDevice;
 use crate::{Buffer, Image};
+use crate::{NeptuneVulkanError, PhysicalDevice};
 use ash::vk;
 use std::cell::RefCell;
 use std::ffi::CStr;
@@ -107,7 +107,10 @@ pub struct Device {
 }
 
 impl Device {
-    pub(crate) fn new(instance: &ash::Instance, physical_device: &PhysicalDevice) -> Option<Self> {
+    pub(crate) fn new(
+        instance: &ash::Instance,
+        physical_device: &PhysicalDevice,
+    ) -> crate::Result<Self> {
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
         let mut synchronization2_features =
@@ -132,7 +135,7 @@ impl Device {
             )
         } {
             Ok(device) => device,
-            Err(_e) => return None,
+            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
         };
 
         let graphics_queue =
@@ -150,10 +153,10 @@ impl Device {
             },
         ) {
             Ok(allocator) => Arc::new(Mutex::new(allocator)),
-            Err(_e) => return None,
+            Err(e) => return Err(NeptuneVulkanError::GpuAllocError(e)),
         };
 
-        Some(Self {
+        Ok(Self {
             info: physical_device.device_info.clone(),
             physical_device: physical_device.handle,
             device,
@@ -171,7 +174,7 @@ impl Device {
         _name: &str,
         create_info: &vk::BufferCreateInfo,
         memory_type: crate::MemoryType,
-    ) -> Option<Arc<Buffer>> {
+    ) -> crate::Result<Arc<Buffer>> {
         Buffer::new(
             self.device.clone(),
             self.allocator.clone(),
@@ -186,7 +189,7 @@ impl Device {
         _name: &str,
         create_info: &vk::ImageCreateInfo,
         memory_type: crate::MemoryType,
-    ) -> Option<Arc<Image>> {
+    ) -> crate::Result<Arc<Image>> {
         Image::new(
             self.device.clone(),
             self.allocator.clone(),

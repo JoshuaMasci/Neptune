@@ -1,4 +1,4 @@
-use crate::AshDevice;
+use crate::{AshDevice, NeptuneVulkanError};
 use ash::vk;
 use std::sync::{Arc, Mutex};
 
@@ -16,10 +16,10 @@ impl Buffer {
         allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
         create_info: &vk::BufferCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
-    ) -> Option<Self> {
+    ) -> crate::Result<Self> {
         let handle = match unsafe { device.create_buffer(create_info, None) } {
             Ok(handle) => handle,
-            Err(_e) => return None,
+            Err(e) => return Err(NeptuneVulkanError::VkError(e)),
         };
 
         let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
@@ -35,21 +35,21 @@ impl Buffer {
                     linear: true,
                 }) {
                 Ok(allocation) => allocation,
-                Err(_e) => {
+                Err(e) => {
                     unsafe { device.destroy_buffer(handle, None) };
-                    return None;
+                    return Err(NeptuneVulkanError::GpuAllocError(e));
                 }
             };
 
-        if let Err(_e) =
+        if let Err(e) =
             unsafe { device.bind_buffer_memory(handle, allocation.memory(), allocation.offset()) }
         {
             unsafe { device.destroy_buffer(handle, None) };
             let _ = allocator.lock().unwrap().free(allocation);
-            return None;
+            return Err(NeptuneVulkanError::VkError(e));
         }
 
-        Some(Self {
+        Ok(Self {
             device,
             allocator,
             allocation,
