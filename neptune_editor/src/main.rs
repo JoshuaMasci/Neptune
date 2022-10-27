@@ -1,8 +1,10 @@
-use neptune_core::log::{debug, error, info, trace, warn};
+#[macro_use]
+extern crate log;
+
 use neptune_vulkan::ash::vk::{
     BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
 };
-use neptune_vulkan::MemoryType;
+use neptune_vulkan::MemoryLocation;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -13,7 +15,7 @@ pub use winit::{
 const APP_NAME: &str = "Neptune Editor";
 
 fn main() {
-    neptune_core::setup_logger().expect("Failed to init logger");
+    pretty_env_logger::init_timed();
 
     let mut event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()
@@ -50,7 +52,7 @@ fn main() {
                 .size(2 ^ 16)
                 .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
                 .build(),
-            MemoryType::CpuToGpu,
+            MemoryLocation::CpuToGpu,
         )
         .expect("Failed to create buffer!");
     assert!(buffer.fill(&[0u32; 16]).is_ok(), "Buffer should be mapped");
@@ -71,7 +73,15 @@ fn main() {
                 .mip_levels(1)
                 .array_layers(1)
                 .build(),
-            MemoryType::GpuOnly,
+            MemoryLocation::GpuOnly,
+        )
+        .unwrap();
+
+    let image_view = device
+        .create_image_view(
+            "Test Image View",
+            image.clone(),
+            &image.get_full_image_view_create_info().build(),
         )
         .unwrap();
 
@@ -97,7 +107,7 @@ fn main() {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                println!("The close button was pressed; stopping");
+                info!("The close button was pressed; stopping");
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {}

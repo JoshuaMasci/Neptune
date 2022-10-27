@@ -10,22 +10,10 @@ pub use instance::*;
 
 pub use ash;
 
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum MemoryType {
-    GpuOnly,
-    CpuToGpu,
-    GpuToCpu,
-}
+#[macro_use]
+extern crate log;
 
-impl MemoryType {
-    pub(crate) fn to_gpu_alloc(self) -> gpu_allocator::MemoryLocation {
-        match self {
-            MemoryType::GpuOnly => gpu_allocator::MemoryLocation::GpuOnly,
-            MemoryType::CpuToGpu => gpu_allocator::MemoryLocation::CpuToGpu,
-            MemoryType::GpuToCpu => gpu_allocator::MemoryLocation::GpuToCpu,
-        }
-    }
-}
+pub type MemoryLocation = gpu_allocator::MemoryLocation;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

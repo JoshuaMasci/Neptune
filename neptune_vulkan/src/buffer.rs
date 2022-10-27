@@ -77,6 +77,6 @@ impl Drop for Buffer {
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
-        neptune_core::log::warn!("Buffer Drop");
+        trace!("Drop Buffer");
     }
 }

@@ -1,10 +1,8 @@
-use crate::{Buffer, Image};
+use crate::{Buffer, Image, ImageView, MemoryLocation};
 use crate::{Error, PhysicalDevice};
 use ash::vk;
-use std::cell::RefCell;
 use std::ffi::CStr;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
@@ -12,6 +10,16 @@ pub enum DeviceType {
     Integrated,
     Discrete,
     Unknown,
+}
+
+impl DeviceType {
+    fn from_vk(device_type: vk::PhysicalDeviceType) -> Self {
+        match device_type {
+            vk::PhysicalDeviceType::DISCRETE_GPU => Self::Discrete,
+            vk::PhysicalDeviceType::INTEGRATED_GPU => Self::Integrated,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,16 +31,6 @@ pub enum DeviceVendor {
     Nvidia,
     Qualcomm,
     Unknown(u32),
-}
-
-impl DeviceType {
-    fn from_vk(device_type: vk::PhysicalDeviceType) -> Self {
-        match device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => Self::Discrete,
-            vk::PhysicalDeviceType::INTEGRATED_GPU => Self::Integrated,
-            _ => Self::Unknown,
-        }
-    }
 }
 
 impl DeviceVendor {
@@ -91,7 +89,7 @@ impl Drop for AshDevice {
     fn drop(&mut self) {
         unsafe {
             self.0.destroy_device(None);
-            neptune_core::log::warn!("Device Drop");
+            trace!("Drop Device");
         }
     }
 }
@@ -173,13 +171,13 @@ impl Device {
         &self,
         _name: &str,
         create_info: &vk::BufferCreateInfo,
-        memory_type: crate::MemoryType,
+        memory_location: MemoryLocation,
     ) -> crate::Result<Arc<Buffer>> {
         Buffer::new(
             self.device.clone(),
             self.allocator.clone(),
             create_info,
-            memory_type.to_gpu_alloc(),
+            memory_location,
         )
         .map(Arc::new)
     }
@@ -188,14 +186,23 @@ impl Device {
         &self,
         _name: &str,
         create_info: &vk::ImageCreateInfo,
-        memory_type: crate::MemoryType,
+        memory_location: MemoryLocation,
     ) -> crate::Result<Arc<Image>> {
         Image::new(
             self.device.clone(),
             self.allocator.clone(),
             create_info,
-            memory_type.to_gpu_alloc(),
+            memory_location,
         )
         .map(Arc::new)
+    }
+
+    pub fn create_image_view(
+        &self,
+        _name: &str,
+        image: Arc<Image>,
+        create_info: &vk::ImageViewCreateInfo,
+    ) -> crate::Result<Arc<ImageView>> {
+        ImageView::new(image, create_info).map(Arc::new)
     }
 }

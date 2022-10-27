@@ -1,10 +1,13 @@
 use crate::{AshDevice, Error};
+use ash::prelude::VkResult;
 use ash::vk;
+use std::ptr::null;
 use std::sync::{Arc, Mutex};
 
 pub struct Image {
     device: Arc<AshDevice>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+    create_info: vk::ImageCreateInfo,
 
     pub handle: vk::Image,
     pub allocation: gpu_allocator::vulkan::Allocation,
@@ -54,7 +57,32 @@ impl Image {
             allocator,
             allocation,
             handle,
+            create_info: *create_info,
         })
+    }
+
+    pub fn get_full_image_subresource_range(&self) -> vk::ImageSubresourceRange {
+        vk::ImageSubresourceRange::builder()
+            .aspect_mask(vk::ImageAspectFlags::COLOR) // TODO: determine this from format
+            .base_array_layer(0)
+            .layer_count(self.create_info.array_layers)
+            .base_mip_level(0)
+            .level_count(self.create_info.mip_levels)
+            .build()
+    }
+
+    pub fn get_full_image_view_create_info(&self) -> vk::ImageViewCreateInfoBuilder {
+        vk::ImageViewCreateInfo::builder()
+            .image(self.handle)
+            .format(self.create_info.format)
+            .view_type(vk::ImageViewType::TYPE_2D) //TODO: determine this from image type
+            .subresource_range(self.get_full_image_subresource_range())
+            .components(vk::ComponentMapping {
+                r: vk::ComponentSwizzle::R,
+                g: vk::ComponentSwizzle::G,
+                b: vk::ComponentSwizzle::B,
+                a: vk::ComponentSwizzle::A,
+            })
     }
 }
 
@@ -66,6 +94,32 @@ impl Drop for Image {
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
-        neptune_core::log::warn!("Image Drop");
+        trace!("Drop Image");
+    }
+}
+
+pub struct ImageView {
+    image: Arc<Image>,
+    handle: vk::ImageView,
+}
+
+impl ImageView {
+    pub(crate) fn new(
+        image: Arc<Image>,
+        create_info: &vk::ImageViewCreateInfo,
+    ) -> crate::Result<Self> {
+        let handle = match unsafe { image.device.create_image_view(create_info, None) } {
+            Ok(handle) => handle,
+            Err(e) => return Err(Error::VkError(e)),
+        };
+
+        Ok(Self { image, handle })
+    }
+}
+
+impl Drop for ImageView {
+    fn drop(&mut self) {
+        unsafe { self.image.device.destroy_image_view(self.handle, None) };
+        trace!("Drop Image View");
     }
 }

@@ -5,6 +5,4 @@ authors = ["Joshua_Masci <iamshortman@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-chrono = "0.4"
 log = "0.4"
-fern = "0.6"

@@ -233,5 +233,7 @@ impl Drop for Instance {
         }
 
         let _ = self.entry.clone();
+
+        trace!("Drop Instance");
     }
 }

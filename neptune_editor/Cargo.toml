@@ -8,11 +8,11 @@ edition = "2021"
 shaderc = "0.8.0"
 
 [dependencies]
+log = "0.4"
+pretty_env_logger = "0.4"
+
 winit = "0.27.4"
 neptune_core = { path = "../neptune_core"}
 neptune_vulkan = { path = "../neptune_vulkan" }
-
-imgui = { git = "https://github.com/imgui-rs/imgui-rs", features = ["docking"] }
-imgui-winit-support = { git = "https://github.com/imgui-rs/imgui-rs" }
 
 image = "0.24.2"
