@@ -4,14 +4,14 @@ use ash::prelude::VkResult;
 use ash::{vk, Entry, LoadingError};
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Surface {
     handle: vk::SurfaceKHR,
-    surface_ext: Rc<ash::extensions::khr::Surface>,
+    surface_ext: Arc<ash::extensions::khr::Surface>,
 }
 impl Surface {
-    fn new(handle: vk::SurfaceKHR, surface_ext: Rc<ash::extensions::khr::Surface>) -> Self {
+    fn new(handle: vk::SurfaceKHR, surface_ext: Arc<ash::extensions::khr::Surface>) -> Self {
         Self {
             handle,
             surface_ext,
@@ -67,7 +67,7 @@ impl PhysicalDevice {
 
     fn get_surface_support(
         &self,
-        surface_ext: &Rc<ash::extensions::khr::Surface>,
+        surface_ext: &Arc<ash::extensions::khr::Surface>,
         surface: vk::SurfaceKHR,
     ) -> bool {
         unsafe {
@@ -102,9 +102,8 @@ fn get_surface_extensions(extension_names_raw: &mut Vec<*const c_char>) {
 
 pub struct Instance {
     entry: ash::Entry,
-    surface_ext: Rc<ash::extensions::khr::Surface>,
     instance: ash::Instance,
-
+    surface_ext: Arc<ash::extensions::khr::Surface>,
     physical_devices: Vec<PhysicalDevice>,
 }
 
@@ -152,7 +151,7 @@ impl Instance {
             Err(e) => return Err(Error::VkError(e)),
         };
 
-        let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
+        let surface_ext = Arc::new(ash::extensions::khr::Surface::new(&entry, &instance));
 
         let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
             Ok(physical_devices) => physical_devices,
@@ -164,8 +163,8 @@ impl Instance {
 
         Ok(Self {
             entry,
-            surface_ext,
             instance,
+            surface_ext,
             physical_devices,
         })
     }
@@ -218,7 +217,11 @@ impl Instance {
             .max_by_key(|index_score| index_score.1);
 
         match max_score {
-            Some((index, _score)) => Device::new(&self.instance, &self.physical_devices[index]),
+            Some((index, _score)) => Device::new(
+                &self.instance,
+                &self.physical_devices[index],
+                self.surface_ext.clone(),
+            ),
             None => Err(Error::StringError(String::from(
                 "Unable to find valid device",
             ))),

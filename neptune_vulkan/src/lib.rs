@@ -1,7 +1,9 @@
 mod buffer;
+pub mod descriptor_set;
 mod device;
 mod image;
 mod instance;
+mod swapchain;
 
 pub use buffer::*;
 pub use device::*;
@@ -14,6 +16,8 @@ pub use ash;
 extern crate log;
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -32,5 +36,3 @@ impl Error {
         self::Error::StringError(String::from(s))
     }
 }
-
-pub type Result<T> = std::result::Result<T, Error>;

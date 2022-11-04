@@ -98,6 +98,9 @@ pub struct Device {
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     device: Arc<AshDevice>,
 
+    surface_ext: Arc<ash::extensions::khr::Surface>,
+    swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
+
     info: DeviceInfo,
     physical_device: vk::PhysicalDevice,
 
@@ -108,6 +111,7 @@ impl Device {
     pub(crate) fn new(
         instance: &ash::Instance,
         physical_device: &PhysicalDevice,
+        surface_ext: Arc<ash::extensions::khr::Surface>,
     ) -> crate::Result<Self> {
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
@@ -154,10 +158,14 @@ impl Device {
             Err(e) => return Err(Error::GpuAllocError(e)),
         };
 
+        let swapchain_ext = Arc::new(ash::extensions::khr::Swapchain::new(instance, &device.0));
+
         Ok(Self {
             info: physical_device.device_info.clone(),
             physical_device: physical_device.handle,
             device,
+            surface_ext,
+            swapchain_ext,
             allocator,
             graphics_queue,
         })

@@ -3,8 +3,8 @@ use ash::vk;
 use std::sync::{Arc, Mutex};
 
 pub struct Buffer {
-    device: Arc<AshDevice>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+    device: Arc<AshDevice>,
 
     pub handle: vk::Buffer,
     pub allocation: gpu_allocator::vulkan::Allocation,

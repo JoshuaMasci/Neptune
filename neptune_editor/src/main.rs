@@ -1,6 +1,9 @@
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate neptune_vulkan_macro;
+
 use neptune_vulkan::ash::vk::{
     BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
 };
@@ -85,6 +88,8 @@ fn main() {
         )
         .unwrap();
 
+    drop(device);
+
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
@@ -116,4 +121,15 @@ fn main() {
         }
     });
     info!("Exiting Main Loop!");
+}
+
+use neptune_vulkan::descriptor_set::UniformBufferBinding;
+
+#[derive(DescriptorSet)]
+struct TestDescriptorSet {
+    #[binding(uniform_buffer)]
+    some_uniform_buffer: UniformBufferBinding,
+
+    #[binding(uniform_buffer)]
+    some_uniform_buffer_array: [UniformBufferBinding; 16],
 }

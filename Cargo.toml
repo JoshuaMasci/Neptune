@@ -3,5 +3,6 @@
 members = [
     "neptune_core",
     "neptune_vulkan",
+    "neptune_vulkan_macro",
     "neptune_editor",
 ]

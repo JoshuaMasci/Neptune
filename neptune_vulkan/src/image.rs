@@ -1,12 +1,10 @@
 use crate::{AshDevice, Error};
-use ash::prelude::VkResult;
 use ash::vk;
-use std::ptr::null;
 use std::sync::{Arc, Mutex};
 
 pub struct Image {
-    device: Arc<AshDevice>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+    device: Arc<AshDevice>,
     create_info: vk::ImageCreateInfo,
 
     pub handle: vk::Image,
@@ -62,8 +60,19 @@ impl Image {
     }
 
     pub fn get_full_image_subresource_range(&self) -> vk::ImageSubresourceRange {
+        let aspect_mask = match self.create_info.format {
+            vk::Format::D16_UNORM_S8_UINT
+            | vk::Format::D24_UNORM_S8_UINT
+            | vk::Format::D32_SFLOAT_S8_UINT => {
+                vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+            }
+            vk::Format::D16_UNORM | vk::Format::D32_SFLOAT => vk::ImageAspectFlags::DEPTH,
+            vk::Format::S8_UINT => vk::ImageAspectFlags::STENCIL,
+            _ => vk::ImageAspectFlags::COLOR,
+        };
+
         vk::ImageSubresourceRange::builder()
-            .aspect_mask(vk::ImageAspectFlags::COLOR) // TODO: determine this from format
+            .aspect_mask(aspect_mask)
             .base_array_layer(0)
             .layer_count(self.create_info.array_layers)
             .base_mip_level(0)
@@ -72,10 +81,30 @@ impl Image {
     }
 
     pub fn get_full_image_view_create_info(&self) -> vk::ImageViewCreateInfoBuilder {
+        //TODO: fix edge cases not covered by this
+        let view_type = if self.create_info.image_type == vk::ImageType::TYPE_1D {
+            vk::ImageViewType::TYPE_1D
+        } else if self.create_info.image_type == vk::ImageType::TYPE_2D {
+            if self
+                .create_info
+                .flags
+                .contains(vk::ImageCreateFlags::CUBE_COMPATIBLE)
+                && self.create_info.array_layers == 6
+            {
+                vk::ImageViewType::CUBE
+            } else {
+                vk::ImageViewType::TYPE_2D
+            }
+        } else if self.create_info.image_type == vk::ImageType::TYPE_3D {
+            vk::ImageViewType::TYPE_3D
+        } else {
+            unreachable!();
+        };
+
         vk::ImageViewCreateInfo::builder()
             .image(self.handle)
             .format(self.create_info.format)
-            .view_type(vk::ImageViewType::TYPE_2D) //TODO: determine this from image type
+            .view_type(view_type) //TODO: determine this from image type
             .subresource_range(self.get_full_image_subresource_range())
             .components(vk::ComponentMapping {
                 r: vk::ComponentSwizzle::R,
