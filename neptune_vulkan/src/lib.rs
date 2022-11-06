@@ -28,11 +28,11 @@ pub enum Error {
     GpuAllocError(gpu_allocator::AllocationError),
 
     #[error("Error: {0}")]
-    StringError(String),
+    Error(String),
 }
 
 impl Error {
     pub(crate) fn string(s: &str) -> Self {
-        self::Error::StringError(String::from(s))
+        self::Error::Error(String::from(s))
     }
 }

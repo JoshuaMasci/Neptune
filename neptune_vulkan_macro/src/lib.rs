@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use std::fmt::Error;
 use std::hash::{Hash, Hasher};
 use syn::DeriveInput;
-use syn::{parse_macro_input, Data, Expr, Field, Lit};
+use syn::{parse_macro_input, Expr, Lit};
 
 use darling::FromDeriveInput;
 use darling::FromField;
@@ -121,6 +120,38 @@ enum DescriptorType {
     AccelerationStructure,
 }
 
+impl DescriptorType {
+    pub(crate) fn get_vk_name(&self) -> proc_macro2::TokenStream {
+        match self {
+            DescriptorType::Sampler => quote! {neptune_vulkan::ash::vk::DescriptorType::SAMPLER},
+            DescriptorType::CombinedImageSampler => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::COMBINED_IMAGE_SAMPLER}
+            }
+            DescriptorType::SampledImage => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::SAMPLED_IMAGE}
+            }
+            DescriptorType::StorageImage => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::STORAGE_IMAGE}
+            }
+            DescriptorType::UniformBuffer => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::UNIFORM_BUFFER}
+            }
+            DescriptorType::StorageBuffer => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::STORAGE_BUFFER}
+            }
+            DescriptorType::UniformBufferDynamic => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC}
+            }
+            DescriptorType::StorageBufferDynamic => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::STORAGE_BUFFER_DYNAMIC}
+            }
+            DescriptorType::AccelerationStructure => {
+                quote! {neptune_vulkan::ash::vk::DescriptorType::ACCELERATION_STRUCTURE_KHR}
+            }
+        }
+    }
+}
+
 #[derive(Clone, Hash, Debug)]
 struct DescriptorBinding {
     descriptor_type: DescriptorType,
@@ -156,19 +187,48 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
     descriptor_bindings.hash(&mut hasher);
     let hash_value = hasher.finish();
 
-    panic!(
-        "Names: {:?} Bindings: {:#?}",
-        descriptor_name, descriptor_bindings
-    );
+    let descriptor_set_layout_bindings =
+        descriptor_bindings
+            .iter()
+            .enumerate()
+            .map(|(index, binding)| {
+                let descriptor_index = index as u32;
+                let descriptor_count = binding.count;
+                let descriptor_type = binding.descriptor_type.get_vk_name();
+                quote! {
+                neptune_vulkan::ash::vk::DescriptorSetLayoutBinding {
+                    binding: #descriptor_index,
+                    descriptor_type: #descriptor_type,
+                    descriptor_count: #descriptor_count,
+                    stage_flags: Default::default(),
+                    p_immutable_samplers: std::ptr::null(),
+                },
+                }
+            });
+
+    let descriptor_set_pool_sizes = descriptor_bindings.iter().map(|binding| {
+        let descriptor_count = binding.count;
+        let descriptor_type = binding.descriptor_type.get_vk_name();
+        quote! {
+            neptune_vulkan::ash::vk::DescriptorPoolSize { ty: #descriptor_type, descriptor_count: #descriptor_count },
+        }
+    });
 
     TokenStream::from(quote! {
         impl neptune_vulkan::descriptor_set::DescriptorSetLayout for #struct_name {
             const LAYOUT_HASH: u64 = #hash_value;
 
-            fn create_layout(device: &std::sync::Arc<neptune_vulkan::AshDevice>) -> neptune_vulkan::descriptor_set::vk::DescriptorSetLayout
+            fn create_layout(device: &std::sync::Arc<neptune_vulkan::AshDevice>) -> neptune_vulkan::ash::prelude::VkResult<neptune_vulkan::ash::vk::DescriptorSetLayout>
             {
-                unsafe { device.create_descriptor_set_layout(&neptune_vulkan::descriptor_set::vk::DescriptorSetLayoutCreateInfo::builder().build(), None).unwrap() }
+                unsafe { device.create_descriptor_set_layout(&neptune_vulkan::ash::vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[#(#descriptor_set_layout_bindings)*]).build(), None) }
             }
+
+            fn create_pool_sizes() -> Vec<neptune_vulkan::ash::vk::DescriptorPoolSize>
+            {
+                vec![#(#descriptor_set_pool_sizes)*]
+            }
+
+            fn write_descriptor_set(&self, device: &std::sync::Arc<neptune_vulkan::AshDevice>, descriptor_set: neptune_vulkan::ash::vk::DescriptorSet) {}
         }
     })
 }

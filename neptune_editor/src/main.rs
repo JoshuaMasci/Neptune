@@ -8,6 +8,7 @@ use neptune_vulkan::ash::vk::{
     BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
 };
 use neptune_vulkan::MemoryLocation;
+use std::sync::Arc;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -53,7 +54,7 @@ fn main() {
             "Test Buffer",
             &neptune_vulkan::ash::vk::BufferCreateInfo::builder()
                 .size(2 ^ 16)
-                .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
+                .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::UNIFORM_BUFFER)
                 .build(),
             MemoryLocation::CpuToGpu,
         )
@@ -85,6 +86,18 @@ fn main() {
             "Test Image View",
             image.clone(),
             &image.get_full_image_view_create_info().build(),
+        )
+        .unwrap();
+
+    let basic_descriptor_pool = device
+        .create_descriptor_pool::<TestDescriptorSet>(1)
+        .unwrap();
+    let descriptor_set = basic_descriptor_pool
+        .create_set(
+            "",
+            TestDescriptorSet {
+                some_uniform_buffer: buffer,
+            },
         )
         .unwrap();
 
@@ -123,13 +136,8 @@ fn main() {
     info!("Exiting Main Loop!");
 }
 
-use neptune_vulkan::descriptor_set::UniformBufferBinding;
-
 #[derive(DescriptorSet)]
 struct TestDescriptorSet {
     #[binding(uniform_buffer)]
-    some_uniform_buffer: UniformBufferBinding,
-
-    #[binding(uniform_buffer)]
-    some_uniform_buffer_array: [UniformBufferBinding; 16],
+    some_uniform_buffer: Arc<neptune_vulkan::Buffer>,
 }

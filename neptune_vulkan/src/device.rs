@@ -1,3 +1,4 @@
+use crate::descriptor_set::{DescriptorPool, DescriptorSetLayout, DescriptorSetLayoutPool};
 use crate::{Buffer, Image, ImageView, MemoryLocation};
 use crate::{Error, PhysicalDevice};
 use ash::vk;
@@ -95,6 +96,7 @@ impl Drop for AshDevice {
 }
 
 pub struct Device {
+    descriptor_set_layout_pool: Arc<DescriptorSetLayoutPool>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     device: Arc<AshDevice>,
 
@@ -160,7 +162,10 @@ impl Device {
 
         let swapchain_ext = Arc::new(ash::extensions::khr::Swapchain::new(instance, &device.0));
 
+        let descriptor_set_layout_pool = Arc::new(DescriptorSetLayoutPool::new(&device));
+
         Ok(Self {
+            descriptor_set_layout_pool,
             info: physical_device.device_info.clone(),
             physical_device: physical_device.handle,
             device,
@@ -212,5 +217,12 @@ impl Device {
         create_info: &vk::ImageViewCreateInfo,
     ) -> crate::Result<Arc<ImageView>> {
         ImageView::new(image, create_info).map(Arc::new)
+    }
+
+    pub fn create_descriptor_pool<T: DescriptorSetLayout>(
+        &self,
+        max_sets: u32,
+    ) -> crate::Result<Arc<DescriptorPool<T>>> {
+        DescriptorPool::new(&self.device, &self.descriptor_set_layout_pool, max_sets).map(Arc::new)
     }
 }

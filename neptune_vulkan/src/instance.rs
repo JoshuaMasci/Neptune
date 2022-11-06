@@ -118,7 +118,7 @@ impl Instance {
         let entry = match unsafe { ash::Entry::load() } {
             Ok(entry) => entry,
             Err(e) => {
-                return Err(Error::StringError(format!(
+                return Err(Error::Error(format!(
                     "Failed to create vulkan entry: {}",
                     e
                 )))
@@ -222,9 +222,7 @@ impl Instance {
                 &self.physical_devices[index],
                 self.surface_ext.clone(),
             ),
-            None => Err(Error::StringError(String::from(
-                "Unable to find valid device",
-            ))),
+            None => Err(Error::Error(String::from("Unable to find valid device"))),
         }
     }
 }
