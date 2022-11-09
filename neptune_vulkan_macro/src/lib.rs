@@ -8,104 +8,6 @@ use darling::FromDeriveInput;
 use darling::FromField;
 use darling::FromMeta;
 
-#[derive(Debug, FromDeriveInput)]
-#[darling(attributes(binding), supports(struct_any))]
-struct DescriptorSetLayoutReceiver {
-    ident: syn::Ident,
-    data: darling::ast::Data<(), DescriptorSetBindingReceiver>,
-}
-
-#[derive(Debug, FromField)]
-#[darling(attributes(binding))]
-#[darling(and_then = "Self::only_one")]
-struct DescriptorSetBindingReceiver {
-    ident: Option<syn::Ident>,
-    ty: syn::Type,
-
-    sampler: darling::util::Flag,
-    combined_image_sampler: darling::util::Flag,
-    sampled_image: darling::util::Flag,
-    storage_image: darling::util::Flag,
-    uniform_buffer: darling::util::Flag,
-    storage_buffer: darling::util::Flag,
-    uniform_buffer_dynamic: darling::util::Flag,
-    storage_buffer_dynamic: darling::util::Flag,
-    acceleration_structure: darling::util::Flag,
-}
-
-impl DescriptorSetBindingReceiver {
-    fn only_one(self) -> Result<Self, darling::Error> {
-        let array = [
-            self.sampler,
-            self.combined_image_sampler,
-            self.sampled_image,
-            self.storage_image,
-            self.uniform_buffer,
-            self.storage_buffer,
-            self.uniform_buffer_dynamic,
-            self.storage_buffer_dynamic,
-            self.acceleration_structure,
-        ];
-
-        match array.iter().filter(|flag| flag.is_present()).count() {
-            0 => Err(darling::Error::custom(
-                format!( "{} must be set binding to one of the following [sampler, combined_image_sampler, sampled_image, storage_image, uniform_buffer, storage_buffer, uniform_buffer_dynamic, storage_buffer_dynamic, acceleration_structure]", self.ident.unwrap()),
-            )),
-            1 => Ok(self),
-            _ => Err(darling::Error::custom("Only one binding type allowed")),
-
-        }
-    }
-
-    fn get_descriptor_type(&self) -> DescriptorType {
-        if self.sampler.is_present() {
-            DescriptorType::Sampler
-        } else if self.combined_image_sampler.is_present() {
-            DescriptorType::CombinedImageSampler
-        } else if self.sampled_image.is_present() {
-            DescriptorType::SampledImage
-        } else if self.storage_image.is_present() {
-            DescriptorType::StorageImage
-        } else if self.uniform_buffer.is_present() {
-            DescriptorType::UniformBuffer
-        } else if self.storage_buffer.is_present() {
-            DescriptorType::StorageBuffer
-        } else if self.uniform_buffer_dynamic.is_present() {
-            DescriptorType::UniformBufferDynamic
-        } else if self.storage_buffer_dynamic.is_present() {
-            DescriptorType::StorageBufferDynamic
-        } else if self.acceleration_structure.is_present() {
-            DescriptorType::AccelerationStructure
-        } else {
-            unreachable!()
-        }
-    }
-
-    fn into_descriptor_binding(&self) -> DescriptorBinding {
-        DescriptorBinding {
-            descriptor_type: self.get_descriptor_type(),
-            count: get_descriptor_count(&self.ty),
-        }
-    }
-}
-
-fn get_descriptor_count(ty: &syn::Type) -> u32 {
-    if let syn::Type::Array(array_type) = ty {
-        let count = match &array_type.len {
-            Expr::Lit(lit) => match &lit.lit {
-                Lit::Int(int) => int
-                    .base10_parse::<u32>()
-                    .expect("Failed to parse  integer literal"),
-                _ => panic!("Array Len must be integer literal"),
-            },
-            _ => panic!("Array Len must be integer literal"),
-        };
-        count
-    } else {
-        1
-    }
-}
-
 #[derive(Copy, Clone, Hash, Debug, FromMeta)]
 #[darling(rename_all = "snake_case")]
 enum DescriptorType {
@@ -152,10 +54,114 @@ impl DescriptorType {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Copy, Clone, Hash, Debug, FromMeta)]
+#[darling(rename_all = "snake_case")]
+enum StageFlags {
+    Compute,
+    Vertex,
+    Fragment,
+    AllGraphics,
+    Raygen,
+    AnyHit,
+    ClosestHit,
+    Miss,
+    Intersection,
+    Callable,
+    All,
+}
+
+#[allow(dead_code)]
+impl StageFlags {
+    pub(crate) fn get_vk_name(&self) -> proc_macro2::TokenStream {
+        match self {
+            StageFlags::Compute => quote! {neptune_vulkan::ash::vk::ShaderStageFlags::COMPUTE},
+            StageFlags::Vertex => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::VERTEX}
+            }
+            StageFlags::Fragment => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::FRAGMENT}
+            }
+            StageFlags::AllGraphics => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::ALL_GRAPHICS}
+            }
+            StageFlags::Raygen => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::RAYGEN_KHR}
+            }
+            StageFlags::AnyHit => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::ANY_HIT_KHR}
+            }
+            StageFlags::ClosestHit => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::CLOSEST_HIT_KHR}
+            }
+            StageFlags::Miss => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::MISS_KHR}
+            }
+            StageFlags::Intersection => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::INTERSECTION_KHR}
+            }
+            StageFlags::Callable => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::CALLABLE_KHR}
+            }
+            StageFlags::All => {
+                quote! {neptune_vulkan::ash::vk::ShaderStageFlags::ALL}
+            }
+        }
+    }
+}
+
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(binding), supports(struct_any))]
+struct DescriptorSetLayoutReceiver {
+    ident: syn::Ident,
+    data: darling::ast::Data<(), DescriptorSetBindingReceiver>,
+}
+
+#[derive(Debug, FromField)]
+#[darling(attributes(binding))]
+struct DescriptorSetBindingReceiver {
+    ident: Option<syn::Ident>,
+    ty: syn::Type,
+
+    descriptor_type: DescriptorType,
+    // #[darling(multiple)]
+    // stage_flags: Vec<StageFlags>,
+}
+
+impl DescriptorSetBindingReceiver {
+    fn as_descriptor_binding(&self) -> DescriptorBinding {
+        DescriptorBinding {
+            ident: self.ident.clone().unwrap(),
+            descriptor_type: self.descriptor_type,
+            count: get_descriptor_count(&self.ty),
+            //stage_flags: self.stage_flags.clone(),
+        }
+    }
+}
+
+fn get_descriptor_count(ty: &syn::Type) -> u32 {
+    if let syn::Type::Array(array_type) = ty {
+        let count = match &array_type.len {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Int(int) => int
+                    .base10_parse::<u32>()
+                    .expect("Failed to parse  integer literal"),
+                _ => panic!("Array Len must be integer literal"),
+            },
+            _ => panic!("Array Len must be integer literal"),
+        };
+        count
+    } else {
+        1
+    }
+}
+
 #[derive(Clone, Hash, Debug)]
 struct DescriptorBinding {
+    ident: syn::Ident,
     descriptor_type: DescriptorType,
     count: u32,
+    //stage_flags: Vec<StageFlags>,
 }
 
 #[proc_macro_derive(DescriptorSet, attributes(binding))]
@@ -169,18 +175,7 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
 
     let descriptor_bindings: Vec<DescriptorBinding> = fields
         .iter()
-        .map(|binding| binding.into_descriptor_binding())
-        .collect();
-
-    let descriptor_name: Vec<String> = fields
-        .iter()
-        .map(|binding| {
-            binding
-                .ident
-                .as_ref()
-                .map(|ident| ident.to_string())
-                .unwrap()
-        })
+        .map(|binding| binding.as_descriptor_binding())
         .collect();
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -192,6 +187,7 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
             .iter()
             .enumerate()
             .map(|(index, binding)| {
+                //TODO: ACTUALLY USE STAGE FLAGS!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 let descriptor_index = index as u32;
                 let descriptor_count = binding.count;
                 let descriptor_type = binding.descriptor_type.get_vk_name();
@@ -200,7 +196,7 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
                     binding: #descriptor_index,
                     descriptor_type: #descriptor_type,
                     descriptor_count: #descriptor_count,
-                    stage_flags: Default::default(),
+                    stage_flags: neptune_vulkan::ash::vk::ShaderStageFlags::ALL,
                     p_immutable_samplers: std::ptr::null(),
                 },
                 }
@@ -213,6 +209,11 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
             neptune_vulkan::ash::vk::DescriptorPoolSize { ty: #descriptor_type, descriptor_count: #descriptor_count },
         }
     });
+
+    let descriptor_writes = descriptor_bindings
+        .iter()
+        .enumerate()
+        .map(|(i, binding)| descriptor_write_struct(i as u32, binding));
 
     TokenStream::from(quote! {
         impl neptune_vulkan::descriptor_set::DescriptorSetLayout for #struct_name {
@@ -228,7 +229,175 @@ pub fn descriptor_set(input: TokenStream) -> TokenStream {
                 vec![#(#descriptor_set_pool_sizes)*]
             }
 
-            fn write_descriptor_set(&self, device: &std::sync::Arc<neptune_vulkan::AshDevice>, descriptor_set: neptune_vulkan::ash::vk::DescriptorSet) {}
+            fn write_descriptor_set(&self, device: &std::sync::Arc<neptune_vulkan::AshDevice>, descriptor_set: neptune_vulkan::ash::vk::DescriptorSet) {
+                unsafe  {
+                    device.update_descriptor_sets(&[#(#descriptor_writes)*], &[]);
+                }
+            }
         }
     })
+}
+
+fn descriptor_write_struct(
+    binding_index: u32,
+    binding_info: &DescriptorBinding,
+) -> proc_macro2::TokenStream {
+    let descriptor_write_data = match binding_info.descriptor_type {
+        DescriptorType::UniformBuffer
+        | DescriptorType::StorageBuffer
+        | DescriptorType::UniformBufferDynamic
+        | DescriptorType::StorageBufferDynamic => get_buffer_write_data(binding_info),
+        DescriptorType::Sampler => get_sampler_write_date(binding_info),
+        DescriptorType::CombinedImageSampler => get_combined_image_sampler_write_date(binding_info),
+        DescriptorType::SampledImage => get_image_write_date(
+            binding_info,
+            quote!(neptune_vulkan::ash::vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+        ),
+        DescriptorType::StorageImage => get_image_write_date(
+            binding_info,
+            quote!(neptune_vulkan::ash::vk::ImageLayout::GENERAL),
+        ),
+        DescriptorType::AccelerationStructure => todo!("AccelerationStructure descriptor writes"),
+        _ => unreachable!(),
+    };
+
+    let p_next = descriptor_write_data.p_next;
+
+    let descriptor_count = binding_info.count;
+    let descriptor_type = binding_info.descriptor_type.get_vk_name();
+
+    let p_image_info = descriptor_write_data.p_image_info;
+    let p_buffer_info = descriptor_write_data.p_buffer_info;
+
+    quote! {neptune_vulkan::ash::vk::WriteDescriptorSet {
+        s_type: neptune_vulkan::ash::vk::StructureType::WRITE_DESCRIPTOR_SET,
+        p_next: #p_next,
+        dst_set: descriptor_set,
+        dst_binding: #binding_index,
+        dst_array_element: 0,
+        descriptor_count: #descriptor_count,
+        descriptor_type: #descriptor_type,
+        p_image_info: #p_image_info,
+        p_buffer_info: #p_buffer_info,
+        p_texel_buffer_view: std::ptr::null(),
+    },}
+}
+
+struct DescriptorSetWriteData {
+    p_next: proc_macro2::TokenStream,
+    p_image_info: proc_macro2::TokenStream,
+    p_buffer_info: proc_macro2::TokenStream,
+}
+
+fn get_sampler_write_date(binding_info: &DescriptorBinding) -> DescriptorSetWriteData {
+    let ident = &binding_info.ident;
+
+    let image_info_list = if binding_info.count == 1 {
+        quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: self.#ident.handle,
+                    image_view: neptune_vulkan::ash::vk::ImageView::null(),
+                    image_layout: neptune_vulkan::ash::vk::ImageLayout::UNDEFINED,
+        },)
+    } else {
+        let list = (0..binding_info.count).map(|i| {
+            quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: self.#ident[#i].handle,
+                    image_view: neptune_vulkan::ash::vk::ImageView::null(),
+                    image_layout: neptune_vulkan::ash::vk::ImageLayout::UNDEFINED,
+        },)
+        });
+        quote!(#(#list)*)
+    };
+
+    DescriptorSetWriteData {
+        p_next: quote!(std::ptr::null()),
+        p_image_info: quote!([#image_info_list].as_ptr()),
+        p_buffer_info: quote!(std::ptr::null()),
+    }
+}
+
+fn get_combined_image_sampler_write_date(
+    binding_info: &DescriptorBinding,
+) -> DescriptorSetWriteData {
+    let ident = &binding_info.ident;
+
+    let image_info_list = if binding_info.count == 1 {
+        quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: self.#ident.1.handle,
+                    image_view: self.#ident.0.handle,
+                    image_layout: neptune_vulkan::ash::vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        },)
+    } else {
+        let list = (0..binding_info.count).map(|i| {
+            quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: self.#ident[#i].1.handle,
+                    image_view: self.#ident[#i].0.handle,
+                    image_layout: neptune_vulkan::ash::vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        },)
+        });
+        quote!(#(#list)*)
+    };
+
+    DescriptorSetWriteData {
+        p_next: quote!(std::ptr::null()),
+        p_image_info: quote!([#image_info_list].as_ptr()),
+        p_buffer_info: quote!(std::ptr::null()),
+    }
+}
+
+fn get_image_write_date(
+    binding_info: &DescriptorBinding,
+    image_layout: proc_macro2::TokenStream,
+) -> DescriptorSetWriteData {
+    let ident = &binding_info.ident;
+
+    let image_info_list = if binding_info.count == 1 {
+        quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: neptune_vulkan::ash::vk::Sampler::null(),
+                    image_view: self.#ident.handle,
+                    image_layout: #image_layout,
+        },)
+    } else {
+        let list = (0..binding_info.count).map(|i| {
+            quote!(neptune_vulkan::ash::vk::DescriptorImageInfo {
+                    sampler: neptune_vulkan::ash::vk::Sampler::null(),
+                    image_view: self.#ident[#i].handle,
+                    image_layout: #image_layout,
+        },)
+        });
+        quote!(#(#list)*)
+    };
+
+    DescriptorSetWriteData {
+        p_next: quote!(std::ptr::null()),
+        p_image_info: quote!([#image_info_list].as_ptr()),
+        p_buffer_info: quote!(std::ptr::null()),
+    }
+}
+
+fn get_buffer_write_data(binding_info: &DescriptorBinding) -> DescriptorSetWriteData {
+    let ident = &binding_info.ident;
+
+    let buffer_info_list = if binding_info.count == 1 {
+        quote!(neptune_vulkan::ash::vk::DescriptorBufferInfo {
+                    buffer: self.#ident.handle,
+                    offset: 0,
+                    range: neptune_vulkan::ash::vk::WHOLE_SIZE,
+        },)
+    } else {
+        let list = (0..binding_info.count).map(|i| {
+            quote!(neptune_vulkan::ash::vk::DescriptorBufferInfo {
+                    buffer: self.#ident[#i].handle,
+                    offset: 0,
+                    range: neptune_vulkan::ash::vk::WHOLE_SIZE,
+        },)
+        });
+        quote!(#(#list)*)
+    };
+
+    DescriptorSetWriteData {
+        p_next: quote!(std::ptr::null()),
+        p_image_info: quote!(std::ptr::null()),
+        p_buffer_info: quote!([#buffer_info_list].as_ptr()),
+    }
 }

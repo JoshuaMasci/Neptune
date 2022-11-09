@@ -138,6 +138,6 @@ fn main() {
 
 #[derive(DescriptorSet)]
 struct TestDescriptorSet {
-    #[binding(uniform_buffer)]
+    #[binding(descriptor_type = "uniform_buffer")]
     some_uniform_buffer: Arc<neptune_vulkan::Buffer>,
 }
