@@ -93,7 +93,7 @@ fn main() {
         .create_descriptor_pool::<TestDescriptorSet>(1)
         .unwrap();
     let descriptor_set = basic_descriptor_pool
-        .create_set(
+        .create(
             "",
             TestDescriptorSet {
                 some_uniform_buffer: buffer,

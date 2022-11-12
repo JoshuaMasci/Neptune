@@ -85,7 +85,7 @@ impl<T: DescriptorSetLayout> DescriptorPool<T> {
         })
     }
 
-    pub fn create_set(
+    pub fn create(
         &self,
         name: &str,
         descriptor_set_data: T,
