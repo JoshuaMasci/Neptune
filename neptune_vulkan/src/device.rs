@@ -1,5 +1,5 @@
 use crate::descriptor_set::{DescriptorPool, DescriptorSetLayout, DescriptorSetLayoutPool};
-use crate::{Buffer, Image, ImageView, MemoryLocation};
+use crate::{Buffer, Image, ImageView, MemoryLocation, Sampler};
 use crate::{Error, PhysicalDevice};
 use ash::vk;
 use std::ffi::CStr;
@@ -217,6 +217,14 @@ impl Device {
         create_info: &vk::ImageViewCreateInfo,
     ) -> crate::Result<Arc<ImageView>> {
         ImageView::new(image, create_info).map(Arc::new)
+    }
+
+    pub fn create_sampler(
+        &self,
+        _name: &str,
+        create_info: &vk::SamplerCreateInfo,
+    ) -> crate::Result<Arc<Sampler>> {
+        Sampler::new(self.device.clone(), create_info).map(Arc::new)
     }
 
     pub fn create_descriptor_pool<T: DescriptorSetLayout>(

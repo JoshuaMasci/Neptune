@@ -10,6 +10,7 @@ pub use buffer::*;
 pub use device::*;
 pub use image::*;
 pub use instance::*;
+pub use sampler::*;
 
 pub use ash;
 

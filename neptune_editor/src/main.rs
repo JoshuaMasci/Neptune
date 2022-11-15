@@ -5,7 +5,8 @@ extern crate log;
 extern crate neptune_vulkan_macro;
 
 use neptune_vulkan::ash::vk::{
-    BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
+    BorderColor, BufferUsageFlags, Extent3D, Filter, Format, ImageType, ImageUsageFlags,
+    SampleCountFlags, SamplerAddressMode,
 };
 use neptune_vulkan::MemoryLocation;
 use std::sync::Arc;
@@ -89,6 +90,20 @@ fn main() {
         )
         .unwrap();
 
+    let linear_sampler = device
+        .create_sampler(
+            "Test Sampler",
+            &neptune_vulkan::ash::vk::SamplerCreateInfo::builder()
+                .address_mode_u(SamplerAddressMode::REPEAT)
+                .address_mode_v(SamplerAddressMode::REPEAT)
+                .address_mode_w(SamplerAddressMode::REPEAT)
+                .min_filter(Filter::LINEAR)
+                .mag_filter(Filter::LINEAR)
+                .border_color(BorderColor::FLOAT_TRANSPARENT_BLACK)
+                .build(),
+        )
+        .unwrap();
+
     let basic_descriptor_pool = device
         .create_descriptor_pool::<TestDescriptorSet>(1)
         .unwrap();
@@ -97,6 +112,7 @@ fn main() {
             "",
             TestDescriptorSet {
                 some_uniform_buffer: buffer,
+                some_combined_image_sampler: (image_view, linear_sampler),
             },
         )
         .unwrap();
@@ -140,4 +156,7 @@ fn main() {
 struct TestDescriptorSet {
     #[binding(descriptor_type = "uniform_buffer")]
     some_uniform_buffer: Arc<neptune_vulkan::Buffer>,
+
+    #[binding(descriptor_type = "combined_image_sampler")]
+    some_combined_image_sampler: (Arc<neptune_vulkan::ImageView>, Arc<neptune_vulkan::Sampler>),
 }

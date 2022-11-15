@@ -1,7 +1,6 @@
 use crate::DeviceInfo;
 use crate::{Device, Error};
-use ash::prelude::VkResult;
-use ash::{vk, Entry, LoadingError};
+use ash::vk;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::sync::Arc;

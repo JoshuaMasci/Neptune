@@ -258,7 +258,6 @@ fn descriptor_write_struct(
             quote!(neptune_vulkan::ash::vk::ImageLayout::GENERAL),
         ),
         DescriptorType::AccelerationStructure => todo!("AccelerationStructure descriptor writes"),
-        _ => unreachable!(),
     };
 
     let p_next = descriptor_write_data.p_next;

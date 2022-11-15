@@ -129,7 +129,7 @@ impl Drop for Image {
 
 pub struct ImageView {
     image: Arc<Image>,
-    handle: vk::ImageView,
+    pub handle: vk::ImageView,
 }
 
 impl ImageView {
