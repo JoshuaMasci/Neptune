@@ -3,6 +3,7 @@ pub mod descriptor_set;
 mod device;
 mod image;
 mod instance;
+mod sampler;
 mod swapchain;
 
 pub use buffer::*;
