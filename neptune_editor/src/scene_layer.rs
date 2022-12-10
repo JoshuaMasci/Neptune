@@ -1,5 +1,3 @@
-use neptune_graphics::{BufferUsage, DeviceTrait};
-
 // pub(crate) struct SceneLayer {
 //     vertex_buffer: neptune_graphics::Buffer,
 //     index_buffer: neptune_graphics::Buffer,
