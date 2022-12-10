@@ -1,7 +1,9 @@
 use crate::{
-    Buffer, ComputePipeline, CubeTexture, Device, HandleType, RenderGraphBuilder, Sampler, Texture,
+    Buffer, ComputePipeline, CubeTexture, Device, HandleType, RenderGraphBuilder, Sampler,
+    Swapchain, Texture,
 };
-use std::collections::HashMap;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::collections::{HashMap, HashSet};
 
 pub(crate) struct TestDevice {
     //Use same handle "pool" for all object types cause I'm lazy
@@ -9,9 +11,9 @@ pub(crate) struct TestDevice {
 
     buffers: HashMap<Buffer, (String, u32)>,
     textures: HashMap<Texture, (String, [u32; 2])>,
-    cube_textures: HashMap<CubeTexture, (String, u32)>,
     samplers: HashMap<Sampler, String>,
     compute_pipelines: HashMap<ComputePipeline, String>,
+    swapchains: HashSet<Swapchain>,
 }
 
 impl TestDevice {
@@ -20,9 +22,9 @@ impl TestDevice {
             next_handle: 0,
             buffers: Default::default(),
             textures: Default::default(),
-            cube_textures: Default::default(),
             samplers: Default::default(),
             compute_pipelines: Default::default(),
+            swapchains: Default::default(),
         }
     }
 }
@@ -92,6 +94,33 @@ impl Device for TestDevice {
 
     fn destroy_compute_pipeline(&mut self, handle: ComputePipeline) -> crate::Result<()> {
         if self.compute_pipelines.remove(&handle).is_some() {
+            Ok(())
+        } else {
+            Err(crate::Error::InvalidHandle)
+        }
+    }
+
+    fn create_swapchain<WindowType: HasRawWindowHandle + HasRawDisplayHandle>(
+        &mut self,
+        window: &WindowType,
+    ) -> crate::Result<Swapchain> {
+        let _raw_window_handle = window.raw_window_handle();
+        let handle = Swapchain(self.next_handle);
+        self.next_handle += 1;
+        let _ = self.swapchains.insert(handle);
+        Ok(handle)
+    }
+
+    fn destroy_swapchain(&mut self, handle: Swapchain) -> crate::Result<()> {
+        if self.swapchains.remove(&handle) {
+            Ok(())
+        } else {
+            Err(crate::Error::InvalidHandle)
+        }
+    }
+
+    fn update_swapchain(&mut self, handle: Swapchain) -> crate::Result<()> {
+        if self.swapchains.get(&handle).is_some() {
             Ok(())
         } else {
             Err(crate::Error::InvalidHandle)

@@ -20,7 +20,7 @@ fn main() {
 
     window.set_maximized(true);
 
-    neptune_graphics::test_api();
+    neptune_graphics::test_api(&window);
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
