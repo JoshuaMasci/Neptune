@@ -1,6 +1,6 @@
 use crate::{
-    Buffer, ComputePipeline, CubeTexture, Device, HandleType, RenderGraphBuilder, Sampler,
-    Swapchain, Texture,
+    Buffer, ComputePipeline, CubeTexture, Device, HandleType, RasterPipeline,
+    RasterPipelineDescription, RenderGraphBuilder, Sampler, Swapchain, Texture,
 };
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::collections::{HashMap, HashSet};
@@ -13,6 +13,7 @@ pub(crate) struct TestDevice {
     textures: HashMap<Texture, (String, [u32; 2])>,
     samplers: HashMap<Sampler, String>,
     compute_pipelines: HashMap<ComputePipeline, String>,
+    raster_pipelines: HashMap<RasterPipeline, String>,
     swapchains: HashSet<Swapchain>,
 }
 
@@ -24,6 +25,7 @@ impl TestDevice {
             textures: Default::default(),
             samplers: Default::default(),
             compute_pipelines: Default::default(),
+            raster_pipelines: Default::default(),
             swapchains: Default::default(),
         }
     }
@@ -94,6 +96,27 @@ impl Device for TestDevice {
 
     fn destroy_compute_pipeline(&mut self, handle: ComputePipeline) -> crate::Result<()> {
         if self.compute_pipelines.remove(&handle).is_some() {
+            Ok(())
+        } else {
+            Err(crate::Error::InvalidHandle)
+        }
+    }
+
+    fn create_raster_pipeline(
+        &mut self,
+        raster_pipeline_description: &mut RasterPipelineDescription,
+        name: &str,
+    ) -> crate::Result<RasterPipeline> {
+        let _ = raster_pipeline_description;
+
+        let handle = RasterPipeline(self.next_handle);
+        self.next_handle += 1;
+        let _ = self.raster_pipelines.insert(handle, name.to_string());
+        Ok(handle)
+    }
+
+    fn destroy_raster_pipeline(&mut self, handle: RasterPipeline) -> crate::Result<()> {
+        if self.raster_pipelines.remove(&handle).is_some() {
             Ok(())
         } else {
             Err(crate::Error::InvalidHandle)
