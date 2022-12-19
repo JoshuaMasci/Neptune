@@ -37,7 +37,7 @@ impl Drop for TestDevice {
 
 impl Device for TestDevice {
     fn create_buffer(&mut self, size: u32, name: &str) -> crate::Result<Buffer> {
-        let handle = Buffer(self.next_handle);
+        let handle = Buffer::Handle(self.next_handle);
         self.next_handle += 1;
         let _ = self.buffers.insert(handle, (name.to_string(), size));
         Ok(handle)
