@@ -182,9 +182,20 @@ impl Device {
         name: &str,
         usage: BufferUsage,
         binding: BufferBindingType,
-        size: u32,
+        size: u64,
     ) -> crate::Result<Buffer> {
-        todo!()
+        let create_info = crate::buffer::get_vk_buffer_create_info(usage, binding, size);
+
+        crate::buffer::AshBuffer::create_buffer(
+            &self.device,
+            &self.allocator,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        )
+        .map(|buffer| Buffer {
+            buffer,
+            resource_manager: self.resource_manager.clone(),
+        })
     }
 
     pub fn create_buffer_with_data(
@@ -194,7 +205,19 @@ impl Device {
         binding: BufferBindingType,
         data: &[u8],
     ) -> crate::Result<Buffer> {
-        todo!()
+        let create_info =
+            crate::buffer::get_vk_buffer_create_info(usage, binding, data.len() as u64);
+
+        crate::buffer::AshBuffer::create_buffer(
+            &self.device,
+            &self.allocator,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        )
+        .map(|buffer| Buffer {
+            buffer,
+            resource_manager: self.resource_manager.clone(),
+        })
     }
 
     pub fn create_texture(
