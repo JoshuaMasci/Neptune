@@ -5,112 +5,91 @@ use bitflags::bitflags;
 use std::sync::{Arc, Mutex};
 
 bitflags! {
-    pub struct BufferUsage: u32 {
-        const VERTEX = 1 << 2;
-        const INDEX = 1 << 3;
-        const INDIRECT  = 1 << 6;
+    pub struct TextureUsage: u32 {
+        const ATTACHMENT = 1 << 0;
     }
 }
 
-//TODO: Should this be flags?
-pub enum BufferBindingType {
-    None,
-    Uniform,
-    Storage,
+bitflags! {
+    pub struct TextureBindingType: u32 {
+        const SAMPLED = 1 << 0;
+        const STORAGE = 1 << 0;
+    }
 }
 
-pub(crate) fn get_vk_buffer_create_info(
-    usage: BufferUsage,
-    binding: BufferBindingType,
-    size: u32,
-) -> vk::BufferCreateInfo {
-    vk::BufferCreateInfo::builder().build()
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum BufferBinding {
-    Uniform(u16),
-    Storage(u16),
-}
-
-pub struct Buffer {
-    pub(crate) buffer: AshBuffer,
+pub struct Texture {
+    pub(crate) texture: AshTexture,
     pub(crate) resource_manager: Arc<Mutex<ResourceManager>>,
 }
 
-impl Drop for Buffer {
+impl Drop for Texture {
     fn drop(&mut self) {
         self.resource_manager
             .lock()
             .unwrap()
-            .destroy_buffer(std::mem::take(&mut self.buffer));
+            .destroy_texture(std::mem::take(&mut self.texture));
     }
 }
 
 #[derive(Default, Debug)]
-pub struct AshBuffer {
-    pub(crate) handle: vk::Buffer,
-    pub(crate) allocation: gpu_allocator::vulkan::Allocation,
-    pub(crate) binding: Option<BufferBinding>,
+pub struct AshTexture {
+    pub handle: vk::Image,
+    pub allocation: gpu_allocator::vulkan::Allocation,
 }
 
-impl AshBuffer {
-    pub(crate) fn create_buffer(
+impl AshTexture {
+    pub(crate) fn create_texture(
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
-        create_info: &vk::BufferCreateInfo,
+        create_info: &vk::ImageCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> crate::Result<Self> {
-        let handle = match unsafe { device.create_buffer(create_info, None) } {
+        let handle = match unsafe { device.create_image(create_info, None) } {
             Ok(handle) => handle,
             Err(e) => return Err(Error::VkError(e)),
         };
 
-        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
+        let requirements = unsafe { device.get_image_memory_requirements(handle) };
 
         let allocation =
             match allocator
                 .lock()
                 .unwrap()
                 .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                    name: "Buffer Allocation",
+                    name: "Image Allocation",
                     requirements,
                     location: memory_location,
                     linear: true,
                 }) {
                 Ok(allocation) => allocation,
                 Err(e) => {
-                    unsafe { device.destroy_buffer(handle, None) };
+                    unsafe { device.destroy_image(handle, None) };
                     return Err(Error::GpuAllocError(e));
                 }
             };
 
         if let Err(e) =
-            unsafe { device.bind_buffer_memory(handle, allocation.memory(), allocation.offset()) }
+            unsafe { device.bind_image_memory(handle, allocation.memory(), allocation.offset()) }
         {
-            unsafe { device.destroy_buffer(handle, None) };
+            unsafe { device.destroy_image(handle, None) };
             let _ = allocator.lock().unwrap().free(allocation);
             return Err(Error::VkError(e));
         }
 
-        Ok(Self {
-            handle,
-            allocation,
-            binding: None,
-        })
+        Ok(Self { allocation, handle })
     }
 
-    pub(crate) fn destroy_buffer(
+    pub(crate) fn destroy_texture(
         &mut self,
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     ) {
-        unsafe { device.destroy_buffer(self.handle, None) };
+        unsafe { device.destroy_image(self.handle, None) };
         let _ = allocator
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
-        trace!("Destroy Buffer");
+        trace!("Destroy Image");
     }
 
     fn unsafe_clone(&self) -> Self {
@@ -125,7 +104,6 @@ impl AshBuffer {
         Self {
             handle: self.handle,
             allocation,
-            binding: self.binding,
         }
     }
 }

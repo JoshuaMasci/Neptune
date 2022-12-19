@@ -4,7 +4,9 @@ extern crate log;
 use neptune_vulkan::ash::vk::{
     BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
 };
-use neptune_vulkan::MemoryLocation;
+use neptune_vulkan::{
+    BufferBindingType, BufferUsage, MemoryLocation, TextureBindingType, TextureUsage,
+};
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -46,42 +48,22 @@ fn main() {
     info!("Selected Device: {:?}", device.info());
 
     let buffer = device
-        .create_buffer(
+        .create_buffer_with_data(
             "Test Buffer",
-            &neptune_vulkan::ash::vk::BufferCreateInfo::builder()
-                .size(2 ^ 16)
-                .usage(BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::STORAGE_BUFFER)
-                .build(),
-            MemoryLocation::CpuToGpu,
+            BufferUsage::VERTEX,
+            BufferBindingType::None,
+            &[0u8; 16],
         )
         .expect("Failed to create buffer!");
-    assert!(buffer.fill(&[0u32; 16]).is_ok(), "Buffer should be mapped");
 
-    let image = device
-        .create_image(
-            "Test Image",
-            &neptune_vulkan::ash::vk::ImageCreateInfo::builder()
-                .format(Format::R8G8B8A8_UNORM)
-                .extent(Extent3D {
-                    width: 1920,
-                    height: 1080,
-                    depth: 1,
-                })
-                .image_type(ImageType::TYPE_2D)
-                .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED)
-                .samples(SampleCountFlags::TYPE_1)
-                .mip_levels(1)
-                .array_layers(1)
-                .build(),
-            MemoryLocation::GpuOnly,
-        )
-        .unwrap();
-
-    let image_view = device
-        .create_image_view(
-            "Test Image View",
-            image.clone(),
-            &image.get_full_image_view_create_info().build(),
+    let texture = device
+        .create_texture_with_data(
+            "Test Texture",
+            TextureUsage::empty(),
+            TextureBindingType::SAMPLED,
+            Format::R8G8B8A8_UNORM,
+            [1; 2],
+            &[93, 63, 211, 255],
         )
         .unwrap();
 

@@ -1,12 +1,13 @@
 mod buffer;
 mod device;
-mod image;
 mod instance;
+mod resource_manager;
+mod texture;
 
 pub use buffer::*;
 pub use device::*;
-pub use image::*;
 pub use instance::*;
+pub use texture::*;
 
 pub use ash;
 

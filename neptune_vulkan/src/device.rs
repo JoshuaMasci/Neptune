@@ -1,4 +1,6 @@
-use crate::{Buffer, Image, ImageView, MemoryLocation};
+use crate::resource_manager::ResourceManager;
+use crate::texture::{Texture, TextureBindingType, TextureUsage};
+use crate::{Buffer, BufferBindingType, BufferUsage, MemoryLocation};
 use crate::{Error, PhysicalDevice};
 use ash::vk;
 use std::ffi::CStr;
@@ -52,7 +54,6 @@ pub struct DeviceInfo {
     pub name: String,
     pub vendor: DeviceVendor,
     pub device_type: DeviceType,
-    //TODO: Add VRam amount, Other Device Properties?
 }
 
 impl DeviceInfo {
@@ -95,6 +96,7 @@ impl Drop for AshDevice {
 }
 
 pub struct Device {
+    resource_manager: Arc<Mutex<ResourceManager>>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     device: Arc<AshDevice>,
 
@@ -154,11 +156,19 @@ impl Device {
             Err(e) => return Err(Error::GpuAllocError(e)),
         };
 
+        const FRAMES_IN_FLIGHT_COUNT: usize = 3;
+        let resource_manager = Arc::new(Mutex::new(ResourceManager::new(
+            FRAMES_IN_FLIGHT_COUNT,
+            device.clone(),
+            allocator.clone(),
+        )));
+
         Ok(Self {
             info: physical_device.device_info.clone(),
             physical_device: physical_device.handle,
             device,
             allocator,
+            resource_manager,
             graphics_queue,
         })
     }
@@ -169,40 +179,44 @@ impl Device {
 
     pub fn create_buffer(
         &self,
-        _name: &str,
-        create_info: &vk::BufferCreateInfo,
-        memory_location: MemoryLocation,
-    ) -> crate::Result<Arc<Buffer>> {
-        Buffer::new(
-            self.device.clone(),
-            self.allocator.clone(),
-            create_info,
-            memory_location,
-        )
-        .map(Arc::new)
+        name: &str,
+        usage: BufferUsage,
+        binding: BufferBindingType,
+        size: u32,
+    ) -> crate::Result<Buffer> {
+        todo!()
     }
 
-    pub fn create_image(
+    pub fn create_buffer_with_data(
         &self,
-        _name: &str,
-        create_info: &vk::ImageCreateInfo,
-        memory_location: MemoryLocation,
-    ) -> crate::Result<Arc<Image>> {
-        Image::new(
-            self.device.clone(),
-            self.allocator.clone(),
-            create_info,
-            memory_location,
-        )
-        .map(Arc::new)
+        name: &str,
+        usage: BufferUsage,
+        binding: BufferBindingType,
+        data: &[u8],
+    ) -> crate::Result<Buffer> {
+        todo!()
     }
 
-    pub fn create_image_view(
+    pub fn create_texture(
         &self,
-        _name: &str,
-        image: Arc<Image>,
-        create_info: &vk::ImageViewCreateInfo,
-    ) -> crate::Result<Arc<ImageView>> {
-        ImageView::new(image, create_info).map(Arc::new)
+        name: &str,
+        usage: TextureUsage,
+        bindings: TextureBindingType,
+        format: vk::Format,
+        size: [u32; 2],
+    ) -> crate::Result<Texture> {
+        todo!()
+    }
+
+    pub fn create_texture_with_data(
+        &self,
+        name: &str,
+        usage: TextureUsage,
+        bindings: TextureBindingType,
+        format: vk::Format,
+        size: [u32; 2],
+        data: &[u8],
+    ) -> crate::Result<Texture> {
+        todo!()
     }
 }
