@@ -5,7 +5,8 @@ use neptune_vulkan::ash::vk::{
     BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
 };
 use neptune_vulkan::{
-    BufferBindingType, BufferUsage, MemoryLocation, TextureBindingType, TextureUsage,
+    AddressMode, BufferBindingType, BufferUsage, FilterMode, MemoryLocation, SamplerCreateInfo,
+    TextureBindingType, TextureUsage,
 };
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -64,6 +65,20 @@ fn main() {
             Format::R8G8B8A8_UNORM,
             [1; 2],
             &[93, 63, 211, 255],
+        )
+        .unwrap();
+
+    let sampler = device
+        .create_sampler(
+            "Test Sampler",
+            &SamplerCreateInfo {
+                address_mode_u: AddressMode::Repeat,
+                address_mode_v: AddressMode::Repeat,
+                address_mode_w: AddressMode::Repeat,
+                mag_filter: FilterMode::Linear,
+                min_filter: FilterMode::Linear,
+                ..Default::default()
+            },
         )
         .unwrap();
 

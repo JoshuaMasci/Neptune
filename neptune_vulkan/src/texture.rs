@@ -17,6 +17,47 @@ bitflags! {
     }
 }
 
+pub(crate) fn get_vk_texture_2d_create_info(
+    usage: TextureUsage,
+    bindings: TextureBindingType,
+    format: vk::Format,
+    size: [u32; 2],
+) -> vk::ImageCreateInfo {
+    let mut vk_usage = vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
+
+    if bindings.contains(TextureBindingType::SAMPLED) {
+        vk_usage |= vk::ImageUsageFlags::SAMPLED;
+    }
+
+    if bindings.contains(TextureBindingType::STORAGE) {
+        vk_usage |= vk::ImageUsageFlags::STORAGE;
+    }
+
+    let is_color_format = true;
+    if usage.contains(TextureUsage::ATTACHMENT) {
+        vk_usage |= match is_color_format {
+            true => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            false => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        };
+    }
+
+    vk::ImageCreateInfo::builder()
+        .format(format)
+        .image_type(vk::ImageType::TYPE_2D)
+        .usage(vk_usage)
+        .extent(vk::Extent3D {
+            width: size[0],
+            height: size[1],
+            depth: 1,
+        })
+        .array_layers(1)
+        .mip_levels(1)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .build()
+}
+
 pub struct Texture {
     pub(crate) texture: AshTexture,
     pub(crate) resource_manager: Arc<Mutex<ResourceManager>>,
@@ -89,7 +130,7 @@ impl AshTexture {
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
-        trace!("Destroy Image");
+        trace!("Destroy Texture");
     }
 
     fn unsafe_clone(&self) -> Self {

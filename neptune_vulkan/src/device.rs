@@ -1,4 +1,5 @@
 use crate::resource_manager::ResourceManager;
+use crate::sampler::{Sampler, SamplerCreateInfo};
 use crate::texture::{Texture, TextureBindingType, TextureUsage};
 use crate::{Buffer, BufferBindingType, BufferUsage, MemoryLocation};
 use crate::{Error, PhysicalDevice};
@@ -185,7 +186,6 @@ impl Device {
         size: u64,
     ) -> crate::Result<Buffer> {
         let create_info = crate::buffer::get_vk_buffer_create_info(usage, binding, size);
-
         crate::buffer::AshBuffer::create_buffer(
             &self.device,
             &self.allocator,
@@ -207,7 +207,6 @@ impl Device {
     ) -> crate::Result<Buffer> {
         let create_info =
             crate::buffer::get_vk_buffer_create_info(usage, binding, data.len() as u64);
-
         crate::buffer::AshBuffer::create_buffer(
             &self.device,
             &self.allocator,
@@ -228,7 +227,18 @@ impl Device {
         format: vk::Format,
         size: [u32; 2],
     ) -> crate::Result<Texture> {
-        todo!()
+        let create_info =
+            crate::texture::get_vk_texture_2d_create_info(usage, bindings, format, size);
+        crate::texture::AshTexture::create_texture(
+            &self.device,
+            &self.allocator,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        )
+        .map(|texture| Texture {
+            texture,
+            resource_manager: self.resource_manager.clone(),
+        })
     }
 
     pub fn create_texture_with_data(
@@ -240,6 +250,30 @@ impl Device {
         size: [u32; 2],
         data: &[u8],
     ) -> crate::Result<Texture> {
-        todo!()
+        let create_info =
+            crate::texture::get_vk_texture_2d_create_info(usage, bindings, format, size);
+        crate::texture::AshTexture::create_texture(
+            &self.device,
+            &self.allocator,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        )
+        .map(|texture| Texture {
+            texture,
+            resource_manager: self.resource_manager.clone(),
+        })
+    }
+
+    pub fn create_sampler(
+        &self,
+        name: &str,
+        sampler_create_info: &SamplerCreateInfo,
+    ) -> crate::Result<Sampler> {
+        crate::sampler::AshSampler::create_sampler(&self.device, sampler_create_info).map(
+            |sampler| Sampler {
+                sampler,
+                resource_manager: self.resource_manager.clone(),
+            },
+        )
     }
 }

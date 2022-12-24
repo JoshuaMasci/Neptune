@@ -2,11 +2,13 @@ mod buffer;
 mod device;
 mod instance;
 mod resource_manager;
+mod sampler;
 mod texture;
 
 pub use buffer::*;
 pub use device::*;
 pub use instance::*;
+pub use sampler::*;
 pub use texture::*;
 
 pub use ash;
