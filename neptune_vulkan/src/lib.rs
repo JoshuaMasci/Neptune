@@ -1,3 +1,4 @@
+mod bindless_descriptor;
 mod buffer;
 mod device;
 mod instance;
