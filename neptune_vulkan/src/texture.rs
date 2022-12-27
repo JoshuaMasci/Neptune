@@ -1,4 +1,3 @@
-use crate::resource_manager::ResourceManager;
 use crate::{AshDevice, Error};
 use ash::vk;
 use bitflags::bitflags;
@@ -58,28 +57,15 @@ pub(crate) fn get_vk_texture_2d_create_info(
         .build()
 }
 
-pub struct Texture {
-    pub(crate) texture: AshTexture,
-    pub(crate) resource_manager: Arc<Mutex<ResourceManager>>,
-}
-
-impl Drop for Texture {
-    fn drop(&mut self) {
-        self.resource_manager
-            .lock()
-            .unwrap()
-            .destroy_texture(std::mem::take(&mut self.texture));
-    }
-}
-
 #[derive(Default, Debug)]
-pub struct AshTexture {
+pub struct AshImage {
     pub handle: vk::Image,
     pub allocation: gpu_allocator::vulkan::Allocation,
+    //TODO: Bindings
 }
 
-impl AshTexture {
-    pub(crate) fn create_texture(
+impl AshImage {
+    pub(crate) fn new(
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
         create_info: &vk::ImageCreateInfo,
@@ -120,7 +106,7 @@ impl AshTexture {
         Ok(Self { allocation, handle })
     }
 
-    pub(crate) fn destroy_texture(
+    pub(crate) fn destroy(
         &mut self,
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
@@ -131,20 +117,5 @@ impl AshTexture {
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
         trace!("Destroy Texture");
-    }
-
-    fn unsafe_clone(&self) -> Self {
-        let mut allocation: gpu_allocator::vulkan::Allocation = Default::default();
-
-        // Using unsafe because Allocation doesn't impl Clone despite the fact it is just raw data.
-        // This is likely because they don't want multiple of the mapped pointers around, which shouldn't cause a problem
-        unsafe {
-            std::ptr::copy_nonoverlapping(&self.allocation, &mut allocation, 1);
-        }
-
-        Self {
-            handle: self.handle,
-            allocation,
-        }
     }
 }

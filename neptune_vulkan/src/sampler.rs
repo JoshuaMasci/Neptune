@@ -101,43 +101,25 @@ impl SamplerCreateInfo {
     }
 }
 
-pub struct Sampler {
-    pub(crate) sampler: AshSampler,
-    pub(crate) resource_manager: Arc<Mutex<ResourceManager>>,
-}
-
-impl Drop for Sampler {
-    fn drop(&mut self) {
-        self.resource_manager
-            .lock()
-            .unwrap()
-            .destroy_sampler(std::mem::take(&mut self.sampler));
-    }
-}
-
 #[derive(Default, Debug)]
 pub(crate) struct AshSampler {
     pub(crate) handle: vk::Sampler,
-    pub(crate) binding: Option<u16>,
 }
 
 impl AshSampler {
-    pub(crate) fn create_sampler(
+    pub(crate) fn new(
         device: &Arc<AshDevice>,
         sampler_create_info: &SamplerCreateInfo,
     ) -> crate::Result<Self> {
         unsafe {
             match device.create_sampler(&sampler_create_info.to_vk(), None) {
-                Ok(handle) => Ok(Self {
-                    handle,
-                    binding: None,
-                }),
+                Ok(handle) => Ok(Self { handle }),
                 Err(e) => Err(crate::Error::VkError(e)),
             }
         }
     }
 
-    pub(crate) fn destroy_sampler(&self, device: &Arc<AshDevice>) {
+    pub(crate) fn destroy(&self, device: &Arc<AshDevice>) {
         unsafe { device.destroy_sampler(self.handle, None) };
         trace!("Destroy Sampler");
     }

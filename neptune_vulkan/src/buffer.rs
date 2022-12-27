@@ -57,20 +57,6 @@ pub(crate) enum BufferBinding {
     Storage(u16),
 }
 
-pub struct Buffer {
-    pub(crate) buffer: AshBuffer,
-    pub(crate) resource_manager: Arc<Mutex<ResourceManager>>,
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.resource_manager
-            .lock()
-            .unwrap()
-            .destroy_buffer(std::mem::take(&mut self.buffer));
-    }
-}
-
 #[derive(Default, Debug)]
 pub struct AshBuffer {
     pub(crate) handle: vk::Buffer,
@@ -79,7 +65,7 @@ pub struct AshBuffer {
 }
 
 impl AshBuffer {
-    pub(crate) fn create_buffer(
+    pub(crate) fn new(
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
         create_info: &vk::BufferCreateInfo,
@@ -124,7 +110,7 @@ impl AshBuffer {
         })
     }
 
-    pub(crate) fn destroy_buffer(
+    pub(crate) fn destroy(
         &mut self,
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
@@ -135,21 +121,5 @@ impl AshBuffer {
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
         trace!("Destroy Buffer");
-    }
-
-    fn unsafe_clone(&self) -> Self {
-        let mut allocation: gpu_allocator::vulkan::Allocation = Default::default();
-
-        // Using unsafe because Allocation doesn't impl Clone despite the fact it is just raw data.
-        // This is likely because they don't want multiple of the mapped pointers around, which shouldn't cause a problem
-        unsafe {
-            std::ptr::copy_nonoverlapping(&self.allocation, &mut allocation, 1);
-        }
-
-        Self {
-            handle: self.handle,
-            allocation,
-            binding: self.binding,
-        }
     }
 }

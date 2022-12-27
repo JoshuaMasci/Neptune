@@ -1,4 +1,4 @@
-use crate::AshDevice;
+use crate::{AshBuffer, AshDevice, AshSampler};
 use ash::prelude::VkResult;
 use ash::vk;
 use neptune_core::IndexPool;
@@ -18,12 +18,12 @@ const EMPTY_IMAGE_INFO: vk::DescriptorImageInfo = vk::DescriptorImageInfo {
 
 #[derive(Debug, Default)]
 pub(crate) struct BindingCount {
-    uniform_buffers: u32,
-    storage_buffers: u32,
-    sampled_textures: u32,
-    storage_textures: u32,
-    samplers: u32,
-    acceleration_structures: u32,
+    pub(crate) uniform_buffers: u32,
+    pub(crate) storage_buffers: u32,
+    pub(crate) sampled_textures: u32,
+    pub(crate) storage_textures: u32,
+    pub(crate) samplers: u32,
+    pub(crate) acceleration_structures: u32,
 }
 
 struct DescriptorArray<T> {
@@ -34,13 +34,13 @@ struct DescriptorArray<T> {
 impl<T> DescriptorArray<T> {
     pub fn new(range: std::ops::Range<u32>) -> Self {
         Self {
-            index_pool: IndexPool::new(range),
+            index_pool: IndexPool::new_range(range),
             updates: Vec::new(),
         }
     }
 }
 
-pub(crate) struct BindlessDescriptorSet {
+pub(crate) struct DescriptorSet {
     device: Arc<AshDevice>,
     layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
@@ -53,7 +53,7 @@ pub(crate) struct BindlessDescriptorSet {
     samplers: DescriptorArray<vk::DescriptorImageInfo>,
 }
 
-impl BindlessDescriptorSet {
+impl DescriptorSet {
     const UNIFORM_BUFFER_BINDING: u32 = 0;
     const STORAGE_BUFFER_BINDING: u32 = 1;
     const SAMPLED_IMAGE_BINDING: u32 = 2;
@@ -183,5 +183,112 @@ impl BindlessDescriptorSet {
             storage_images: DescriptorArray::new(0..counts.storage_textures),
             samplers: DescriptorArray::new(0..counts.samplers),
         })
+    }
+
+    pub(crate) fn layout(&self) -> vk::DescriptorSetLayout {
+        self.layout
+    }
+
+    pub(crate) fn set(&self) -> vk::DescriptorSet {
+        self.set
+    }
+
+    pub(crate) fn update(&mut self) {
+        let mut writes: Vec<vk::WriteDescriptorSet> =
+            Vec::with_capacity(self.uniform_buffers.updates.len() + self.samplers.updates.len());
+
+        for (index, info) in self.uniform_buffers.updates.iter() {
+            writes.push(vk::WriteDescriptorSet {
+                dst_set: self.set,
+                dst_binding: Self::UNIFORM_BUFFER_BINDING,
+                dst_array_element: *index,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                p_buffer_info: info,
+                ..Default::default()
+            });
+        }
+
+        for (index, info) in self.samplers.updates.iter() {
+            writes.push(vk::WriteDescriptorSet {
+                dst_set: self.set,
+                dst_binding: Self::SAMPLER_BINDING,
+                dst_array_element: *index,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                p_image_info: info,
+                ..Default::default()
+            });
+        }
+
+        //TODO: profile this part
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+
+        self.uniform_buffers.updates.clear();
+        self.storage_buffers.updates.clear();
+        self.sampled_images.updates.clear();
+        self.storage_images.updates.clear();
+        self.samplers.updates.clear();
+    }
+
+    pub(crate) fn bind_uniform_buffer(&mut self, buffer: AshBuffer) -> crate::Result<u32> {
+        match self.uniform_buffers.index_pool.get() {
+            None => Err(crate::Error::StringError(
+                "Out of Uniform Buffer Descriptor Slots!".to_string(),
+            )),
+            Some(index) => {
+                self.uniform_buffers.updates.push((
+                    index,
+                    vk::DescriptorBufferInfo {
+                        buffer: buffer.handle,
+                        offset: 0,
+                        range: vk::WHOLE_SIZE,
+                    },
+                ));
+                Ok(index)
+            }
+        }
+    }
+
+    pub(crate) fn unbind_uniform_buffer(&mut self, index: u32) {
+        self.uniform_buffers
+            .updates
+            .push((index, self::EMPTY_BUFFER_INFO));
+        self.uniform_buffers.index_pool.free(index);
+    }
+
+    pub(crate) fn bind_sampler(&mut self, sampler: vk::Sampler) -> crate::Result<u32> {
+        match self.samplers.index_pool.get() {
+            None => Err(crate::Error::StringError(
+                "Out of Uniform Buffer Descriptor Slots!".to_string(),
+            )),
+            Some(index) => {
+                self.samplers.updates.push((
+                    index,
+                    vk::DescriptorImageInfo {
+                        sampler,
+                        image_view: vk::ImageView::null(),
+                        image_layout: vk::ImageLayout::UNDEFINED,
+                    },
+                ));
+                Ok(index)
+            }
+        }
+    }
+
+    pub(crate) fn unbind_sampler(&mut self, index: u32) {
+        self.samplers.updates.push((index, self::EMPTY_IMAGE_INFO));
+        self.samplers.index_pool.free(index);
+    }
+}
+
+impl Drop for DescriptorSet {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_descriptor_pool(self.pool, None);
+            self.device.destroy_descriptor_set_layout(self.layout, None);
+        }
     }
 }

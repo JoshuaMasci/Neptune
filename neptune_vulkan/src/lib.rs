@@ -1,5 +1,5 @@
-mod bindless_descriptor;
 mod buffer;
+mod descriptor_set;
 mod device;
 mod instance;
 mod resource_manager;

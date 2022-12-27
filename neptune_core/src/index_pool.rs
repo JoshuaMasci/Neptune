@@ -1,15 +1,23 @@
 pub struct IndexPool<T: Copy + PartialOrd> {
     freed_indexes: Vec<T>,
     next_index: T,
-    index_range: std::ops::Range<T>,
+    index_range: Option<std::ops::Range<T>>,
 }
 
 impl<T: Copy + PartialOrd> IndexPool<T> {
-    pub fn new(range: std::ops::Range<T>) -> Self {
+    pub fn new(starting_value: T) -> Self {
+        Self {
+            freed_indexes: Vec::new(),
+            next_index: starting_value,
+            index_range: None,
+        }
+    }
+
+    pub fn new_range(range: std::ops::Range<T>) -> Self {
         Self {
             freed_indexes: Vec::new(),
             next_index: range.start,
-            index_range: range,
+            index_range: Some(range),
         }
     }
 
@@ -18,16 +26,24 @@ impl<T: Copy + PartialOrd> IndexPool<T> {
             Some(index)
         } else {
             let index = self.next_index;
-            if self.index_range.contains(&index) {
-                Some(index)
+            if let Some(index_range) = &self.index_range {
+                if index_range.contains(&index) {
+                    Some(index)
+                } else {
+                    None
+                }
             } else {
-                None
+                Some(index)
             }
         }
     }
 
     pub fn free(&mut self, index: T) {
-        if self.index_range.contains(&index) {
+        if let Some(index_range) = &self.index_range {
+            if index_range.contains(&index) {
+                self.freed_indexes.push(index);
+            }
+        } else {
             self.freed_indexes.push(index);
         }
     }
