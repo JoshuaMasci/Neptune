@@ -1,4 +1,5 @@
 use crate::buffer::AshBuffer;
+use crate::debug_utils::DebugUtils;
 use crate::descriptor_set::{BindingCount, DescriptorSet};
 use crate::sampler::AshSampler;
 use crate::texture::AshImage;
@@ -85,6 +86,7 @@ pub struct TextureHandle(u16);
 pub struct SamplerHandle(u16);
 
 pub(crate) struct ResourceManager {
+    debug_utils: Option<Arc<DebugUtils>>,
     device: Arc<AshDevice>,
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     descriptor_set: DescriptorSet,
@@ -105,7 +107,10 @@ impl ResourceManager {
         frames_in_flight_count: usize,
         device: Arc<AshDevice>,
         allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+        debug_utils: Option<Arc<DebugUtils>>,
     ) -> crate::Result<Self> {
+        let _ = frames_in_flight_count;
+
         //TODO: allow user to decide this amount
         let descriptor_set = DescriptorSet::new(
             device.clone(),
@@ -119,7 +124,16 @@ impl ResourceManager {
             },
         )?;
 
+        if let Some(debug_utils) = &debug_utils {
+            debug_utils.set_object_name(
+                device.handle(),
+                descriptor_set.set(),
+                "Bindless-Descriptor-Set",
+            );
+        }
+
         Ok(Self {
+            debug_utils,
             device,
             allocator,
             descriptor_set,
@@ -129,6 +143,10 @@ impl ResourceManager {
             textures: HashMap::new(),
             samplers: HashMap::new(),
         })
+    }
+
+    pub(crate) fn update(&mut self) {
+        self.descriptor_set.update();
     }
 
     pub(crate) fn create_buffer(
@@ -144,6 +162,8 @@ impl ResourceManager {
             &crate::buffer::get_vk_buffer_create_info(usage, binding, size),
             MemoryLocation::GpuOnly,
         )?;
+        self.set_debug_name(buffer.handle, name);
+
         let handle = BufferHandle(self.buffer_index_pool.get().unwrap());
 
         //TODO: Bindings
@@ -174,6 +194,7 @@ impl ResourceManager {
             &crate::texture::get_vk_texture_2d_create_info(usage, bindings, format, size),
             MemoryLocation::GpuOnly,
         )?;
+        self.set_debug_name(texture.handle, name);
 
         let handle = TextureHandle(self.texture_index_pool.get().unwrap());
 
@@ -197,6 +218,7 @@ impl ResourceManager {
         sampler_create_info: &SamplerCreateInfo,
     ) -> crate::Result<SamplerHandle> {
         let sampler = AshSampler::new(&self.device, sampler_create_info)?;
+        self.set_debug_name(sampler.handle, name);
         let binding = SamplerHandle(self.descriptor_set.bind_sampler(sampler.handle)? as u16);
         self.samplers.insert(binding, sampler);
         Ok(binding)
@@ -207,6 +229,12 @@ impl ResourceManager {
         if let Some(sampler) = self.samplers.remove(&handle) {
             self.descriptor_set.unbind_sampler(handle.0 as u32);
             sampler.destroy(&self.device);
+        }
+    }
+
+    pub(crate) fn set_debug_name<T: vk::Handle>(&self, object: T, name: &str) {
+        if let Some(debug_utils) = &self.debug_utils {
+            debug_utils.set_object_name(self.device.handle(), object, name);
         }
     }
 }

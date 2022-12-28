@@ -1,10 +1,12 @@
 use crate::DeviceInfo;
 use crate::{Device, Error};
-use ash::prelude::VkResult;
-use ash::{vk, Entry, LoadingError};
+
+use crate::debug_utils::DebugUtils;
+use ash::vk;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Surface {
     handle: vk::SurfaceKHR,
@@ -103,6 +105,7 @@ fn get_surface_extensions(extension_names_raw: &mut Vec<*const c_char>) {
 pub struct Instance {
     entry: ash::Entry,
     surface_ext: Rc<ash::extensions::khr::Surface>,
+    debug_utils: Option<Arc<DebugUtils>>,
     instance: ash::Instance,
 
     physical_devices: Vec<PhysicalDevice>,
@@ -128,12 +131,19 @@ impl Instance {
 
         let mut layer_names_raw = Vec::new();
 
-        //TODO: enable or disable
-        let validation_layer_name = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
-        layer_names_raw.push(validation_layer_name.as_ptr());
-
         let mut extension_names_raw = vec![ash::extensions::khr::Surface::name().as_ptr()];
         get_surface_extensions(&mut extension_names_raw);
+
+        //TODO: enable or disable
+        let enable_debug = true;
+
+        //Name must persist until create_instance is called
+        let validation_layer_name = CString::new("VK_LAYER_KHRONOS_validation").unwrap();
+
+        if enable_debug {
+            layer_names_raw.push(validation_layer_name.as_ptr());
+            extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+        }
 
         let app_info = vk::ApplicationInfo::builder()
             .application_name(app_name.as_c_str())
@@ -152,6 +162,12 @@ impl Instance {
             Err(e) => return Err(Error::VkError(e)),
         };
 
+        let debug_utils = if enable_debug {
+            Some(DebugUtils::new(&entry, &instance).map(Arc::new)?)
+        } else {
+            None
+        };
+
         let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
 
         let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
@@ -165,6 +181,7 @@ impl Instance {
         Ok(Self {
             entry,
             surface_ext,
+            debug_utils,
             instance,
             physical_devices,
         })
@@ -218,7 +235,11 @@ impl Instance {
             .max_by_key(|index_score| index_score.1);
 
         match max_score {
-            Some((index, _score)) => Device::new(&self.instance, &self.physical_devices[index]),
+            Some((index, _score)) => Device::new(
+                &self.instance,
+                &self.physical_devices[index],
+                self.debug_utils.clone(),
+            ),
             None => Err(Error::StringError(String::from(
                 "Unable to find valid device",
             ))),
@@ -228,6 +249,9 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
+        //Drop the debug_utils before instance
+        drop(self.debug_utils.take());
+
         unsafe {
             self.instance.destroy_instance(None);
         }

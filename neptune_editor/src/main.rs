@@ -107,7 +107,9 @@ fn main() {
                 info!("The close button was pressed; stopping");
                 *control_flow = ControlFlow::Exit
             }
-            Event::MainEventsCleared => {}
+            Event::MainEventsCleared => {
+                device.render_frame();
+            }
             Event::RedrawRequested(_window_id) => {}
             event => {}
         }

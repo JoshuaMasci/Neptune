@@ -1,3 +1,4 @@
+use crate::debug_utils::DebugUtils;
 use crate::resource_manager::{BufferHandle, ResourceManager, SamplerHandle, TextureHandle};
 use crate::sampler::SamplerCreateInfo;
 use crate::texture::{TextureBindingType, TextureUsage};
@@ -150,7 +151,9 @@ impl Device {
     pub(crate) fn new(
         instance: &ash::Instance,
         physical_device: &PhysicalDevice,
+        debug_utils: Option<Arc<DebugUtils>>,
     ) -> crate::Result<Self> {
+        //TODO: check for extension support
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
         let mut synchronization2_features =
@@ -217,6 +220,7 @@ impl Device {
             FRAMES_IN_FLIGHT_COUNT,
             device.clone(),
             allocator.clone(),
+            debug_utils,
         )?));
 
         Ok(Self {
@@ -317,5 +321,9 @@ impl Device {
                 handle,
                 resource_manager: self.resource_manager.clone(),
             })
+    }
+
+    pub fn render_frame(&self) {
+        self.resource_manager.lock().unwrap().update();
     }
 }
