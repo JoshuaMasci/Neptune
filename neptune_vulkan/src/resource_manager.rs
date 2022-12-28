@@ -130,6 +130,11 @@ impl ResourceManager {
                 descriptor_set.set(),
                 "Bindless-Descriptor-Set",
             );
+            debug_utils.set_object_name(
+                device.handle(),
+                descriptor_set.null_sampler.handle,
+                "Bindless-Descriptor-Set-Null-Sampler",
+            );
         }
 
         Ok(Self {

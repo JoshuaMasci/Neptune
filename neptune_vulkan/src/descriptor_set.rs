@@ -1,4 +1,4 @@
-use crate::{AshBuffer, AshDevice, AshSampler};
+use crate::{AshBuffer, AshDevice, AshImage, AshSampler, SamplerCreateInfo};
 use ash::prelude::VkResult;
 use ash::vk;
 use neptune_core::IndexPool;
@@ -45,6 +45,9 @@ pub(crate) struct DescriptorSet {
     layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
+
+    //Sampler Doesn't support nullDescriptor, this will serve as the empty value
+    pub(crate) null_sampler: AshSampler,
 
     uniform_buffers: DescriptorArray<vk::DescriptorBufferInfo>,
     storage_buffers: DescriptorArray<vk::DescriptorBufferInfo>,
@@ -172,11 +175,27 @@ impl DescriptorSet {
             }
         };
 
+        let null_sampler = AshSampler::new(&device, &SamplerCreateInfo::default())?;
+
+        write_empty_image_info(
+            &device,
+            set,
+            Self::SAMPLER_BINDING,
+            vk::DescriptorType::SAMPLER,
+            0..counts.samplers,
+            &vk::DescriptorImageInfo {
+                sampler: null_sampler.handle,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            },
+        );
+
         Ok(Self {
             device,
             layout,
             pool,
             set,
+            null_sampler,
             uniform_buffers: DescriptorArray::new(0..counts.uniform_buffers),
             storage_buffers: DescriptorArray::new(0..counts.storage_buffers),
             sampled_images: DescriptorArray::new(0..counts.sampled_textures),
@@ -279,7 +298,14 @@ impl DescriptorSet {
     }
 
     pub(crate) fn unbind_sampler(&mut self, index: u32) {
-        self.samplers.updates.push((index, self::EMPTY_IMAGE_INFO));
+        self.samplers.updates.push((
+            index,
+            vk::DescriptorImageInfo {
+                sampler: self.null_sampler.handle,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            },
+        ));
         self.samplers.index_pool.free(index);
     }
 }
@@ -289,6 +315,33 @@ impl Drop for DescriptorSet {
         unsafe {
             self.device.destroy_descriptor_pool(self.pool, None);
             self.device.destroy_descriptor_set_layout(self.layout, None);
+            self.null_sampler.destroy(&self.device);
         }
+    }
+}
+
+fn write_empty_image_info(
+    device: &Arc<AshDevice>,
+    descriptor_set: vk::DescriptorSet,
+    descriptor_binding: u32,
+    descriptor_type: vk::DescriptorType,
+    range: std::ops::Range<u32>,
+    image_info: &vk::DescriptorImageInfo,
+) {
+    let writes: Vec<vk::WriteDescriptorSet> = range
+        .map(|i| vk::WriteDescriptorSet {
+            dst_set: descriptor_set,
+            dst_binding: descriptor_binding,
+            dst_array_element: i,
+            descriptor_count: 1,
+            descriptor_type,
+            p_image_info: image_info,
+            ..Default::default()
+        })
+        .collect();
+
+    //TODO: profile this part
+    unsafe {
+        device.update_descriptor_sets(&writes, &[]);
     }
 }
