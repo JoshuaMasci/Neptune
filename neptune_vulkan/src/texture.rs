@@ -1,4 +1,5 @@
-use crate::{AshDevice, Error};
+use crate::{AshDevice, Error, Sampler};
+use ash::prelude::VkResult;
 use ash::vk;
 use bitflags::bitflags;
 use std::sync::{Arc, Mutex};
@@ -6,38 +7,44 @@ use std::sync::{Arc, Mutex};
 bitflags! {
     pub struct TextureUsage: u32 {
         const ATTACHMENT = 1 << 0;
+        const SAMPLED = 1 << 1;
+        const STORAGE = 1 << 2;
     }
 }
 
-bitflags! {
-    pub struct TextureBindingType: u32 {
-        const SAMPLED = 1 << 0;
-        const STORAGE = 1 << 0;
+fn is_color_format(format: vk::Format) -> bool {
+    match format {
+        vk::Format::D16_UNORM
+        | vk::Format::D16_UNORM_S8_UINT
+        | vk::Format::D24_UNORM_S8_UINT
+        | vk::Format::X8_D24_UNORM_PACK32
+        | vk::Format::D32_SFLOAT
+        | vk::Format::D32_SFLOAT_S8_UINT => false,
+        _ => true,
     }
 }
 
 pub(crate) fn get_vk_texture_2d_create_info(
     usage: TextureUsage,
-    bindings: TextureBindingType,
     format: vk::Format,
     size: [u32; 2],
 ) -> vk::ImageCreateInfo {
     let mut vk_usage = vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST;
 
-    if bindings.contains(TextureBindingType::SAMPLED) {
-        vk_usage |= vk::ImageUsageFlags::SAMPLED;
-    }
-
-    if bindings.contains(TextureBindingType::STORAGE) {
-        vk_usage |= vk::ImageUsageFlags::STORAGE;
-    }
-
-    let is_color_format = true;
+    let is_color_format = is_color_format(format);
     if usage.contains(TextureUsage::ATTACHMENT) {
         vk_usage |= match is_color_format {
             true => vk::ImageUsageFlags::COLOR_ATTACHMENT,
             false => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         };
+    }
+
+    if usage.contains(TextureUsage::SAMPLED) {
+        vk_usage |= vk::ImageUsageFlags::SAMPLED;
+    }
+
+    if usage.contains(TextureUsage::STORAGE) {
+        vk_usage |= vk::ImageUsageFlags::STORAGE;
     }
 
     vk::ImageCreateInfo::builder()
@@ -61,17 +68,20 @@ pub(crate) fn get_vk_texture_2d_create_info(
 pub struct AshImage {
     pub handle: vk::Image,
     pub allocation: gpu_allocator::vulkan::Allocation,
-    //TODO: Bindings
+    pub view: vk::ImageView,
 }
 
 impl AshImage {
     pub(crate) fn new(
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
-        create_info: &vk::ImageCreateInfo,
+        usage: TextureUsage,
+        format: vk::Format,
+        size: [u32; 2],
         memory_location: gpu_allocator::MemoryLocation,
     ) -> crate::Result<Self> {
-        let handle = match unsafe { device.create_image(create_info, None) } {
+        let create_info = get_vk_texture_2d_create_info(usage, format, size);
+        let handle = match unsafe { device.create_image(&create_info, None) } {
             Ok(handle) => handle,
             Err(e) => return Err(Error::VkError(e)),
         };
@@ -103,7 +113,38 @@ impl AshImage {
             return Err(Error::VkError(e));
         }
 
-        Ok(Self { allocation, handle })
+        let view_create_info = vk::ImageViewCreateInfo::builder()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .image(handle)
+            .components(vk::ComponentMapping::default())
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: if is_color_format(format) {
+                    vk::ImageAspectFlags::COLOR
+                } else {
+                    vk::ImageAspectFlags::DEPTH
+                },
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .build();
+
+        let view = match unsafe { device.create_image_view(&view_create_info, None) } {
+            Ok(view) => view,
+            Err(e) => {
+                unsafe { device.destroy_image(handle, None) };
+                let _ = allocator.lock().unwrap().free(allocation);
+                return Err(Error::VkError(e));
+            }
+        };
+
+        Ok(Self {
+            allocation,
+            handle,
+            view,
+        })
     }
 
     pub(crate) fn destroy(
@@ -111,7 +152,10 @@ impl AshImage {
         device: &Arc<AshDevice>,
         allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     ) {
-        unsafe { device.destroy_image(self.handle, None) };
+        unsafe {
+            device.destroy_image_view(self.view, None);
+            device.destroy_image(self.handle, None)
+        };
         let _ = allocator
             .lock()
             .unwrap()

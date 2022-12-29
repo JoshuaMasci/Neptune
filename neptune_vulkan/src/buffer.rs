@@ -8,60 +8,54 @@ bitflags! {
     pub struct BufferUsage: u32 {
         const VERTEX = 1 << 2;
         const INDEX = 1 << 3;
+        const UNIFORM = 1 << 4;
+        const STORAGE = 1 << 5;
         const INDIRECT  = 1 << 6;
     }
 }
 
-//TODO: Should this be flags?
-pub enum BufferBindingType {
-    None,
-    Uniform,
-    Storage,
+impl BufferUsage {
+    fn to_vk(&self) -> vk::BufferUsageFlags {
+        let mut vk_usage = vk::BufferUsageFlags::empty();
+
+        if self.contains(BufferUsage::VERTEX) {
+            vk_usage |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        }
+
+        if self.contains(BufferUsage::INDEX) {
+            vk_usage |= vk::BufferUsageFlags::INDEX_BUFFER;
+        }
+
+        if self.contains(BufferUsage::UNIFORM) {
+            vk_usage |= vk::BufferUsageFlags::UNIFORM_BUFFER;
+        }
+
+        if self.contains(BufferUsage::STORAGE) {
+            vk_usage |= vk::BufferUsageFlags::STORAGE_BUFFER;
+        }
+
+        if self.contains(BufferUsage::INDIRECT) {
+            vk_usage |= vk::BufferUsageFlags::INDIRECT_BUFFER;
+        }
+
+        vk_usage
+    }
 }
 
-pub(crate) fn get_vk_buffer_create_info(
-    usage: BufferUsage,
-    binding: BufferBindingType,
-    size: u64,
-) -> vk::BufferCreateInfo {
-    let mut vk_usage = vk::BufferUsageFlags::TRANSFER_SRC
-        | vk::BufferUsageFlags::TRANSFER_DST
-        | match binding {
-            BufferBindingType::None => vk::BufferUsageFlags::empty(),
-            BufferBindingType::Uniform => vk::BufferUsageFlags::UNIFORM_BUFFER,
-            BufferBindingType::Storage => vk::BufferUsageFlags::STORAGE_BUFFER,
-        };
-
-    if usage.contains(BufferUsage::VERTEX) {
-        vk_usage |= vk::BufferUsageFlags::VERTEX_BUFFER;
-    }
-
-    if usage.contains(BufferUsage::INDEX) {
-        vk_usage |= vk::BufferUsageFlags::INDEX_BUFFER;
-    }
-
-    if usage.contains(BufferUsage::INDIRECT) {
-        vk_usage |= vk::BufferUsageFlags::INDIRECT_BUFFER;
-    }
-
+pub(crate) fn get_vk_buffer_create_info(usage: BufferUsage, size: u64) -> vk::BufferCreateInfo {
     vk::BufferCreateInfo::builder()
-        .usage(vk_usage)
+        .usage(
+            vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST | usage.to_vk(),
+        )
         .size(size)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .build()
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum BufferBinding {
-    Uniform(u16),
-    Storage(u16),
 }
 
 #[derive(Default, Debug)]
 pub struct AshBuffer {
     pub(crate) handle: vk::Buffer,
     pub(crate) allocation: gpu_allocator::vulkan::Allocation,
-    pub(crate) binding: Option<BufferBinding>,
 }
 
 impl AshBuffer {
@@ -103,11 +97,7 @@ impl AshBuffer {
             return Err(Error::VkError(e));
         }
 
-        Ok(Self {
-            handle,
-            allocation,
-            binding: None,
-        })
+        Ok(Self { handle, allocation })
     }
 
     pub(crate) fn destroy(

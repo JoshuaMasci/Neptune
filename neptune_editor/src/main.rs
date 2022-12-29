@@ -1,13 +1,8 @@
 #[macro_use]
 extern crate log;
 
-use neptune_vulkan::ash::vk::{
-    BufferUsageFlags, Extent3D, Format, ImageType, ImageUsageFlags, SampleCountFlags,
-};
-use neptune_vulkan::{
-    AddressMode, BufferBindingType, BufferUsage, FilterMode, MemoryLocation, SamplerCreateInfo,
-    TextureBindingType, TextureUsage,
-};
+use neptune_vulkan::ash::vk::Format;
+use neptune_vulkan::{AddressMode, BufferUsage, FilterMode, SamplerCreateInfo, TextureUsage};
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -51,20 +46,8 @@ fn main() {
     let buffer = device
         .create_buffer_with_data(
             "Test Buffer",
-            BufferUsage::VERTEX,
-            BufferBindingType::None,
+            BufferUsage::VERTEX | BufferUsage::STORAGE | BufferUsage::UNIFORM,
             &[0u8; 16],
-        )
-        .expect("Failed to create buffer!");
-
-    let texture = device
-        .create_texture_with_data(
-            "Test Texture",
-            TextureUsage::empty(),
-            TextureBindingType::SAMPLED,
-            Format::R8G8B8A8_UNORM,
-            [1; 2],
-            &[93, 63, 211, 255],
         )
         .unwrap();
 
@@ -82,6 +65,17 @@ fn main() {
         )
         .unwrap();
 
+    let mut texture = device
+        .create_texture_with_data(
+            "Test Texture",
+            TextureUsage::STORAGE,
+            Format::R8G8B8A8_UNORM,
+            [1; 2],
+            Some(&sampler),
+            &[93, 63, 211, 255],
+        )
+        .ok();
+
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
@@ -98,6 +92,7 @@ fn main() {
                 if frame_count_time.1 >= 1.0 {
                     info!("FPS: {}", frame_count_time.0);
                     frame_count_time = (0, 0.0);
+                    let _ = texture.take();
                 }
             }
             Event::WindowEvent {

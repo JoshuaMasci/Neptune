@@ -252,7 +252,7 @@ impl DescriptorSet {
         self.samplers.updates.clear();
     }
 
-    pub(crate) fn bind_uniform_buffer(&mut self, buffer: AshBuffer) -> crate::Result<u32> {
+    pub(crate) fn bind_uniform_buffer(&mut self, buffer: &AshBuffer) -> crate::Result<u32> {
         match self.uniform_buffers.index_pool.get() {
             None => Err(crate::Error::StringError(
                 "Out of Uniform Buffer Descriptor Slots!".to_string(),
@@ -276,6 +276,58 @@ impl DescriptorSet {
             .updates
             .push((index, self::EMPTY_BUFFER_INFO));
         self.uniform_buffers.index_pool.free(index);
+    }
+
+    pub(crate) fn bind_storage_buffer(&mut self, buffer: &AshBuffer) -> crate::Result<u32> {
+        match self.storage_buffers.index_pool.get() {
+            None => Err(crate::Error::StringError(
+                "Out of Storage Buffer Descriptor Slots!".to_string(),
+            )),
+            Some(index) => {
+                self.storage_buffers.updates.push((
+                    index,
+                    vk::DescriptorBufferInfo {
+                        buffer: buffer.handle,
+                        offset: 0,
+                        range: vk::WHOLE_SIZE,
+                    },
+                ));
+                Ok(index)
+            }
+        }
+    }
+
+    pub(crate) fn unbind_storage_buffer(&mut self, index: u32) {
+        self.storage_buffers
+            .updates
+            .push((index, self::EMPTY_BUFFER_INFO));
+        self.storage_buffers.index_pool.free(index);
+    }
+
+    pub(crate) fn bind_storage_image(&mut self, image: &AshImage) -> crate::Result<u32> {
+        match self.storage_images.index_pool.get() {
+            None => Err(crate::Error::StringError(
+                "Out of Storage Image Descriptor Slots!".to_string(),
+            )),
+            Some(index) => {
+                self.storage_images.updates.push((
+                    index,
+                    vk::DescriptorImageInfo {
+                        sampler: vk::Sampler::null(),
+                        image_view: image.view,
+                        image_layout: vk::ImageLayout::GENERAL,
+                    },
+                ));
+                Ok(index)
+            }
+        }
+    }
+
+    pub(crate) fn unbind_storage_image(&mut self, index: u32) {
+        self.storage_images
+            .updates
+            .push((index, self::EMPTY_IMAGE_INFO));
+        self.storage_images.index_pool.free(index);
     }
 
     pub(crate) fn bind_sampler(&mut self, sampler: vk::Sampler) -> crate::Result<u32> {

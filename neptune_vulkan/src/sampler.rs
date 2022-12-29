@@ -3,7 +3,7 @@ use crate::AshDevice;
 use ash::vk;
 use std::sync::{Arc, Mutex};
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum AddressMode {
     #[default]
     Repeat,
@@ -23,7 +23,7 @@ impl AddressMode {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum FilterMode {
     #[default]
     Nearest,
@@ -46,7 +46,7 @@ impl FilterMode {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub enum BorderColor {
     #[default]
     TransparentBlack,

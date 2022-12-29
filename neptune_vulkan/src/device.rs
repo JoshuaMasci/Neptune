@@ -1,8 +1,8 @@
 use crate::debug_utils::DebugUtils;
 use crate::resource_manager::{BufferHandle, ResourceManager, SamplerHandle, TextureHandle};
 use crate::sampler::SamplerCreateInfo;
-use crate::texture::{TextureBindingType, TextureUsage};
-use crate::{BufferBindingType, BufferUsage};
+use crate::BufferUsage;
+use crate::TextureUsage;
 use crate::{Error, PhysicalDevice};
 use ash::vk;
 use std::ffi::CStr;
@@ -240,13 +240,12 @@ impl Device {
         &self,
         name: &str,
         usage: BufferUsage,
-        binding: BufferBindingType,
         size: u64,
     ) -> crate::Result<Buffer> {
         self.resource_manager
             .lock()
             .unwrap()
-            .create_buffer(name, usage, binding, size)
+            .create_buffer(name, usage, size)
             .map(|handle| Buffer {
                 handle,
                 resource_manager: self.resource_manager.clone(),
@@ -257,13 +256,12 @@ impl Device {
         &self,
         name: &str,
         usage: BufferUsage,
-        binding: BufferBindingType,
         data: &[u8],
     ) -> crate::Result<Buffer> {
         self.resource_manager
             .lock()
             .unwrap()
-            .create_buffer(name, usage, binding, data.len() as u64)
+            .create_buffer(name, usage, data.len() as u64)
             .map(|handle| Buffer {
                 handle,
                 resource_manager: self.resource_manager.clone(),
@@ -274,14 +272,14 @@ impl Device {
         &self,
         name: &str,
         usage: TextureUsage,
-        bindings: TextureBindingType,
         format: vk::Format,
         size: [u32; 2],
+        sampler: Option<&Sampler>,
     ) -> crate::Result<Texture> {
         self.resource_manager
             .lock()
             .unwrap()
-            .create_texture(name, usage, bindings, format, size)
+            .create_texture(name, usage, format, size, sampler)
             .map(|handle| Texture {
                 handle,
                 resource_manager: self.resource_manager.clone(),
@@ -292,15 +290,15 @@ impl Device {
         &self,
         name: &str,
         usage: TextureUsage,
-        bindings: TextureBindingType,
         format: vk::Format,
         size: [u32; 2],
+        sampler: Option<&Sampler>,
         data: &[u8],
     ) -> crate::Result<Texture> {
         self.resource_manager
             .lock()
             .unwrap()
-            .create_texture(name, usage, bindings, format, size)
+            .create_texture(name, usage, format, size, sampler)
             .map(|handle| Texture {
                 handle,
                 resource_manager: self.resource_manager.clone(),

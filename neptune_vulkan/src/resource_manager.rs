@@ -3,75 +3,24 @@ use crate::debug_utils::DebugUtils;
 use crate::descriptor_set::{BindingCount, DescriptorSet};
 use crate::sampler::AshSampler;
 use crate::texture::AshImage;
-use crate::{
-    AshDevice, BufferBindingType, BufferUsage, SamplerCreateInfo, TextureBindingType, TextureUsage,
-};
+use crate::{AshDevice, BufferUsage, Sampler, SamplerCreateInfo, TextureUsage};
 use ash::vk;
 use gpu_allocator::MemoryLocation;
 use neptune_core::IndexPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-// pub(crate) struct RangeCycle {
-//     range: std::ops::Range<usize>,
-//     index: usize,
-// }
-//
-// impl RangeCycle {
-//     pub(crate) fn new(range: std::ops::Range<usize>) -> Self {
-//         let index = range.start;
-//         Self { range, index }
-//     }
-//
-//     pub(crate) fn get(&self) -> usize {
-//         self.index
-//     }
-//
-//     pub(crate) fn increment(&mut self) {
-//         let mut new_index = self.index + 1;
-//         if new_index == self.range.end {
-//             new_index = self.range.start;
-//         }
-//         self.index = new_index;
-//     }
-//
-//     pub(crate) fn get_previous(&self, steps: usize) -> usize {
-//         let mut last_index = self.index;
-//         for _ in 0..steps {
-//             last_index = (if last_index == self.range.start {
-//                 self.range.end
-//             } else {
-//                 last_index
-//             } - 1);
-//         }
-//         last_index
-//     }
-// }
-//
-// #[derive(Copy, Clone)]
-// pub(crate) enum BufferAccessType {
-//     Some,
-//     Other,
-// }
-//
-// #[derive(Copy, Clone)]
-// pub(crate) enum TextureAccessType {
-//     Some,
-//     Other,
-// }
-//
-// #[derive(Default)]
-// struct ResourceFrame {
-//     buffer_usages: HashMap<vk::Buffer, BufferAccessType>,
-//     texture_usage: HashMap<vk::Image, TextureAccessType>,
-// }
-//
-// impl ResourceFrame {
-//     fn clear(&mut self) {
-//         self.buffer_usages.clear();
-//         self.texture_usage.clear();
-//     }
-// }
+pub(crate) struct BufferResource {
+    buffer: AshBuffer,
+    uniform_binding: Option<u32>,
+    storage_binding: Option<u32>,
+}
+
+pub(crate) struct TextureResource {
+    texture: AshImage,
+    sampled_binding: Option<u32>,
+    storage_binding: Option<u32>,
+}
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
@@ -92,10 +41,10 @@ pub(crate) struct ResourceManager {
     descriptor_set: DescriptorSet,
 
     buffer_index_pool: IndexPool<u16>,
-    buffers: HashMap<BufferHandle, AshBuffer>,
+    buffers: HashMap<BufferHandle, BufferResource>,
 
     texture_index_pool: IndexPool<u16>,
-    textures: HashMap<TextureHandle, AshImage>,
+    textures: HashMap<TextureHandle, TextureResource>,
 
     samplers: HashMap<SamplerHandle, AshSampler>,
     // frames: Vec<ResourceFrame>,
@@ -158,30 +107,51 @@ impl ResourceManager {
         &mut self,
         name: &str,
         usage: BufferUsage,
-        binding: BufferBindingType,
         size: u64,
     ) -> crate::Result<BufferHandle> {
         let buffer = crate::buffer::AshBuffer::new(
             &self.device,
             &self.allocator,
-            &crate::buffer::get_vk_buffer_create_info(usage, binding, size),
+            &crate::buffer::get_vk_buffer_create_info(usage, size),
             MemoryLocation::GpuOnly,
         )?;
         self.set_debug_name(buffer.handle, name);
 
+        let uniform_binding = if usage.contains(BufferUsage::UNIFORM) {
+            Some(self.descriptor_set.bind_uniform_buffer(&buffer)?)
+        } else {
+            None
+        };
+
+        let storage_binding = if usage.contains(BufferUsage::STORAGE) {
+            Some(self.descriptor_set.bind_storage_buffer(&buffer)?)
+        } else {
+            None
+        };
+
+        let resource = BufferResource {
+            buffer,
+            uniform_binding,
+            storage_binding,
+        };
+
         let handle = BufferHandle(self.buffer_index_pool.get().unwrap());
 
-        //TODO: Bindings
+        self.buffers.insert(handle, resource);
 
-        self.buffers.insert(handle, buffer);
         Ok(handle)
     }
 
     pub(crate) fn destroy_buffer(&mut self, handle: BufferHandle) {
         //Drop Immediately for now
-        if let Some(mut buffer) = self.buffers.remove(&handle) {
-            //TODO: Bindings
-            buffer.destroy(&self.device, &self.allocator);
+        if let Some(mut resource) = self.buffers.remove(&handle) {
+            resource.buffer.destroy(&self.device, &self.allocator);
+            if let Some(binding) = resource.uniform_binding {
+                self.descriptor_set.unbind_uniform_buffer(binding)
+            }
+            if let Some(binding) = resource.storage_binding {
+                self.descriptor_set.unbind_storage_buffer(binding)
+            }
         }
     }
 
@@ -189,31 +159,50 @@ impl ResourceManager {
         &mut self,
         name: &str,
         usage: TextureUsage,
-        bindings: TextureBindingType,
         format: vk::Format,
         size: [u32; 2],
+        sampler: Option<&Sampler>,
     ) -> crate::Result<TextureHandle> {
+        let is_sampled = sampler
+            .as_ref()
+            .map(|_| TextureUsage::SAMPLED)
+            .unwrap_or(TextureUsage::empty());
         let texture = crate::texture::AshImage::new(
             &self.device,
             &self.allocator,
-            &crate::texture::get_vk_texture_2d_create_info(usage, bindings, format, size),
+            usage | is_sampled,
+            format,
+            size,
             MemoryLocation::GpuOnly,
         )?;
         self.set_debug_name(texture.handle, name);
 
+        let storage_binding = if usage.contains(TextureUsage::STORAGE) {
+            Some(self.descriptor_set.bind_storage_image(&texture)?)
+        } else {
+            None
+        };
+
+        let resource = TextureResource {
+            texture,
+            sampled_binding: None,
+            storage_binding,
+        };
+
         let handle = TextureHandle(self.texture_index_pool.get().unwrap());
 
-        //TODO: Bindings
-
-        self.textures.insert(handle, texture);
+        self.textures.insert(handle, resource);
         Ok(handle)
     }
 
     pub(crate) fn destroy_texture(&mut self, handle: TextureHandle) {
         //Drop Immediately for now
-        if let Some(mut texture) = self.textures.remove(&handle) {
-            //TODO: Bindings
-            texture.destroy(&self.device, &self.allocator);
+        if let Some(mut resource) = self.textures.remove(&handle) {
+            resource.texture.destroy(&self.device, &self.allocator);
+
+            if let Some(binding) = resource.storage_binding {
+                self.descriptor_set.unbind_storage_image(binding)
+            }
         }
     }
 
