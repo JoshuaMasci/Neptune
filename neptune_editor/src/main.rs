@@ -65,7 +65,7 @@ fn main() {
         )
         .unwrap();
 
-    let mut texture = device
+    let texture = device
         .create_texture_with_data(
             "Test Texture",
             TextureUsage::STORAGE,
@@ -74,7 +74,7 @@ fn main() {
             Some(&sampler),
             &[93, 63, 211, 255],
         )
-        .ok();
+        .unwrap();
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
@@ -92,7 +92,6 @@ fn main() {
                 if frame_count_time.1 >= 1.0 {
                     info!("FPS: {}", frame_count_time.0);
                     frame_count_time = (0, 0.0);
-                    let _ = texture.take();
                 }
             }
             Event::WindowEvent {

@@ -138,7 +138,6 @@ impl Drop for AshDevice {
 
 pub struct Device {
     resource_manager: Arc<Mutex<ResourceManager>>,
-    allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     device: Arc<AshDevice>,
 
     info: DeviceInfo,
@@ -218,7 +217,7 @@ impl Device {
         let resource_manager = Arc::new(Mutex::new(ResourceManager::new(
             FRAMES_IN_FLIGHT_COUNT,
             device.clone(),
-            allocator.clone(),
+            allocator,
             debug_utils,
         )?));
 
@@ -226,7 +225,6 @@ impl Device {
             info: physical_device.device_info.clone(),
             physical_device: physical_device.handle,
             device,
-            allocator,
             resource_manager,
             graphics_queue,
         })

@@ -101,8 +101,8 @@ impl SamplerCreateInfo {
     }
 }
 
-#[derive(Default, Debug)]
 pub(crate) struct AshSampler {
+    device: Arc<AshDevice>,
     pub(crate) handle: vk::Sampler,
 }
 
@@ -113,14 +113,19 @@ impl AshSampler {
     ) -> crate::Result<Self> {
         unsafe {
             match device.create_sampler(&sampler_create_info.to_vk(), None) {
-                Ok(handle) => Ok(Self { handle }),
+                Ok(handle) => Ok(Self {
+                    device: device.clone(),
+                    handle,
+                }),
                 Err(e) => Err(crate::Error::VkError(e)),
             }
         }
     }
+}
 
-    pub(crate) fn destroy(&self, device: &Arc<AshDevice>) {
-        unsafe { device.destroy_sampler(self.handle, None) };
+impl Drop for AshSampler {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_sampler(self.handle, None) };
         trace!("Destroy Sampler");
     }
 }

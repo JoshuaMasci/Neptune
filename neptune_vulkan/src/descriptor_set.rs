@@ -22,7 +22,8 @@ pub(crate) struct BindingCount {
     pub(crate) storage_buffers: u32,
     pub(crate) sampled_textures: u32,
     pub(crate) storage_textures: u32,
-    pub(crate) samplers: u32,
+
+    #[allow(dead_code)]
     pub(crate) acceleration_structures: u32,
 }
 
@@ -46,14 +47,10 @@ pub(crate) struct DescriptorSet {
     pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
 
-    //Sampler Doesn't support nullDescriptor, this will serve as the empty value
-    pub(crate) null_sampler: AshSampler,
-
     uniform_buffers: DescriptorArray<vk::DescriptorBufferInfo>,
     storage_buffers: DescriptorArray<vk::DescriptorBufferInfo>,
     sampled_images: DescriptorArray<vk::DescriptorImageInfo>,
     storage_images: DescriptorArray<vk::DescriptorImageInfo>,
-    samplers: DescriptorArray<vk::DescriptorImageInfo>,
 }
 
 impl DescriptorSet {
@@ -61,14 +58,15 @@ impl DescriptorSet {
     const STORAGE_BUFFER_BINDING: u32 = 1;
     const SAMPLED_IMAGE_BINDING: u32 = 2;
     const STORAGE_IMAGE_BINDING: u32 = 3;
-    const SAMPLER_BINDING: u32 = 4;
-    const ACCELERATION_STRUCTURE_BINDING: u32 = 5;
+
+    #[allow(dead_code)]
+    const ACCELERATION_STRUCTURE_BINDING: u32 = 4;
 
     pub(crate) fn new(device: Arc<AshDevice>, counts: BindingCount) -> crate::Result<Self> {
         let binding_flags = [vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
             | vk::DescriptorBindingFlags::PARTIALLY_BOUND
             | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
-            5];
+            4];
         let mut binding_flag_create_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
             .binding_flags(&binding_flags)
             .build();
@@ -92,7 +90,7 @@ impl DescriptorSet {
                             .build(),
                         vk::DescriptorSetLayoutBinding::builder()
                             .binding(Self::SAMPLED_IMAGE_BINDING)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .descriptor_count(counts.sampled_textures)
                             .stage_flags(vk::ShaderStageFlags::ALL)
                             .build(),
@@ -100,12 +98,6 @@ impl DescriptorSet {
                             .binding(Self::STORAGE_IMAGE_BINDING)
                             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                             .descriptor_count(counts.storage_textures)
-                            .stage_flags(vk::ShaderStageFlags::ALL)
-                            .build(),
-                        vk::DescriptorSetLayoutBinding::builder()
-                            .binding(Self::SAMPLER_BINDING)
-                            .descriptor_type(vk::DescriptorType::SAMPLER)
-                            .descriptor_count(counts.samplers)
                             .stage_flags(vk::ShaderStageFlags::ALL)
                             .build(),
                     ])
@@ -133,16 +125,12 @@ impl DescriptorSet {
                             .descriptor_count(counts.storage_buffers)
                             .build(),
                         vk::DescriptorPoolSize::builder()
-                            .ty(vk::DescriptorType::SAMPLED_IMAGE)
+                            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .descriptor_count(counts.sampled_textures)
                             .build(),
                         vk::DescriptorPoolSize::builder()
                             .ty(vk::DescriptorType::STORAGE_IMAGE)
                             .descriptor_count(counts.storage_textures)
-                            .build(),
-                        vk::DescriptorPoolSize::builder()
-                            .ty(vk::DescriptorType::SAMPLER)
-                            .descriptor_count(counts.samplers)
                             .build(),
                     ])
                     .build(),
@@ -175,32 +163,15 @@ impl DescriptorSet {
             }
         };
 
-        let null_sampler = AshSampler::new(&device, &SamplerCreateInfo::default())?;
-
-        write_empty_image_info(
-            &device,
-            set,
-            Self::SAMPLER_BINDING,
-            vk::DescriptorType::SAMPLER,
-            0..counts.samplers,
-            &vk::DescriptorImageInfo {
-                sampler: null_sampler.handle,
-                image_view: vk::ImageView::null(),
-                image_layout: vk::ImageLayout::UNDEFINED,
-            },
-        );
-
         Ok(Self {
             device,
             layout,
             pool,
             set,
-            null_sampler,
             uniform_buffers: DescriptorArray::new(0..counts.uniform_buffers),
             storage_buffers: DescriptorArray::new(0..counts.storage_buffers),
             sampled_images: DescriptorArray::new(0..counts.sampled_textures),
             storage_images: DescriptorArray::new(0..counts.storage_textures),
-            samplers: DescriptorArray::new(0..counts.samplers),
         })
     }
 
@@ -213,8 +184,12 @@ impl DescriptorSet {
     }
 
     pub(crate) fn update(&mut self) {
-        let mut writes: Vec<vk::WriteDescriptorSet> =
-            Vec::with_capacity(self.uniform_buffers.updates.len() + self.samplers.updates.len());
+        let mut writes: Vec<vk::WriteDescriptorSet> = Vec::with_capacity(
+            self.uniform_buffers.updates.len()
+                + self.storage_buffers.updates.len()
+                + self.sampled_images.updates.len()
+                + self.storage_images.updates.len(),
+        );
 
         for (index, info) in self.uniform_buffers.updates.iter() {
             writes.push(vk::WriteDescriptorSet {
@@ -228,13 +203,37 @@ impl DescriptorSet {
             });
         }
 
-        for (index, info) in self.samplers.updates.iter() {
+        for (index, info) in self.storage_buffers.updates.iter() {
             writes.push(vk::WriteDescriptorSet {
                 dst_set: self.set,
-                dst_binding: Self::SAMPLER_BINDING,
+                dst_binding: Self::STORAGE_BUFFER_BINDING,
                 dst_array_element: *index,
                 descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                p_buffer_info: info,
+                ..Default::default()
+            });
+        }
+
+        for (index, info) in self.sampled_images.updates.iter() {
+            writes.push(vk::WriteDescriptorSet {
+                dst_set: self.set,
+                dst_binding: Self::SAMPLED_IMAGE_BINDING,
+                dst_array_element: *index,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                p_image_info: info,
+                ..Default::default()
+            });
+        }
+
+        for (index, info) in self.storage_images.updates.iter() {
+            writes.push(vk::WriteDescriptorSet {
+                dst_set: self.set,
+                dst_binding: Self::STORAGE_IMAGE_BINDING,
+                dst_array_element: *index,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
                 p_image_info: info,
                 ..Default::default()
             });
@@ -249,7 +248,6 @@ impl DescriptorSet {
         self.storage_buffers.updates.clear();
         self.sampled_images.updates.clear();
         self.storage_images.updates.clear();
-        self.samplers.updates.clear();
     }
 
     pub(crate) fn bind_uniform_buffer(&mut self, buffer: &AshBuffer) -> crate::Result<u32> {
@@ -304,6 +302,36 @@ impl DescriptorSet {
         self.storage_buffers.index_pool.free(index);
     }
 
+    pub(crate) fn bind_sampled_image(
+        &mut self,
+        image: &AshImage,
+        sampler: &Arc<AshSampler>,
+    ) -> crate::Result<u32> {
+        match self.sampled_images.index_pool.get() {
+            None => Err(crate::Error::StringError(
+                "Out of Sampled Image Descriptor Slots!".to_string(),
+            )),
+            Some(index) => {
+                self.sampled_images.updates.push((
+                    index,
+                    vk::DescriptorImageInfo {
+                        sampler: sampler.handle,
+                        image_view: image.view,
+                        image_layout: vk::ImageLayout::GENERAL,
+                    },
+                ));
+                Ok(index)
+            }
+        }
+    }
+
+    pub(crate) fn unbind_sampled_image(&mut self, index: u32) {
+        self.sampled_images
+            .updates
+            .push((index, self::EMPTY_IMAGE_INFO));
+        self.sampled_images.index_pool.free(index);
+    }
+
     pub(crate) fn bind_storage_image(&mut self, image: &AshImage) -> crate::Result<u32> {
         match self.storage_images.index_pool.get() {
             None => Err(crate::Error::StringError(
@@ -329,37 +357,6 @@ impl DescriptorSet {
             .push((index, self::EMPTY_IMAGE_INFO));
         self.storage_images.index_pool.free(index);
     }
-
-    pub(crate) fn bind_sampler(&mut self, sampler: vk::Sampler) -> crate::Result<u32> {
-        match self.samplers.index_pool.get() {
-            None => Err(crate::Error::StringError(
-                "Out of Uniform Buffer Descriptor Slots!".to_string(),
-            )),
-            Some(index) => {
-                self.samplers.updates.push((
-                    index,
-                    vk::DescriptorImageInfo {
-                        sampler,
-                        image_view: vk::ImageView::null(),
-                        image_layout: vk::ImageLayout::UNDEFINED,
-                    },
-                ));
-                Ok(index)
-            }
-        }
-    }
-
-    pub(crate) fn unbind_sampler(&mut self, index: u32) {
-        self.samplers.updates.push((
-            index,
-            vk::DescriptorImageInfo {
-                sampler: self.null_sampler.handle,
-                image_view: vk::ImageView::null(),
-                image_layout: vk::ImageLayout::UNDEFINED,
-            },
-        ));
-        self.samplers.index_pool.free(index);
-    }
 }
 
 impl Drop for DescriptorSet {
@@ -367,33 +364,6 @@ impl Drop for DescriptorSet {
         unsafe {
             self.device.destroy_descriptor_pool(self.pool, None);
             self.device.destroy_descriptor_set_layout(self.layout, None);
-            self.null_sampler.destroy(&self.device);
         }
-    }
-}
-
-fn write_empty_image_info(
-    device: &Arc<AshDevice>,
-    descriptor_set: vk::DescriptorSet,
-    descriptor_binding: u32,
-    descriptor_type: vk::DescriptorType,
-    range: std::ops::Range<u32>,
-    image_info: &vk::DescriptorImageInfo,
-) {
-    let writes: Vec<vk::WriteDescriptorSet> = range
-        .map(|i| vk::WriteDescriptorSet {
-            dst_set: descriptor_set,
-            dst_binding: descriptor_binding,
-            dst_array_element: i,
-            descriptor_count: 1,
-            descriptor_type,
-            p_image_info: image_info,
-            ..Default::default()
-        })
-        .collect();
-
-    //TODO: profile this part
-    unsafe {
-        device.update_descriptor_sets(&writes, &[]);
     }
 }

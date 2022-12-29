@@ -18,7 +18,7 @@ pub(crate) struct BufferResource {
 
 pub(crate) struct TextureResource {
     texture: AshImage,
-    sampled_binding: Option<u32>,
+    sampled_binding: Option<(u32, Arc<AshSampler>)>,
     storage_binding: Option<u32>,
 }
 
@@ -46,7 +46,8 @@ pub(crate) struct ResourceManager {
     texture_index_pool: IndexPool<u16>,
     textures: HashMap<TextureHandle, TextureResource>,
 
-    samplers: HashMap<SamplerHandle, AshSampler>,
+    sampler_index_pool: IndexPool<u16>,
+    samplers: HashMap<SamplerHandle, Arc<AshSampler>>,
     // frames: Vec<ResourceFrame>,
     // current_frame: RangeCycle,
 }
@@ -68,7 +69,6 @@ impl ResourceManager {
                 storage_buffers: 4096,
                 sampled_textures: 4096,
                 storage_textures: 4096,
-                samplers: 256,
                 acceleration_structures: 0,
             },
         )?;
@@ -78,11 +78,6 @@ impl ResourceManager {
                 device.handle(),
                 descriptor_set.set(),
                 "Bindless-Descriptor-Set",
-            );
-            debug_utils.set_object_name(
-                device.handle(),
-                descriptor_set.null_sampler.handle,
-                "Bindless-Descriptor-Set-Null-Sampler",
             );
         }
 
@@ -95,6 +90,7 @@ impl ResourceManager {
             buffers: HashMap::new(),
             texture_index_pool: IndexPool::new(0),
             textures: HashMap::new(),
+            sampler_index_pool: IndexPool::new(0),
             samplers: HashMap::new(),
         })
     }
@@ -163,6 +159,12 @@ impl ResourceManager {
         size: [u32; 2],
         sampler: Option<&Sampler>,
     ) -> crate::Result<TextureHandle> {
+        let sampler = if let Some(sampler) = sampler {
+            Some(self.samplers.get(&sampler.handle).unwrap().clone())
+        } else {
+            None
+        };
+
         let is_sampled = sampler
             .as_ref()
             .map(|_| TextureUsage::SAMPLED)
@@ -183,9 +185,18 @@ impl ResourceManager {
             None
         };
 
+        let sampled_binding = if let Some(sampler) = sampler {
+            Some((
+                self.descriptor_set.bind_sampled_image(&texture, &sampler)?,
+                sampler,
+            ))
+        } else {
+            None
+        };
+
         let resource = TextureResource {
             texture,
-            sampled_binding: None,
+            sampled_binding,
             storage_binding,
         };
 
@@ -200,6 +211,10 @@ impl ResourceManager {
         if let Some(mut resource) = self.textures.remove(&handle) {
             resource.texture.destroy(&self.device, &self.allocator);
 
+            if let Some((binding, _)) = resource.sampled_binding {
+                self.descriptor_set.unbind_sampled_image(binding)
+            }
+
             if let Some(binding) = resource.storage_binding {
                 self.descriptor_set.unbind_storage_image(binding)
             }
@@ -213,17 +228,14 @@ impl ResourceManager {
     ) -> crate::Result<SamplerHandle> {
         let sampler = AshSampler::new(&self.device, sampler_create_info)?;
         self.set_debug_name(sampler.handle, name);
-        let binding = SamplerHandle(self.descriptor_set.bind_sampler(sampler.handle)? as u16);
-        self.samplers.insert(binding, sampler);
-        Ok(binding)
+        let handle = SamplerHandle(self.sampler_index_pool.get().unwrap());
+        self.samplers.insert(handle, Arc::new(sampler));
+        Ok(handle)
     }
 
     pub(crate) fn destroy_sampler(&mut self, handle: SamplerHandle) {
-        //Drop Immediately for now
-        if let Some(sampler) = self.samplers.remove(&handle) {
-            self.descriptor_set.unbind_sampler(handle.0 as u32);
-            sampler.destroy(&self.device);
-        }
+        //Drop Immediately, The Arc will handle the remaining lifetime
+        let _ = self.samplers.remove(&handle);
     }
 
     pub(crate) fn set_debug_name<T: vk::Handle>(&self, object: T, name: &str) {
