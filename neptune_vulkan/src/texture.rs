@@ -1,5 +1,4 @@
-use crate::{AshDevice, Error, Sampler};
-use ash::prelude::VkResult;
+use crate::{AshDevice, Error};
 use ash::vk;
 use bitflags::bitflags;
 use std::sync::{Arc, Mutex};

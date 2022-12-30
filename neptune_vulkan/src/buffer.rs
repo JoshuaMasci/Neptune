@@ -1,4 +1,3 @@
-use crate::resource_manager::ResourceManager;
 use crate::{AshDevice, Error};
 use ash::vk;
 use bitflags::bitflags;

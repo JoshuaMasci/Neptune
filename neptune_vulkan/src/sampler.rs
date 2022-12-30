@@ -1,7 +1,6 @@
-use crate::resource_manager::ResourceManager;
 use crate::AshDevice;
 use ash::vk;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Default, Debug, Copy, Clone)]
 pub enum AddressMode {

@@ -1,5 +1,4 @@
-use crate::{AshBuffer, AshDevice, AshImage, AshSampler, SamplerCreateInfo};
-use ash::prelude::VkResult;
+use crate::{AshBuffer, AshDevice, AshImage, AshSampler};
 use ash::vk;
 use neptune_core::IndexPool;
 use std::sync::Arc;

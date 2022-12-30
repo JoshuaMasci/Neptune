@@ -32,10 +32,4 @@ pub enum Error {
     StringError(String),
 }
 
-impl Error {
-    pub(crate) fn string(s: &str) -> Self {
-        self::Error::StringError(String::from(s))
-    }
-}
-
 pub type Result<T> = std::result::Result<T, Error>;

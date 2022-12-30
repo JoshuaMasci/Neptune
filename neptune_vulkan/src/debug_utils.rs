@@ -1,5 +1,5 @@
 use ash::vk;
-use ash::vk::{DebugUtilsObjectNameInfoEXT, DebugUtilsObjectTagInfoEXT};
+use ash::vk::DebugUtilsObjectNameInfoEXT;
 use std::ffi::{CStr, CString};
 
 #[allow(dead_code)]
