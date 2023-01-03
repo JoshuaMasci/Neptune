@@ -51,16 +51,17 @@ pub(crate) fn get_vk_buffer_create_info(usage: BufferUsage, size: u64) -> vk::Bu
         .build()
 }
 
-#[derive(Default, Debug)]
 pub struct AshBuffer {
+    device: Arc<AshDevice>,
+    allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     pub(crate) handle: vk::Buffer,
     pub(crate) allocation: gpu_allocator::vulkan::Allocation,
 }
 
 impl AshBuffer {
     pub(crate) fn new(
-        device: &Arc<AshDevice>,
-        allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+        device: Arc<AshDevice>,
+        allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
         create_info: &vk::BufferCreateInfo,
         memory_location: gpu_allocator::MemoryLocation,
     ) -> crate::Result<Self> {
@@ -96,16 +97,20 @@ impl AshBuffer {
             return Err(Error::VkError(e));
         }
 
-        Ok(Self { handle, allocation })
+        Ok(Self {
+            device,
+            allocator,
+            handle,
+            allocation,
+        })
     }
+}
 
-    pub(crate) fn destroy(
-        &mut self,
-        device: &Arc<AshDevice>,
-        allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
-    ) {
-        unsafe { device.destroy_buffer(self.handle, None) };
-        let _ = allocator
+impl Drop for AshBuffer {
+    fn drop(&mut self) {
+        unsafe { self.device.destroy_buffer(self.handle, None) };
+        let _ = self
+            .allocator
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));

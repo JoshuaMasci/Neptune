@@ -3,9 +3,11 @@ mod debug_utils;
 mod descriptor_set;
 mod device;
 mod instance;
+mod render_graph;
 mod resource_manager;
 mod sampler;
 mod texture;
+mod transfer_queue;
 
 pub use buffer::*;
 pub use device::*;

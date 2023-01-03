@@ -63,8 +63,9 @@ pub(crate) fn get_vk_texture_2d_create_info(
         .build()
 }
 
-#[derive(Default, Debug)]
 pub struct AshImage {
+    device: Arc<AshDevice>,
+    allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     pub handle: vk::Image,
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub view: vk::ImageView,
@@ -72,8 +73,8 @@ pub struct AshImage {
 
 impl AshImage {
     pub(crate) fn new(
-        device: &Arc<AshDevice>,
-        allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+        device: Arc<AshDevice>,
+        allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
         usage: TextureUsage,
         format: vk::Format,
         size: [u32; 2],
@@ -140,6 +141,8 @@ impl AshImage {
         };
 
         Ok(Self {
+            device,
+            allocator,
             allocation,
             handle,
             view,
@@ -156,6 +159,21 @@ impl AshImage {
             device.destroy_image(self.handle, None)
         };
         let _ = allocator
+            .lock()
+            .unwrap()
+            .free(std::mem::take(&mut self.allocation));
+        trace!("Destroy Texture");
+    }
+}
+
+impl Drop for AshImage {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_image_view(self.view, None);
+            self.device.destroy_image(self.handle, None)
+        };
+        let _ = self
+            .allocator
             .lock()
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
