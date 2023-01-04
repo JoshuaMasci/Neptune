@@ -148,22 +148,6 @@ impl AshImage {
             view,
         })
     }
-
-    pub(crate) fn destroy(
-        &mut self,
-        device: &Arc<AshDevice>,
-        allocator: &Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
-    ) {
-        unsafe {
-            device.destroy_image_view(self.view, None);
-            device.destroy_image(self.handle, None)
-        };
-        let _ = allocator
-            .lock()
-            .unwrap()
-            .free(std::mem::take(&mut self.allocation));
-        trace!("Destroy Texture");
-    }
 }
 
 impl Drop for AshImage {

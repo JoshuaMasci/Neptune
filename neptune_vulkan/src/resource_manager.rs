@@ -7,6 +7,7 @@ use crate::{AshDevice, BufferUsage, Sampler, SamplerCreateInfo, TextureUsage};
 use ash::vk;
 use gpu_allocator::MemoryLocation;
 use neptune_core::IndexPool;
+use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -22,17 +23,12 @@ pub(crate) struct TextureResource {
     storage_binding: Option<u32>,
 }
 
-#[repr(transparent)]
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct BufferHandle(u16);
+slotmap::new_key_type! {
+    pub struct BufferHandle;
+    pub struct TextureHandle;
+    pub struct SamplerHandle;
 
-#[repr(transparent)]
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct TextureHandle(u16);
-
-#[repr(transparent)]
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct SamplerHandle(u16);
+}
 
 pub(crate) struct ResourceManager {
     debug_utils: Option<Arc<DebugUtils>>,
@@ -40,14 +36,9 @@ pub(crate) struct ResourceManager {
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     descriptor_set: DescriptorSet,
 
-    buffer_index_pool: IndexPool<u16>,
-    buffers: HashMap<BufferHandle, BufferResource>,
-
-    texture_index_pool: IndexPool<u16>,
-    textures: HashMap<TextureHandle, TextureResource>,
-
-    sampler_index_pool: IndexPool<u16>,
-    samplers: HashMap<SamplerHandle, Arc<AshSampler>>,
+    buffers: SlotMap<BufferHandle, BufferResource>,
+    textures: SlotMap<TextureHandle, TextureResource>,
+    samplers: SlotMap<SamplerHandle, Arc<AshSampler>>,
     // frames: Vec<ResourceFrame>,
     // current_frame: RangeCycle,
 }
@@ -86,12 +77,9 @@ impl ResourceManager {
             device,
             allocator,
             descriptor_set,
-            buffer_index_pool: IndexPool::new(0),
-            buffers: HashMap::new(),
-            texture_index_pool: IndexPool::new(0),
-            textures: HashMap::new(),
-            sampler_index_pool: IndexPool::new(0),
-            samplers: HashMap::new(),
+            buffers: SlotMap::with_key(),
+            textures: SlotMap::with_key(),
+            samplers: SlotMap::with_key(),
         })
     }
 
@@ -106,8 +94,8 @@ impl ResourceManager {
         size: u64,
     ) -> crate::Result<BufferHandle> {
         let buffer = crate::buffer::AshBuffer::new(
-            &self.device,
-            &self.allocator,
+            self.device.clone(),
+            self.allocator.clone(),
             &crate::buffer::get_vk_buffer_create_info(usage, size),
             MemoryLocation::GpuOnly,
         )?;
@@ -131,17 +119,12 @@ impl ResourceManager {
             storage_binding,
         };
 
-        let handle = BufferHandle(self.buffer_index_pool.get().unwrap());
-
-        self.buffers.insert(handle, resource);
-
-        Ok(handle)
+        Ok(self.buffers.insert(resource))
     }
 
     pub(crate) fn destroy_buffer(&mut self, handle: BufferHandle) {
         //Drop Immediately for now
-        if let Some(mut resource) = self.buffers.remove(&handle) {
-            resource.buffer.destroy(&self.device, &self.allocator);
+        if let Some(resource) = self.buffers.remove(handle) {
             if let Some(binding) = resource.uniform_binding {
                 self.descriptor_set.unbind_uniform_buffer(binding)
             }
@@ -160,7 +143,7 @@ impl ResourceManager {
         sampler: Option<&Sampler>,
     ) -> crate::Result<TextureHandle> {
         let sampler = if let Some(sampler) = sampler {
-            Some(self.samplers.get(&sampler.handle).unwrap().clone())
+            Some(self.samplers.get(sampler.handle).unwrap().clone())
         } else {
             None
         };
@@ -170,8 +153,8 @@ impl ResourceManager {
             .map(|_| TextureUsage::SAMPLED)
             .unwrap_or(TextureUsage::empty());
         let texture = crate::texture::AshImage::new(
-            &self.device,
-            &self.allocator,
+            self.device.clone(),
+            self.allocator.clone(),
             usage | is_sampled,
             format,
             size,
@@ -200,17 +183,12 @@ impl ResourceManager {
             storage_binding,
         };
 
-        let handle = TextureHandle(self.texture_index_pool.get().unwrap());
-
-        self.textures.insert(handle, resource);
-        Ok(handle)
+        Ok(self.textures.insert(resource))
     }
 
     pub(crate) fn destroy_texture(&mut self, handle: TextureHandle) {
         //Drop Immediately for now
-        if let Some(mut resource) = self.textures.remove(&handle) {
-            resource.texture.destroy(&self.device, &self.allocator);
-
+        if let Some(resource) = self.textures.remove(handle) {
             if let Some((binding, _)) = resource.sampled_binding {
                 self.descriptor_set.unbind_sampled_image(binding)
             }
@@ -228,14 +206,12 @@ impl ResourceManager {
     ) -> crate::Result<SamplerHandle> {
         let sampler = AshSampler::new(&self.device, sampler_create_info)?;
         self.set_debug_name(sampler.handle, name);
-        let handle = SamplerHandle(self.sampler_index_pool.get().unwrap());
-        self.samplers.insert(handle, Arc::new(sampler));
-        Ok(handle)
+        Ok(self.samplers.insert(Arc::new(sampler)))
     }
 
     pub(crate) fn destroy_sampler(&mut self, handle: SamplerHandle) {
         //Drop Immediately, The Arc will handle the remaining lifetime
-        let _ = self.samplers.remove(&handle);
+        let _ = self.samplers.remove(handle);
     }
 
     pub(crate) fn set_debug_name<T: vk::Handle>(&self, object: T, name: &str) {
