@@ -1,4 +1,5 @@
 use crate::buffer::AshBuffer;
+use crate::compute_pipeline::AshComputePipeline;
 use crate::debug_utils::DebugUtils;
 use crate::descriptor_set::{BindingCount, DescriptorSet};
 use crate::sampler::AshSampler;
@@ -6,9 +7,7 @@ use crate::texture::AshImage;
 use crate::{AshDevice, BufferUsage, Sampler, SamplerCreateInfo, TextureUsage};
 use ash::vk;
 use gpu_allocator::MemoryLocation;
-use neptune_core::IndexPool;
 use slotmap::SlotMap;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct BufferResource {
@@ -24,10 +23,12 @@ pub(crate) struct TextureResource {
 }
 
 slotmap::new_key_type! {
+    pub struct SwapchainHandle;
     pub struct BufferHandle;
     pub struct TextureHandle;
     pub struct SamplerHandle;
-
+    pub struct ComputePipelineHandle;
+    pub struct RasterPipelineHandle;
 }
 
 pub(crate) struct ResourceManager {
@@ -39,8 +40,7 @@ pub(crate) struct ResourceManager {
     buffers: SlotMap<BufferHandle, BufferResource>,
     textures: SlotMap<TextureHandle, TextureResource>,
     samplers: SlotMap<SamplerHandle, Arc<AshSampler>>,
-    // frames: Vec<ResourceFrame>,
-    // current_frame: RangeCycle,
+    compute_pipelines: SlotMap<ComputePipelineHandle, Arc<AshComputePipeline>>,
 }
 
 impl ResourceManager {
@@ -80,6 +80,7 @@ impl ResourceManager {
             buffers: SlotMap::with_key(),
             textures: SlotMap::with_key(),
             samplers: SlotMap::with_key(),
+            compute_pipelines: SlotMap::with_key(),
         })
     }
 
@@ -204,7 +205,7 @@ impl ResourceManager {
         name: &str,
         sampler_create_info: &SamplerCreateInfo,
     ) -> crate::Result<SamplerHandle> {
-        let sampler = AshSampler::new(&self.device, sampler_create_info)?;
+        let sampler = AshSampler::new(self.device.clone(), sampler_create_info)?;
         self.set_debug_name(sampler.handle, name);
         Ok(self.samplers.insert(Arc::new(sampler)))
     }
@@ -212,6 +213,26 @@ impl ResourceManager {
     pub(crate) fn destroy_sampler(&mut self, handle: SamplerHandle) {
         //Drop Immediately, The Arc will handle the remaining lifetime
         let _ = self.samplers.remove(handle);
+    }
+
+    pub(crate) fn create_compute_pipeline(
+        &mut self,
+        name: &str,
+        code: &[u32],
+    ) -> crate::Result<ComputePipelineHandle> {
+        let compute_pipeline = AshComputePipeline::new(
+            self.device.clone(),
+            vk::PipelineCache::null(),
+            vk::PipelineLayout::null(),
+            code,
+        )?;
+        self.set_debug_name(compute_pipeline.handle, name);
+        Ok(self.compute_pipelines.insert(Arc::new(compute_pipeline)))
+    }
+
+    pub(crate) fn destroy_compute_pipeline(&mut self, handle: ComputePipelineHandle) {
+        //Drop Immediately, The Arc will handle the remaining lifetime
+        let _ = self.compute_pipelines.remove(handle);
     }
 
     pub(crate) fn set_debug_name<T: vk::Handle>(&self, object: T, name: &str) {

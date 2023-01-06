@@ -8,6 +8,7 @@ mod resource_manager;
 mod sampler;
 mod texture;
 mod transfer_queue;
+mod compute_pipeline;
 
 pub use buffer::*;
 pub use device::*;

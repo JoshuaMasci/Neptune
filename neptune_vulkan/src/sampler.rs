@@ -107,15 +107,12 @@ pub(crate) struct AshSampler {
 
 impl AshSampler {
     pub(crate) fn new(
-        device: &Arc<AshDevice>,
+        device: Arc<AshDevice>,
         sampler_create_info: &SamplerCreateInfo,
     ) -> crate::Result<Self> {
         unsafe {
             match device.create_sampler(&sampler_create_info.to_vk(), None) {
-                Ok(handle) => Ok(Self {
-                    device: device.clone(),
-                    handle,
-                }),
+                Ok(handle) => Ok(Self { device, handle }),
                 Err(e) => Err(crate::Error::VkError(e)),
             }
         }

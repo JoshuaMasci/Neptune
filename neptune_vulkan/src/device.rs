@@ -1,5 +1,7 @@
 use crate::debug_utils::DebugUtils;
-use crate::resource_manager::{BufferHandle, ResourceManager, SamplerHandle, TextureHandle};
+use crate::resource_manager::{
+    BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, TextureHandle,
+};
 use crate::sampler::SamplerCreateInfo;
 use crate::BufferUsage;
 use crate::TextureUsage;
@@ -45,6 +47,19 @@ impl Drop for Sampler {
             .lock()
             .unwrap()
             .destroy_sampler(self.handle);
+    }
+}
+
+pub struct ComputePipeline {
+    pub(crate) handle: ComputePipelineHandle,
+    resource_manager: Arc<Mutex<ResourceManager>>,
+}
+impl Drop for ComputePipeline {
+    fn drop(&mut self) {
+        self.resource_manager
+            .lock()
+            .unwrap()
+            .destroy_compute_pipeline(self.handle);
     }
 }
 
@@ -313,6 +328,21 @@ impl Device {
             .unwrap()
             .create_sampler(name, sampler_create_info)
             .map(|handle| Sampler {
+                handle,
+                resource_manager: self.resource_manager.clone(),
+            })
+    }
+
+    pub fn create_compute_pipeline(
+        &self,
+        name: &str,
+        code: &[u32],
+    ) -> crate::Result<ComputePipeline> {
+        self.resource_manager
+            .lock()
+            .unwrap()
+            .create_compute_pipeline(name, code)
+            .map(|handle| ComputePipeline {
                 handle,
                 resource_manager: self.resource_manager.clone(),
             })
