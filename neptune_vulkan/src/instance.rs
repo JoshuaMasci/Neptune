@@ -1,36 +1,15 @@
-use crate::DeviceInfo;
-use crate::{Device, Error};
+use crate::{Device, Error, SurfaceHandle};
+use crate::{DeviceInfo, GpuResource};
 
 use crate::debug_utils::DebugUtils;
+use crate::surface::{AshSurface, Surface};
 use ash::vk;
+use slotmap::SlotMap;
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-pub struct Surface {
-    handle: vk::SurfaceKHR,
-    surface_ext: Rc<ash::extensions::khr::Surface>,
-}
-impl Surface {
-    fn new(handle: vk::SurfaceKHR, surface_ext: Rc<ash::extensions::khr::Surface>) -> Self {
-        Self {
-            handle,
-            surface_ext,
-        }
-    }
-    pub fn get_handle(&self) -> vk::SurfaceKHR {
-        self.handle
-    }
-}
-impl Drop for Surface {
-    fn drop(&mut self) {
-        unsafe {
-            self.surface_ext.destroy_surface(self.handle, None);
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct PhysicalDevice {
     pub(crate) handle: vk::PhysicalDevice,
     pub(crate) device_info: DeviceInfo,
@@ -69,7 +48,7 @@ impl PhysicalDevice {
 
     fn get_surface_support(
         &self,
-        surface_ext: &Rc<ash::extensions::khr::Surface>,
+        surface_ext: &Arc<ash::extensions::khr::Surface>,
         surface: vk::SurfaceKHR,
     ) -> bool {
         unsafe {
@@ -103,15 +82,92 @@ fn get_surface_extensions(extension_names_raw: &mut Vec<*const c_char>) {
 }
 
 pub struct Instance {
-    entry: ash::Entry,
-    surface_ext: Rc<ash::extensions::khr::Surface>,
-    debug_utils: Option<Arc<DebugUtils>>,
-    instance: ash::Instance,
-
-    physical_devices: Vec<PhysicalDevice>,
+    instance: Arc<AshInstance>,
 }
 
 impl Instance {
+    pub fn new(app_name: &str) -> crate::Result<Self> {
+        AshInstance::new(app_name)
+            .map(Arc::new)
+            .map(|instance| Self { instance })
+    }
+
+    pub fn create_surface<
+        T: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
+    >(
+        &mut self,
+        window: &T,
+    ) -> crate::Result<Surface> {
+        let ash_surface = Arc::new(AshSurface::new(
+            &self.instance.entry,
+            &self.instance.instance,
+            self.instance.surface_ext.clone(),
+            window,
+        )?);
+        let handle = self.instance.surfaces.lock().unwrap().insert(ash_surface);
+        Ok(Surface(GpuResource {
+            handle,
+            list: self.instance.surfaces.clone(),
+        }))
+    }
+
+    pub fn select_and_create_device(
+        &self,
+        surface: Option<&Surface>,
+        score_function: impl Fn(&DeviceInfo) -> u32,
+    ) -> crate::Result<Device> {
+        let surface_handle: Option<vk::SurfaceKHR> = surface.map(|surface| {
+            surface
+                .0
+                .list
+                .lock()
+                .unwrap()
+                .get(surface.0.handle)
+                .unwrap()
+                .get_handle()
+        });
+
+        let max_score = self
+            .instance
+            .physical_devices
+            .iter()
+            .enumerate()
+            .map(|(index, physical_device)| {
+                (
+                    index,
+                    if let Some(surface) = surface_handle {
+                        if physical_device.get_surface_support(&self.instance.surface_ext, surface)
+                        {
+                            score_function(&physical_device.device_info)
+                        } else {
+                            0
+                        }
+                    } else {
+                        score_function(&physical_device.device_info)
+                    },
+                )
+            })
+            .max_by_key(|index_score| index_score.1);
+
+        match max_score {
+            Some((index, _score)) => Device::new(self.instance.clone(), index),
+            None => Err(Error::StringError(String::from(
+                "Unable to find valid device",
+            ))),
+        }
+    }
+}
+
+pub struct AshInstance {
+    pub(crate) entry: ash::Entry,
+    pub(crate) surface_ext: Arc<ash::extensions::khr::Surface>,
+    pub(crate) debug_utils: Option<Arc<DebugUtils>>,
+    pub(crate) instance: ash::Instance,
+    pub(crate) physical_devices: Vec<PhysicalDevice>,
+    pub(crate) surfaces: Arc<Mutex<SlotMap<SurfaceHandle, Arc<AshSurface>>>>,
+}
+
+impl AshInstance {
     pub fn new(app_name: &str) -> crate::Result<Self> {
         let app_name = CString::new(app_name).unwrap();
         let app_version = vk::make_api_version(0, 0, 0, 0);
@@ -168,7 +224,7 @@ impl Instance {
             None
         };
 
-        let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
+        let surface_ext = Arc::new(ash::extensions::khr::Surface::new(&entry, &instance));
 
         let physical_devices = match unsafe { instance.enumerate_physical_devices() } {
             Ok(physical_devices) => physical_devices,
@@ -178,76 +234,20 @@ impl Instance {
         .map(|&physical_device| PhysicalDevice::new(&instance, physical_device))
         .collect();
 
+        let surfaces = Arc::new(Mutex::new(SlotMap::with_key()));
+
         Ok(Self {
             entry,
             surface_ext,
             debug_utils,
             instance,
             physical_devices,
+            surfaces,
         })
-    }
-
-    pub fn create_surface<
-        T: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
-    >(
-        &mut self,
-        window: &T,
-    ) -> crate::Result<Surface> {
-        match unsafe {
-            ash_window::create_surface(
-                &self.entry,
-                &self.instance,
-                window.raw_display_handle(),
-                window.raw_window_handle(),
-                None,
-            )
-        } {
-            Ok(handle) => crate::Result::Ok(Surface::new(handle, self.surface_ext.clone())),
-            Err(e) => crate::Result::Err(Error::VkError(e)),
-        }
-    }
-
-    pub fn select_and_create_device(
-        &mut self,
-        surface: Option<&Surface>,
-        score_function: impl Fn(&DeviceInfo) -> u32,
-    ) -> crate::Result<Device> {
-        let max_score = self
-            .physical_devices
-            .iter()
-            .enumerate()
-            .map(|(index, physical_device)| {
-                (
-                    index,
-                    if let Some(surface) = surface {
-                        if physical_device
-                            .get_surface_support(&self.surface_ext, surface.get_handle())
-                        {
-                            score_function(&physical_device.device_info)
-                        } else {
-                            0
-                        }
-                    } else {
-                        score_function(&physical_device.device_info)
-                    },
-                )
-            })
-            .max_by_key(|index_score| index_score.1);
-
-        match max_score {
-            Some((index, _score)) => Device::new(
-                &self.instance,
-                &self.physical_devices[index],
-                self.debug_utils.clone(),
-            ),
-            None => Err(Error::StringError(String::from(
-                "Unable to find valid device",
-            ))),
-        }
     }
 }
 
-impl Drop for Instance {
+impl Drop for AshInstance {
     fn drop(&mut self) {
         //Drop the debug_utils before instance
         drop(self.debug_utils.take());
@@ -255,9 +255,7 @@ impl Drop for Instance {
         unsafe {
             self.instance.destroy_instance(None);
         }
-
         let _ = self.entry.clone();
-
         trace!("Drop Instance");
     }
 }

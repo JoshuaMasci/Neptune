@@ -1,15 +1,26 @@
 use crate::debug_utils::DebugUtils;
 use crate::resource_manager::{
-    BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, TextureHandle,
+    BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, SwapchainHandle,
+    TextureHandle,
 };
 use crate::sampler::SamplerCreateInfo;
-use crate::BufferUsage;
 use crate::TextureUsage;
+use crate::{AshInstance, BufferUsage};
 use crate::{Error, PhysicalDevice};
 use ash::vk;
 use std::ffi::CStr;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
+
+pub struct Swapchain {
+    pub(crate) handle: SwapchainHandle,
+}
+
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        //TODO: this
+    }
+}
 
 pub struct Buffer {
     pub(crate) handle: BufferHandle,
@@ -93,6 +104,7 @@ pub enum DeviceVendor {
 
 impl DeviceVendor {
     fn from_vk(vendor_id: u32) -> Self {
+        //TODO: find a place to verify this list
         match vendor_id {
             0x1002 => DeviceVendor::Amd,
             0x10DE => DeviceVendor::Nvidia,
@@ -154,6 +166,7 @@ impl Drop for AshDevice {
 pub struct Device {
     resource_manager: Arc<Mutex<ResourceManager>>,
     device: Arc<AshDevice>,
+    instance: Arc<AshInstance>,
 
     info: DeviceInfo,
     physical_device: vk::PhysicalDevice,
@@ -162,11 +175,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub(crate) fn new(
-        instance: &ash::Instance,
-        physical_device: &PhysicalDevice,
-        debug_utils: Option<Arc<DebugUtils>>,
-    ) -> crate::Result<Self> {
+    pub(crate) fn new(instance: Arc<AshInstance>, device_index: usize) -> crate::Result<Self> {
         //TODO: check for extension support
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
@@ -188,6 +197,8 @@ impl Device {
             .descriptor_binding_update_unused_while_pending(true)
             .build();
 
+        let physical_device = instance.physical_devices[device_index].clone();
+
         let priorities = &[1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(physical_device.graphics_queue_family_index)
@@ -195,7 +206,7 @@ impl Device {
             .build()];
 
         let device = match unsafe {
-            instance.create_device(
+            instance.instance.create_device(
                 physical_device.handle,
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_info)
@@ -217,7 +228,7 @@ impl Device {
 
         let allocator = match gpu_allocator::vulkan::Allocator::new(
             &gpu_allocator::vulkan::AllocatorCreateDesc {
-                instance: instance.clone(),
+                instance: instance.instance.clone(),
                 device: (**device).clone(),
                 physical_device: physical_device.handle,
                 debug_settings: gpu_allocator::AllocatorDebugSettings::default(),
@@ -233,20 +244,25 @@ impl Device {
             FRAMES_IN_FLIGHT_COUNT,
             device.clone(),
             allocator,
-            debug_utils,
+            instance.debug_utils.clone(),
         )?));
 
         Ok(Self {
-            info: physical_device.device_info.clone(),
-            physical_device: physical_device.handle,
-            device,
             resource_manager,
+            device,
+            instance,
+            physical_device: physical_device.handle,
+            info: physical_device.device_info.clone(),
             graphics_queue,
         })
     }
 
     pub fn info(&self) -> DeviceInfo {
         self.info.clone()
+    }
+
+    pub fn create_swapchain(&self) -> crate::Result<Swapchain> {
+        Err(crate::Error::StringError(String::new()))
     }
 
     pub fn create_buffer(
