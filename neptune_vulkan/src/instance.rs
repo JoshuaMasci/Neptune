@@ -1,13 +1,12 @@
-use crate::{Device, Error, SurfaceHandle};
+use crate::{Device, Error, GpuResourcePool, SurfaceHandle};
 use crate::{DeviceInfo, GpuResource};
 
 use crate::debug_utils::DebugUtils;
 use crate::surface::{AshSurface, Surface};
 use ash::vk;
-use slotmap::SlotMap;
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PhysicalDevice {
@@ -104,11 +103,11 @@ impl Instance {
             self.instance.surface_ext.clone(),
             window,
         )?);
-        let handle = self.instance.surfaces.lock().unwrap().insert(ash_surface);
-        Ok(Surface(GpuResource {
+        let handle = self.instance.surfaces.lock().insert(ash_surface);
+        Ok(Surface(GpuResource::new(
             handle,
-            list: self.instance.surfaces.clone(),
-        }))
+            self.instance.surfaces.clone(),
+        )))
     }
 
     pub fn select_and_create_device(
@@ -119,9 +118,8 @@ impl Instance {
         let surface_handle: Option<vk::SurfaceKHR> = surface.map(|surface| {
             surface
                 .0
-                .list
+                .pool
                 .lock()
-                .unwrap()
                 .get(surface.0.handle)
                 .unwrap()
                 .get_handle()
@@ -164,7 +162,7 @@ pub struct AshInstance {
     pub(crate) debug_utils: Option<Arc<DebugUtils>>,
     pub(crate) instance: ash::Instance,
     pub(crate) physical_devices: Vec<PhysicalDevice>,
-    pub(crate) surfaces: Arc<Mutex<SlotMap<SurfaceHandle, Arc<AshSurface>>>>,
+    pub(crate) surfaces: GpuResourcePool<SurfaceHandle, Arc<AshSurface>>,
 }
 
 impl AshInstance {
@@ -234,7 +232,7 @@ impl AshInstance {
         .map(|&physical_device| PhysicalDevice::new(&instance, physical_device))
         .collect();
 
-        let surfaces = Arc::new(Mutex::new(SlotMap::with_key()));
+        let surfaces = GpuResourcePool::new();
 
         Ok(Self {
             entry,

@@ -1,8 +1,5 @@
-use crate::resource_manager::{
-    BufferHandle, ComputePipelineHandle, RasterPipelineHandle, SamplerHandle, SwapchainHandle,
-    TextureHandle,
-};
-use crate::{BufferUsage, TextureUsage};
+use crate::resource_manager::{BufferHandle, ComputePipelineHandle, SamplerHandle, TextureHandle};
+use crate::{BufferUsage, SwapchainHandle, TextureUsage};
 use ash::vk;
 use bitflags::bitflags;
 use std::ops::Range;
@@ -143,7 +140,7 @@ pub enum RasterCommand {
         resources: Vec<ShaderResourceAccess>,
     },
     BindRasterPipeline {
-        pipeline: RasterPipelineHandle,
+        pipeline: (),
     },
     SetScissor {
         x: u32,

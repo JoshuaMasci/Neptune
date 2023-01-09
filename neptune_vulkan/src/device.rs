@@ -1,26 +1,18 @@
-use crate::debug_utils::DebugUtils;
 use crate::resource_manager::{
-    BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, SwapchainHandle,
-    TextureHandle,
+    BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, TextureHandle,
 };
 use crate::sampler::SamplerCreateInfo;
-use crate::TextureUsage;
+use crate::surface::Surface;
+use crate::swapchain::{AshSwapchain, SwapchainConfig};
 use crate::{AshInstance, BufferUsage};
-use crate::{Error, PhysicalDevice};
+use crate::{Error, GpuResource, SwapchainHandle};
+use crate::{GpuResourcePool, TextureUsage};
 use ash::vk;
 use std::ffi::CStr;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-pub struct Swapchain {
-    pub(crate) handle: SwapchainHandle,
-}
-
-impl Drop for Swapchain {
-    fn drop(&mut self) {
-        //TODO: this
-    }
-}
+pub struct Swapchain(GpuResource<SwapchainHandle, Arc<Mutex<AshSwapchain>>>);
 
 pub struct Buffer {
     pub(crate) handle: BufferHandle,
@@ -164,7 +156,9 @@ impl Drop for AshDevice {
 }
 
 pub struct Device {
+    swapchains: GpuResourcePool<SwapchainHandle, Arc<Mutex<AshSwapchain>>>,
     resource_manager: Arc<Mutex<ResourceManager>>,
+    swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
     device: Arc<AshDevice>,
     instance: Arc<AshInstance>,
 
@@ -221,6 +215,11 @@ impl Device {
             Err(e) => return Err(Error::VkError(e)),
         };
 
+        let swapchain_ext = Arc::new(ash::extensions::khr::Swapchain::new(
+            &instance.instance,
+            &device,
+        ));
+
         let graphics_queue =
             unsafe { device.get_device_queue(physical_device.graphics_queue_family_index, 0) };
 
@@ -247,12 +246,16 @@ impl Device {
             instance.debug_utils.clone(),
         )?));
 
+        let swapchains = GpuResourcePool::new();
+
         Ok(Self {
+            swapchains,
             resource_manager,
+            swapchain_ext,
             device,
             instance,
             physical_device: physical_device.handle,
-            info: physical_device.device_info.clone(),
+            info: physical_device.device_info,
             graphics_queue,
         })
     }
@@ -261,8 +264,35 @@ impl Device {
         self.info.clone()
     }
 
-    pub fn create_swapchain(&self) -> crate::Result<Swapchain> {
-        Err(crate::Error::StringError(String::new()))
+    //TODO: Need a function to query swapchain details
+    // pub fn query_swapchain_support(&self, surface: &Surface) -> crate::Result<SwapchainConfig>
+
+    pub fn create_swapchain(
+        &self,
+        surface: &Surface,
+        swapchain_config: SwapchainConfig,
+    ) -> crate::Result<Swapchain> {
+        let surface = surface
+            .0
+            .pool
+            .lock()
+            .get(surface.0.handle)
+            .unwrap()
+            .get_handle();
+
+        let swapchain = Arc::new(Mutex::new(AshSwapchain::new(
+            self.physical_device,
+            self.device.clone(),
+            surface,
+            self.instance.surface_ext.clone(),
+            self.swapchain_ext.clone(),
+            swapchain_config,
+        )?));
+
+        Ok(Swapchain(GpuResource::new(
+            self.swapchains.lock().insert(swapchain),
+            self.swapchains.clone(),
+        )))
     }
 
     pub fn create_buffer(
@@ -366,5 +396,35 @@ impl Device {
 
     pub fn render_frame(&self) {
         self.resource_manager.lock().unwrap().update();
+        for (_, swapchain) in self.swapchains.lock().iter_mut() {
+            let image_ready_semaphore = unsafe {
+                self.device
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                    .unwrap()
+            };
+            let mut lock = swapchain.lock().unwrap();
+            match lock.acquire_next_image(image_ready_semaphore) {
+                Ok(result) => {
+                    unsafe {
+                        let _ = self.swapchain_ext.queue_present(
+                            self.graphics_queue,
+                            &vk::PresentInfoKHR::builder()
+                                .swapchains(&[lock.get_handle()])
+                                .wait_semaphores(&[image_ready_semaphore])
+                                .image_indices(&[result.index]),
+                        );
+                    }
+                    if result.suboptimal {
+                        lock.rebuild().unwrap();
+                    }
+                }
+                Err(_) => {
+                    lock.rebuild().unwrap();
+                }
+            }
+            unsafe {
+                self.device.destroy_semaphore(image_ready_semaphore, None);
+            }
+        }
     }
 }

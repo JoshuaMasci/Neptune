@@ -2,7 +2,10 @@
 extern crate log;
 
 use neptune_vulkan::ash::vk::Format;
-use neptune_vulkan::{AddressMode, BufferUsage, FilterMode, SamplerCreateInfo, TextureUsage};
+use neptune_vulkan::{
+    AddressMode, BufferUsage, CompositeAlphaMode, FilterMode, PresentMode, SamplerCreateInfo,
+    TextureUsage,
+};
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -42,6 +45,18 @@ fn main() {
         })
         .unwrap();
     info!("Selected Device: {:?}", device.info());
+
+    let swapchain = device
+        .create_swapchain(
+            &surface,
+            neptune_vulkan::SwapchainConfig {
+                format: Format::B8G8R8A8_UNORM,
+                present_mode: PresentMode::Fifo,
+                usage: TextureUsage::ATTACHMENT,
+                composite_alpha: CompositeAlphaMode::Auto,
+            },
+        )
+        .unwrap();
 
     let buffer = device
         .create_buffer_with_data(

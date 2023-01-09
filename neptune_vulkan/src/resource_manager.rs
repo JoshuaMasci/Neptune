@@ -23,12 +23,10 @@ pub(crate) struct TextureResource {
 }
 
 slotmap::new_key_type! {
-    pub struct SwapchainHandle;
     pub struct BufferHandle;
     pub struct TextureHandle;
     pub struct SamplerHandle;
     pub struct ComputePipelineHandle;
-    pub struct RasterPipelineHandle;
 }
 
 pub(crate) struct ResourceManager {
