@@ -15,11 +15,12 @@ mod transfer_queue;
 pub use buffer::*;
 pub use device::*;
 pub use instance::*;
+pub use render_graph::*;
 pub use sampler::*;
 pub use swapchain::*;
 pub use texture::*;
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, LockResult, Mutex, MutexGuard};
 
 pub use ash;
 use slotmap::SlotMap;
@@ -29,6 +30,7 @@ extern crate log;
 
 pub type MemoryLocation = gpu_allocator::MemoryLocation;
 
+//TODO: Replace this with bespoke error types for each operation
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("PlaceHolder Error")]
@@ -74,6 +76,7 @@ impl<K: slotmap::Key, T> Drop for GpuResource<K, T> {
         let _ = self
             .pool
             .lock()
+            .unwrap()
             .remove(self.handle)
             .expect("Failed to find key in slotmap");
     }
@@ -87,7 +90,7 @@ impl<K: slotmap::Key, T> GpuResourcePool<K, T> {
         Self(Arc::new(Mutex::new(SlotMap::with_key())))
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<SlotMap<K, T>> {
-        self.0.lock().unwrap()
+    pub(crate) fn lock(&self) -> LockResult<MutexGuard<SlotMap<K, T>>> {
+        self.0.lock()
     }
 }

@@ -1,3 +1,4 @@
+use crate::render_graph::{BasicLinearRenderGraphExecutor, RenderGraphBuilder};
 use crate::resource_manager::{
     BufferHandle, ComputePipelineHandle, ResourceManager, SamplerHandle, TextureHandle,
 };
@@ -12,7 +13,24 @@ use std::ffi::CStr;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-pub struct Swapchain(GpuResource<SwapchainHandle, Arc<Mutex<AshSwapchain>>>);
+pub struct Swapchain(pub(crate) GpuResource<SwapchainHandle, Arc<Mutex<AshSwapchain>>>);
+
+impl Swapchain {
+    pub fn update(&self, swapchain_config: SwapchainConfig) -> crate::Result<()> {
+        match self.0.pool.lock() {
+            Ok(pool_lock) => match pool_lock.get(self.0.handle) {
+                Some(swapchain) => match swapchain.lock() {
+                    Ok(mut swapchain_lock) => swapchain_lock.update(swapchain_config),
+                    Err(_) => Err(crate::Error::StringError(String::from("Mutex Lock Error"))),
+                },
+                None => Err(crate::Error::StringError(String::from(
+                    "Swapchain Handle not valid",
+                ))),
+            },
+            Err(_) => Err(crate::Error::StringError(String::from("Mutex Lock Error"))),
+        }
+    }
+}
 
 pub struct Buffer {
     pub(crate) handle: BufferHandle,
@@ -158,6 +176,7 @@ impl Drop for AshDevice {
 pub struct Device {
     swapchains: GpuResourcePool<SwapchainHandle, Arc<Mutex<AshSwapchain>>>,
     resource_manager: Arc<Mutex<ResourceManager>>,
+    render_graph_executor: Mutex<BasicLinearRenderGraphExecutor>,
     swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
     device: Arc<AshDevice>,
     instance: Arc<AshInstance>,
@@ -246,11 +265,14 @@ impl Device {
             instance.debug_utils.clone(),
         )?));
 
+        let render_graph_executor = Mutex::new(BasicLinearRenderGraphExecutor::new());
+
         let swapchains = GpuResourcePool::new();
 
         Ok(Self {
             swapchains,
             resource_manager,
+            render_graph_executor,
             swapchain_ext,
             device,
             instance,
@@ -276,6 +298,7 @@ impl Device {
             .0
             .pool
             .lock()
+            .unwrap()
             .get(surface.0.handle)
             .unwrap()
             .get_handle();
@@ -290,7 +313,7 @@ impl Device {
         )?));
 
         Ok(Swapchain(GpuResource::new(
-            self.swapchains.lock().insert(swapchain),
+            self.swapchains.lock().unwrap().insert(swapchain),
             self.swapchains.clone(),
         )))
     }
@@ -394,9 +417,16 @@ impl Device {
             })
     }
 
-    pub fn render_frame(&self) {
+    //TODO: use capture since render_graph_builder will need access to the transfer queue
+    pub fn render_frame(&self, render_graph_builder: RenderGraphBuilder) {
         self.resource_manager.lock().unwrap().update();
-        for (_, swapchain) in self.swapchains.lock().iter_mut() {
+
+        self.render_graph_executor
+            .lock()
+            .unwrap()
+            .execute_graph(render_graph_builder);
+
+        for (_, swapchain) in self.swapchains.lock().unwrap().iter_mut() {
             let image_ready_semaphore = unsafe {
                 self.device
                     .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)

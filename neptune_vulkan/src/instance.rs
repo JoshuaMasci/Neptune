@@ -103,7 +103,7 @@ impl Instance {
             self.instance.surface_ext.clone(),
             window,
         )?);
-        let handle = self.instance.surfaces.lock().insert(ash_surface);
+        let handle = self.instance.surfaces.lock().unwrap().insert(ash_surface);
         Ok(Surface(GpuResource::new(
             handle,
             self.instance.surfaces.clone(),
@@ -120,6 +120,7 @@ impl Instance {
                 .0
                 .pool
                 .lock()
+                .unwrap()
                 .get(surface.0.handle)
                 .unwrap()
                 .get_handle()

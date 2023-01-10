@@ -1,5 +1,5 @@
 use crate::resource_manager::{BufferHandle, ComputePipelineHandle, SamplerHandle, TextureHandle};
-use crate::{BufferUsage, SwapchainHandle, TextureUsage};
+use crate::{BufferUsage, Swapchain, SwapchainHandle, TextureUsage};
 use ash::vk;
 use bitflags::bitflags;
 use std::ops::Range;
@@ -11,13 +11,13 @@ pub enum Queue {
     AsyncTransfer,
 }
 
-#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub enum BufferGraphResource {
     Transient(usize),
     Import(BufferHandle),
 }
 
-#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub enum TextureGraphResource {
     Transient(usize),
     Import(TextureHandle),
@@ -190,8 +190,62 @@ pub struct RenderPassDescription {
     pass: RenderPass,
 }
 
+#[derive(Default)]
 pub struct RenderGraphBuilder {
     transient_buffers: Vec<BufferDescription>,
     transient_textures: Vec<TextureDescription>,
     passes: Vec<RenderPassDescription>,
+}
+
+impl RenderGraphBuilder {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn acquire_swapchain_texture(&mut self, swapchain: &Swapchain) -> TextureGraphResource {
+        //TODO: this
+        TextureGraphResource::Swapchain(swapchain.0.handle)
+    }
+
+    pub fn crate_texture(
+        &mut self,
+        name: &str,
+        format: vk::Format,
+        size: TextureSize,
+    ) -> TextureGraphResource {
+        //TODO: this
+        let _ = name;
+        let _ = format;
+        let _ = size;
+        TextureGraphResource::Transient(1)
+    }
+
+    pub fn add_raster_pass(
+        &mut self,
+        name: &str,
+        color_attachments: &[ColorAttachment],
+        depth_stencil_attachment: Option<DepthStencilAttachment>,
+    ) {
+        //TODO: this
+        let _ = name;
+        let _ = color_attachments;
+        let _ = depth_stencil_attachment;
+    }
+}
+
+/// A limited render graph executor that is quick to implement.
+/// Planned to not have the following features
+/// 1. Async queues
+/// 2. Render Pass Reordering
+/// 3. Optimal Pipeline Barriers
+/// 4. Multiple frames in flight
+/// A More complete render graph executor will be built once the api is proven in
+pub(crate) struct BasicLinearRenderGraphExecutor {}
+
+impl BasicLinearRenderGraphExecutor {
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+
+    pub(crate) fn execute_graph(&mut self, render_graph_builder: RenderGraphBuilder) {}
 }
