@@ -265,7 +265,11 @@ impl Device {
             instance.debug_utils.clone(),
         )?));
 
-        let render_graph_executor = Mutex::new(BasicLinearRenderGraphExecutor::new());
+        let render_graph_executor = Mutex::new(BasicLinearRenderGraphExecutor::new(
+            device.clone(),
+            swapchain_ext.clone(),
+            (graphics_queue, physical_device.graphics_queue_family_index),
+        ));
 
         let swapchains = GpuResourcePool::new();
 
@@ -418,8 +422,12 @@ impl Device {
     }
 
     //TODO: use capture since render_graph_builder will need access to the transfer queue
-    pub fn render_frame(&self, render_graph_builder: RenderGraphBuilder) {
+    pub fn render_frame(&self, render_fn: impl FnOnce(&mut RenderGraphBuilder)) {
         self.resource_manager.lock().unwrap().update();
+
+        let mut render_graph_builder = RenderGraphBuilder::new();
+
+        render_fn(&mut render_graph_builder);
 
         self.render_graph_executor
             .lock()

@@ -117,27 +117,28 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                let mut render_graph_builder = neptune_vulkan::RenderGraphBuilder::new();
+                device.render_frame(|render_graph_builder| {
+                    let swapchain_graph_texture =
+                        render_graph_builder.acquire_swapchain_texture(&swapchain);
 
-                let swapchain_graph_texture =
-                    render_graph_builder.acquire_swapchain_texture(&swapchain);
+                    let depth_texture = render_graph_builder.create_texture(
+                        "Depth Stencil Attachment",
+                        Format::D16_UNORM,
+                        TextureSize::Relative(swapchain_graph_texture, [1.0; 2]),
+                        None,
+                    );
 
-                let depth_texture = render_graph_builder.crate_texture(
-                    "Depth Stencil Attachment",
-                    Format::D16_UNORM,
-                    TextureSize::Relative(swapchain_graph_texture, [1.0; 2]),
-                );
+                    let imported_texture = render_graph_builder.import_texture(&texture);
 
-                render_graph_builder.add_raster_pass(
-                    "Swapchain Raster Pass",
-                    &[ColorAttachment::new_clear(
-                        swapchain_graph_texture,
-                        [0.0; 4],
-                    )],
-                    Some(DepthStencilAttachment::new_clear(depth_texture, (1.0, 0))),
-                );
-
-                device.render_frame(render_graph_builder);
+                    render_graph_builder.add_raster_pass(
+                        "Swapchain Raster Pass",
+                        &[ColorAttachment::new_clear(
+                            swapchain_graph_texture,
+                            [0.0; 4],
+                        )],
+                        Some(DepthStencilAttachment::new_clear(depth_texture, (1.0, 0))),
+                    );
+                });
             }
             Event::RedrawRequested(_window_id) => {}
             _ => {}
