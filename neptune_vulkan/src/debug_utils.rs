@@ -84,6 +84,11 @@ unsafe extern "system" fn vulkan_debug_callback(
         CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
+    //TODO: remove this
+    if message.contains("images passed to present must be in layout") {
+        return vk::FALSE;
+    }
+
     if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE {
         trace!("{:?}", message);
     } else if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::INFO {

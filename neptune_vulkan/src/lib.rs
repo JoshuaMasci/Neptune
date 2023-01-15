@@ -94,3 +94,93 @@ impl<K: slotmap::Key, T> GpuResourcePool<K, T> {
         self.0.lock()
     }
 }
+
+// Test for abstraction
+pub type PublicBufferHandle = u64;
+pub trait DeviceImpl {
+    fn create_buffer(&self, size: u64) -> Option<PublicBufferHandle>;
+    fn destroy_buffer(&self, handle: PublicBufferHandle);
+
+    fn begin_frame(&self) -> Box<dyn RenderGraphImpl>;
+    fn end_frame(&self, render_graph: Box<dyn RenderGraphImpl>);
+}
+pub trait RenderGraphImpl {
+    fn use_buffer(&mut self, handle: &PublicBuffer);
+}
+
+pub struct TestDevice {}
+impl DeviceImpl for TestDevice {
+    fn create_buffer(&self, size: u64) -> Option<PublicBufferHandle> {
+        Some(0)
+    }
+    fn destroy_buffer(&self, handle: PublicBufferHandle) {}
+
+    fn begin_frame(&self) -> Box<dyn RenderGraphImpl> {
+        Box::new(TestRenderGraph {
+            function_callbacks: vec![],
+        })
+    }
+
+    fn end_frame(&self, render_graph: Box<dyn RenderGraphImpl>) {
+        let _ = render_graph;
+    }
+}
+
+type RasterCommandCallback = dyn FnOnce(&mut dyn RenderGraphImpl);
+
+pub struct TestRenderGraph {
+    function_callbacks: Vec<Box<RasterCommandCallback>>,
+}
+impl RenderGraphImpl for TestRenderGraph {
+    fn use_buffer(&mut self, handle: &PublicBuffer) {
+        warn!("Use Buffer: {}", handle.0);
+    }
+}
+
+pub type TestDeviceType = TestDevice;
+
+pub struct PublicBuffer(PublicBufferHandle, Arc<TestDeviceType>);
+impl Drop for PublicBuffer {
+    fn drop(&mut self) {
+        self.1.destroy_buffer(self.0);
+    }
+}
+
+pub struct PublicDevice {
+    device_impl: Arc<TestDeviceType>,
+}
+
+pub struct PublicDevice2 {
+    device_impl: Arc<dyn DeviceImpl>,
+}
+
+impl PublicDevice {
+    pub fn new() -> Self {
+        Self {
+            device_impl: Arc::new(TestDevice {}),
+        }
+    }
+
+    pub fn create_buffer(&self, size: u64) -> Option<PublicBuffer> {
+        self.device_impl
+            .create_buffer(size)
+            .map(|handle| PublicBuffer(handle, self.device_impl.clone()))
+    }
+
+    fn render_frame(&self, render_fn: impl FnOnce(&mut dyn RenderGraphImpl)) {
+        let mut render_graph = self.device_impl.begin_frame();
+        render_fn(render_graph.as_mut());
+        self.device_impl.end_frame(render_graph);
+    }
+}
+
+pub fn test_abstract_api() {
+    let device = PublicDevice::new();
+    let buffer = device.create_buffer(16).unwrap();
+
+    for _ in 0..10 {
+        device.render_frame(|render_graph| {
+            render_graph.use_buffer(&buffer);
+        });
+    }
+}

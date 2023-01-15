@@ -1,5 +1,8 @@
 use crate::resource_manager::{BufferHandle, ComputePipelineHandle, SamplerHandle, TextureHandle};
-use crate::{BufferUsage, Sampler, Swapchain, SwapchainHandle, Texture, TextureUsage};
+use crate::{
+    Buffer, BufferUsage, ComputePipeline, Sampler, Swapchain, SwapchainHandle, Texture,
+    TextureUsage,
+};
 use ash::vk;
 use bitflags::bitflags;
 use std::ops::Range;
@@ -27,8 +30,8 @@ pub struct TextureDescription {
 #[derive(Debug, Copy, Clone, Hash)]
 pub enum Queue {
     Primary,
-    AsyncCompute,
-    AsyncTransfer,
+    PreferAsyncCompute,
+    PreferAsyncTransfer,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -147,14 +150,33 @@ pub struct RenderPassDescription {
 
 #[derive(Default)]
 pub struct RenderGraphBuilder {
-    swapchain_textures: Vec<TextureResource>,
+    buffer_resources: Vec<BufferType>,
     texture_resources: Vec<TextureType>,
     passes: Vec<RenderPassDescription>,
+
+    swapchain_textures: Vec<TextureResource>,
 }
 
 impl RenderGraphBuilder {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn import_buffer(&mut self, buffer: &Buffer) -> BufferResource {
+        let resource = BufferResource(self.buffer_resources.len());
+        self.buffer_resources
+            .push(BufferType::Import(buffer.handle));
+        resource
+    }
+
+    pub fn create_buffer(&mut self, name: &str, size: u64) -> BufferResource {
+        let resource = BufferResource(self.buffer_resources.len());
+        self.buffer_resources
+            .push(BufferType::Transient(BufferDescription {
+                name: name.to_string(),
+                size,
+            }));
+        resource
     }
 
     pub fn import_texture(&mut self, texture: &Texture) -> TextureResource {
@@ -188,6 +210,23 @@ impl RenderGraphBuilder {
             .push(TextureType::Swapchain(swapchain.0.handle));
         self.swapchain_textures.push(resource);
         resource
+    }
+
+    pub fn add_compute_pass(
+        &mut self,
+        name: &str,
+        queue: Queue,
+        pipeline: &ComputePipeline,
+        dispatch: [u32; 3],
+    ) {
+        self.passes.push(RenderPassDescription {
+            name: name.to_string(),
+            queue,
+            pass: RenderPass::Compute {
+                pipeline: pipeline.handle,
+                dispatch,
+            },
+        });
     }
 
     pub fn add_raster_pass(
@@ -295,8 +334,6 @@ impl BasicLinearRenderGraphExecutor {
 
     pub(crate) fn execute_graph(&mut self, render_graph_builder: RenderGraphBuilder) {
         const TIMEOUT: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
-
-        let _ = render_graph_builder;
 
         unsafe {
             self.device

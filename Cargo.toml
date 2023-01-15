@@ -2,6 +2,7 @@
 
 members = [
     "neptune_core",
-    "neptune_vulkan",
+    "neptune_graphics",
     "neptune_editor",
+    "neptune_vulkan",
 ]

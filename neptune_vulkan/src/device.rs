@@ -150,6 +150,7 @@ impl DeviceInfo {
 
 #[derive(Clone)]
 pub struct AshDevice(ash::Device);
+
 impl AshDevice {
     fn new(device: ash::Device) -> Self {
         Self(device)
