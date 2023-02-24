@@ -1,8 +1,35 @@
-use crate::{Buffer, Texture};
+use crate::{Buffer, RasterPipeline, Texture};
 use bitflags::bitflags;
 
+//TODO: use specific error type for each action
 pub enum Error {}
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum DeviceType {
+    Integrated,
+    Discrete,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DeviceVendor {
+    Amd,
+    Arm,
+    ImgTec,
+    Intel,
+    Nvidia,
+    Qualcomm,
+    Unknown(u32),
+}
+
+pub struct PhysicalDeviceInfo {
+    pub name: String,
+    pub device_type: DeviceType,
+    pub vendor: DeviceVendor,
+    pub driver: String,
+    pub driver_info: String,
+}
 
 pub type HandleType = u64;
 
@@ -152,8 +179,13 @@ pub struct SamplerDescription {
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub enum ShaderCode<'a> {
+    Spirv(&'a [u32]),
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct ComputePipelineDescription<'a> {
-    pub shader: &'a [u32],
+    pub shader: ShaderCode<'a>,
 }
 
 //TODO: Add complete list from WGPU?
@@ -197,7 +229,7 @@ pub struct VertexBufferLayout<'a> {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct VertexState<'a> {
-    pub shader: &'a [u32],
+    pub shader: ShaderCode<'a>,
     pub layouts: &'a [VertexBufferLayout<'a>],
 }
 
@@ -226,15 +258,15 @@ pub enum BlendOperation {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct BlendComponent {
-    src_factor: BlendFactor,
-    dst_factor: BlendFactor,
-    blend_op: BlendOperation,
+    pub src_factor: BlendFactor,
+    pub dst_factor: BlendFactor,
+    pub blend_op: BlendOperation,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct BlendState {
-    color: BlendComponent,
-    alpha: BlendComponent,
+    pub color: BlendComponent,
+    pub alpha: BlendComponent,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -246,7 +278,7 @@ pub struct ColorTargetState {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct FragmentState<'a> {
-    pub shader: &'a [u32],
+    pub shader: ShaderCode<'a>,
     pub targets: &'a [ColorTargetState],
 }
 
@@ -285,8 +317,8 @@ pub enum CullMode {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct PrimitiveState {
-    front_face: FrontFace,
-    cull_mode: Option<CullMode>,
+    pub front_face: FrontFace,
+    pub cull_mode: Option<CullMode>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -330,40 +362,31 @@ pub enum Queue {
     PreferAsyncTransfer,
 }
 
-#[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub struct BufferGraphResource(usize);
-
-#[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub struct TextureGraphResource(usize);
-
-#[derive(Debug, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub enum ShaderResourceAccess {
-    BufferUniformRead(BufferGraphResource),
-    BufferStorageRead(BufferGraphResource),
-    BufferStorageWrite(BufferGraphResource),
-    TextureSampleRead(TextureGraphResource),
-    TextureStorageRead(TextureGraphResource),
-    TextureStorageWrite(TextureGraphResource),
+pub enum ShaderResourceAccess<'a> {
+    BufferUniformRead(&'a Buffer),
+    BufferStorageRead(&'a Buffer),
+    BufferStorageWrite(&'a Buffer),
+    TextureSampleRead(&'a Texture),
+    TextureStorageRead(&'a Texture),
+    TextureStorageWrite(&'a Texture),
 }
 
-#[derive(Debug, Clone)]
-pub struct TextureCopyBuffer {
-    buffer: BufferGraphResource,
-    offset: u64,
-    row_length: Option<u32>,
-    row_height: Option<u32>,
+pub struct TextureCopyBuffer<'a> {
+    pub buffer: &'a Buffer,
+    pub offset: u64,
+    pub row_length: Option<u32>,
+    pub row_height: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TextureCopyTexture {
-    texture: TextureGraphResource,
-    offset: [u32; 2],
+pub struct TextureCopyTexture<'a> {
+    pub texture: &'a Texture,
+    pub offset: [u32; 2],
 }
 
 pub enum Transfer<'a> {
     CopyCpuToBuffer {
         src: &'a [u8],
-        dst: BufferGraphResource,
+        dst: &'a Buffer,
         dst_offset: u64,
         copy_size: u64,
     },
@@ -371,57 +394,52 @@ pub enum Transfer<'a> {
         src: &'a [u8],
         row_length: Option<u32>,
         row_height: Option<u32>,
-        dst: TextureCopyTexture,
+        dst: TextureCopyTexture<'a>,
         copy_size: [u32; 2],
     },
     CopyBufferToBuffer {
-        src: BufferGraphResource,
+        src: &'a Buffer,
         src_offset: u64,
-        dst: BufferGraphResource,
+        dst: &'a Buffer,
         dst_offset: u64,
         copy_size: u64,
     },
     CopyBufferToTexture {
-        src: TextureCopyBuffer,
-        dst: TextureCopyTexture,
+        src: TextureCopyBuffer<'a>,
+        dst: TextureCopyTexture<'a>,
         copy_size: [u32; 2],
     },
     CopyTextureToBuffer {
-        src: TextureCopyTexture,
-        dst: TextureCopyBuffer,
+        src: TextureCopyTexture<'a>,
+        dst: TextureCopyBuffer<'a>,
         copy_size: [u32; 2],
     },
     CopyTextureToTexture {
-        src: TextureCopyTexture,
-        dst: TextureCopyTexture,
+        src: TextureCopyTexture<'a>,
+        dst: TextureCopyTexture<'a>,
         copy_size: [u32; 2],
     },
 }
 
-#[derive(Debug, Clone)]
-pub enum ComputeDispatch {
+pub enum ComputeDispatch<'a> {
     Size([u32; 3]),
-    Indirect {
-        buffer: BufferGraphResource,
-        offset: u64,
-    },
+    Indirect { buffer: &'a Buffer, offset: u64 },
 }
 
-#[derive(Debug, Clone)]
-pub struct ColorAttachment {
-    texture: TextureGraphResource,
-    clear: Option<[f32; 4]>,
+pub struct ColorAttachment<'a> {
+    pub texture: &'a Texture,
+    pub clear: Option<[f32; 4]>,
 }
 
-impl ColorAttachment {
-    pub fn new(texture: TextureGraphResource) -> Self {
+impl<'a> ColorAttachment<'a> {
+    pub fn new(texture: &'a Texture) -> Self {
         Self {
             texture,
             clear: None,
         }
     }
 
-    pub fn new_clear(texture: TextureGraphResource, clear: [f32; 4]) -> Self {
+    pub fn new_clear(texture: &'a Texture, clear: [f32; 4]) -> Self {
         Self {
             texture,
             clear: Some(clear),
@@ -429,21 +447,20 @@ impl ColorAttachment {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DepthStencilAttachment {
-    texture: TextureGraphResource,
-    clear: Option<(f32, u32)>,
+pub struct DepthStencilAttachment<'a> {
+    pub texture: &'a Texture,
+    pub clear: Option<(f32, u32)>,
 }
 
-impl DepthStencilAttachment {
-    pub fn new(texture: TextureGraphResource) -> Self {
+impl<'a> DepthStencilAttachment<'a> {
+    pub fn new(texture: &'a Texture) -> Self {
         Self {
             texture,
             clear: None,
         }
     }
 
-    pub fn new_clear(texture: TextureGraphResource, clear: (f32, u32)) -> Self {
+    pub fn new_clear(texture: &'a Texture, clear: (f32, u32)) -> Self {
         Self {
             texture,
             clear: Some(clear),
@@ -451,9 +468,48 @@ impl DepthStencilAttachment {
     }
 }
 
-#[derive(Default, Debug, Clone)]
 pub struct RasterPassDescription<'a> {
-    color_attachments: &'a [ColorAttachment],
-    depth_stencil_attachment: Option<DepthStencilAttachment>,
-    input_attachments: &'a [TextureGraphResource],
+    pub color_attachments: &'a [ColorAttachment<'a>],
+    pub depth_stencil_attachment: Option<DepthStencilAttachment<'a>>,
+    pub input_attachments: &'a [&'a Texture],
+}
+
+//TODO: Indirect draw calls
+pub enum RasterCommand<'a> {
+    BindVertexBuffers {
+        buffers: &'a [&'a Buffer],
+    },
+    BindIndexBuffer {
+        buffer: &'a Buffer,
+        format: IndexFormat,
+    },
+    BindShaderResource {
+        resources: &'a [ShaderResourceAccess<'a>],
+    },
+    BindRasterPipeline {
+        pipeline: &'a RasterPipeline,
+    },
+    SetScissor {
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    },
+    SetViewport {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        min_depth: f32,
+        max_depth: f32,
+    },
+    Draw {
+        vertex_range: std::ops::Range<u32>,
+        instance_range: std::ops::Range<u32>,
+    },
+    DrawIndexed {
+        index_range: std::ops::Range<u32>,
+        base_vertex: i32,
+        instance_range: std::ops::Range<u32>,
+    },
 }

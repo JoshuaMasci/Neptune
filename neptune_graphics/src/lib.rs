@@ -3,6 +3,76 @@ mod types;
 use std::sync::Arc;
 pub use types::*;
 
+pub trait InstanceTrait {
+    fn create_surface(
+        &self,
+        name: &str,
+        display_handle: raw_window_handle::RawDisplayHandle,
+        window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Result<SurfaceHandle>;
+    fn destroy_surface(&self, handle: SurfaceHandle);
+
+    fn get_supported_devices(&self, surface: Option<&Surface>) -> Vec<(usize, PhysicalDeviceInfo)>;
+    fn create_device(&self, index: usize, frames_in_flight_count: usize) -> Result<Device>;
+}
+
+pub struct Instance {
+    instance: Arc<dyn InstanceTrait>,
+}
+
+impl Instance {
+    pub fn create_surface<
+        T: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
+    >(
+        &self,
+        name: &str,
+        window: &T,
+    ) -> Result<Surface> {
+        self.instance
+            .create_surface(
+                name,
+                window.raw_display_handle(),
+                window.raw_window_handle(),
+            )
+            .map(|handle| Surface(handle, self.instance.clone()))
+    }
+
+    pub fn select_and_create_device(
+        &self,
+        surface: Option<&Surface>,
+        score_function: impl Fn(usize, &PhysicalDeviceInfo) -> Option<u32>,
+    ) -> Result<Device> {
+        let supported_devices = self.instance.get_supported_devices(surface);
+
+        let highest_scored_device: Option<usize> = supported_devices
+            .iter()
+            .map(|(index, physical_device_info)| {
+                (index, score_function(*index, physical_device_info))
+            })
+            .max_by_key(|index_score| index_score.1)
+            .and_then(|highest_scored_device| {
+                if highest_scored_device.1.is_some() {
+                    Some(*highest_scored_device.0)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(highest_scored_device) = highest_scored_device {
+            self.instance.create_device(highest_scored_device, 3)
+        } else {
+            todo!();
+        }
+    }
+}
+
+pub struct Surface(SurfaceHandle, Arc<dyn InstanceTrait>);
+impl Drop for Surface {
+    fn drop(&mut self) {
+        self.1.destroy_surface(self.0);
+    }
+}
+
 pub trait DeviceTrait {
     fn create_buffer(&self, name: &str, description: &BufferDescription) -> Result<BufferHandle>;
     fn destroy_buffer(&self, handle: BufferHandle);
@@ -29,14 +99,6 @@ pub trait DeviceTrait {
     ) -> Result<RasterPipelineHandle>;
     fn destroy_raster_pipeline(&self, handle: RasterPipelineHandle);
 
-    fn create_surface(
-        &self,
-        name: &str,
-        display_handle: raw_window_handle::RawDisplayHandle,
-        window_handle: raw_window_handle::RawWindowHandle,
-    ) -> Result<SurfaceHandle>;
-    fn destroy_surface(&self, handle: SurfaceHandle);
-
     fn create_swapchain(
         &self,
         name: &str,
@@ -50,76 +112,8 @@ pub trait DeviceTrait {
         description: &SwapchainDescription,
     ) -> Result<()>;
 
-    fn begin_frame(&self) -> Box<dyn RenderGraphImpl>;
-    fn end_frame(&self, render_graph: Box<dyn RenderGraphImpl>) -> Result<()>;
-}
-
-pub trait RenderGraphImpl {
-    fn import_buffer(&mut self, handle: &Buffer) -> BufferGraphResource;
-    fn import_texture(&mut self, handle: &Texture) -> TextureGraphResource;
-
-    fn create_buffer(&mut self, name: &str, description: &BufferDescription)
-        -> BufferGraphResource;
-    fn create_texture(
-        &mut self,
-        name: &str,
-        description: &TextureDescription,
-    ) -> TextureGraphResource;
-
-    fn acquire_swapchain_texture(&mut self, swapchain: &Swapchain) -> TextureGraphResource;
-
-    fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]);
-
-    fn add_compute_pass(
-        &mut self,
-        name: &str,
-        queue: Queue,
-        pipeline: ComputePipeline,
-        dispatch_size: ComputeDispatch,
-        resources: &[ShaderResourceAccess],
-    );
-
-    //TODO: Add method to register resource accesses
-    fn add_raster_pass(
-        &mut self,
-        name: &str,
-        description: &RasterPassDescription,
-        build_fn: RasterCommandBufferBuildFunction,
-    );
-}
-
-pub type RasterCommandBufferBuildFunction = Box<dyn FnOnce(&mut dyn RasterCommandBuffer)>;
-pub struct RasterBuildFunction(pub RasterCommandBufferBuildFunction);
-impl RasterBuildFunction {
-    pub fn new(build_fn: impl FnOnce(&mut dyn RasterCommandBuffer) + 'static) -> Self {
-        Self(Box::new(build_fn))
-    }
-}
-
-pub trait RasterCommandBuffer {
-    fn set_viewport(
-        &mut self,
-        origin: [f32; 2],
-        extent: [f32; 2],
-        depth_range: std::ops::Range<f32>,
-    );
-    fn set_scissor(&mut self, offset: [u32; 2], extent: [u32; 2]);
-
-    fn set_pipeline(&mut self, pipeline: &RasterPipeline);
-    fn set_vertex_buffer(&mut self, buffers: &[(BufferGraphResource, u64)]);
-    fn set_index_buffer(&mut self, buffer: BufferGraphResource, format: IndexFormat);
-    fn set_resources(&mut self, resources: &[ShaderResourceAccess]);
-
-    fn draw(&mut self, vertex_range: std::ops::Range<u32>, instance_range: std::ops::Range<u32>);
-    fn draw_indexed(
-        &mut self,
-        index_range: std::ops::Range<u32>,
-        base_vertex: i32,
-        instance_range: std::ops::Range<u32>,
-    );
-
-    fn draw_indirect(&mut self, buffer: BufferGraphResource, offset: u64);
-    fn draw_indexed_indirect(&mut self, buffer: BufferGraphResource, offset: u64);
+    fn begin_frame(&self) -> Box<dyn RenderGraphBuilderTrait>;
+    fn end_frame(&self, render_graph: Box<dyn RenderGraphBuilderTrait>) -> Result<()>;
 }
 
 pub struct Device {
@@ -130,13 +124,17 @@ impl Device {
     pub fn create_buffer(&self, name: &str, description: &BufferDescription) -> Result<Buffer> {
         self.device
             .create_buffer(name, description)
-            .map(|handle| Buffer(handle, self.device.clone()))
+            .map(|handle| Buffer::Persistent(PersistentBuffer(handle, self.device.clone())))
     }
 
-    pub fn create_texture(&self, name: &str, description: &TextureDescription) -> Result<Texture> {
+    pub fn create_texture(
+        &self,
+        name: &str,
+        description: &TextureDescription,
+    ) -> Result<PersistentTexture> {
         self.device
             .create_texture(name, description)
-            .map(|handle| Texture(handle, self.device.clone()))
+            .map(|handle| PersistentTexture(handle, self.device.clone()))
     }
 
     pub fn create_sampler(&self, name: &str, description: &SamplerDescription) -> Result<Sampler> {
@@ -165,22 +163,6 @@ impl Device {
             .map(|handle| RasterPipeline(handle, self.device.clone()))
     }
 
-    pub fn create_surface<
-        T: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
-    >(
-        &self,
-        name: &str,
-        window: &T,
-    ) -> Result<Surface> {
-        self.device
-            .create_surface(
-                name,
-                window.raw_display_handle(),
-                window.raw_window_handle(),
-            )
-            .map(|handle| Surface(handle, self.device.clone()))
-    }
-
     pub fn create_swapchain(
         &self,
         name: &str,
@@ -192,24 +174,97 @@ impl Device {
             .map(|handle| Swapchain(handle, self.device.clone()))
     }
 
-    pub fn render_frame(&self, render_fn: impl FnOnce(&mut dyn RenderGraphImpl)) -> Result<()> {
+    pub fn render_frame(
+        &self,
+        render_fn: impl FnOnce(&mut dyn RenderGraphBuilderTrait),
+    ) -> Result<()> {
         let mut render_graph = self.device.begin_frame();
         render_fn(render_graph.as_mut());
         self.device.end_frame(render_graph)
     }
 }
 
-pub struct Buffer(BufferHandle, Arc<dyn DeviceTrait>);
-impl Drop for Buffer {
+pub trait RenderGraphBuilderTrait {
+    fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> Buffer;
+    fn create_texture(&mut self, name: &str, description: &TextureDescription) -> Texture;
+    fn acquire_swapchain_texture(&mut self, swapchain: &Swapchain) -> Texture;
+
+    fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]);
+
+    fn add_compute_pass(
+        &mut self,
+        name: &str,
+        queue: Queue,
+        pipeline: ComputePipeline,
+        dispatch_size: &ComputeDispatch,
+        resources: &[ShaderResourceAccess],
+    );
+
+    fn add_raster_pass(
+        &mut self,
+        name: &str,
+        description: &RasterPassDescription,
+        raster_commands: &[RasterCommand],
+    );
+}
+
+pub struct PersistentBuffer(BufferHandle, Arc<dyn DeviceTrait>);
+impl Drop for PersistentBuffer {
     fn drop(&mut self) {
         self.1.destroy_buffer(self.0);
     }
 }
 
-pub struct Texture(TextureHandle, Arc<dyn DeviceTrait>);
-impl Drop for Texture {
+pub struct TransientBuffer(usize);
+
+pub struct PersistentTexture(TextureHandle, Arc<dyn DeviceTrait>);
+impl Drop for PersistentTexture {
     fn drop(&mut self) {
         self.1.destroy_texture(self.0);
+    }
+}
+
+pub struct TransientTexture(usize);
+
+pub enum Buffer {
+    Persistent(PersistentBuffer),
+    Transient(TransientBuffer),
+}
+
+impl Buffer {
+    pub fn is_persistent(&self) -> bool {
+        match self {
+            Buffer::Persistent(_) => true,
+            Buffer::Transient(_) => false,
+        }
+    }
+
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Buffer::Persistent(_) => false,
+            Buffer::Transient(_) => true,
+        }
+    }
+}
+
+pub enum Texture {
+    Persistent(PersistentTexture),
+    Transient(TransientTexture),
+}
+
+impl Texture {
+    pub fn is_persistent(&self) -> bool {
+        match self {
+            Texture::Persistent(_) => true,
+            Texture::Transient(_) => false,
+        }
+    }
+
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Texture::Persistent(_) => false,
+            Texture::Transient(_) => true,
+        }
     }
 }
 
@@ -231,13 +286,6 @@ pub struct RasterPipeline(RasterPipelineHandle, Arc<dyn DeviceTrait>);
 impl Drop for RasterPipeline {
     fn drop(&mut self) {
         self.1.destroy_raster_pipeline(self.0);
-    }
-}
-
-pub struct Surface(SurfaceHandle, Arc<dyn DeviceTrait>);
-impl Drop for Surface {
-    fn drop(&mut self) {
-        self.1.destroy_surface(self.0);
     }
 }
 
