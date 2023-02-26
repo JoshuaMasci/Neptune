@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate log;
 
+use neptune_graphics::AppInfo;
 use neptune_vulkan::ash::vk::Format;
 use neptune_vulkan::{
     AddressMode, BufferUsage, ColorAttachment, CompositeAlphaMode, DepthStencilAttachment,
@@ -25,6 +26,24 @@ fn main() {
         .build(&event_loop)
         .unwrap();
     window.set_maximized(true);
+
+    {
+        let new_instance = neptune_graphics::create_vulkan_instance(
+            &AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
+            &AppInfo::new(APP_NAME, [0, 0, 1, 0]),
+        );
+
+        let device = new_instance
+            .select_and_create_device(None, |_index, device_info| {
+                println!("\t\t{:?}", device_info);
+                match device_info.device_type {
+                    neptune_graphics::DeviceType::Integrated => Some(50),
+                    neptune_graphics::DeviceType::Discrete => Some(100),
+                    neptune_graphics::DeviceType::Unknown => Some(0),
+                }
+            })
+            .unwrap();
+    }
 
     let mut instance =
         neptune_vulkan::Instance::new(APP_NAME).expect("Failed to create vulkan instance");

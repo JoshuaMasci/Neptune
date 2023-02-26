@@ -1,9 +1,38 @@
-use crate::{Buffer, RasterPipeline, Texture};
+use crate::interfaces::{Buffer, RasterPipeline, Texture};
 use bitflags::bitflags;
+use thiserror::Error;
 
 //TODO: use specific error type for each action
-pub enum Error {}
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("no suitable device found")]
+    NoSuitableDeviceFound,
+
+    #[error("Replace with a more suitable error")]
+    TempError,
+}
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub struct AppInfo<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) variant_version: u32,
+    pub(crate) major_version: u32,
+    pub(crate) minor_version: u32,
+    pub(crate) patch_version: u32,
+}
+
+impl<'a> AppInfo<'a> {
+    pub fn new(name: &'a str, version: [u32; 4]) -> Self {
+        Self {
+            name,
+            variant_version: version[0],
+            major_version: version[1],
+            minor_version: version[2],
+            patch_version: version[3],
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum DeviceType {
@@ -23,12 +52,17 @@ pub enum DeviceVendor {
     Unknown(u32),
 }
 
+#[derive(Debug, Clone)]
 pub struct PhysicalDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,
     pub vendor: DeviceVendor,
     pub driver: String,
-    pub driver_info: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceCreateInfo {
+    frames_in_flight_count: u32,
 }
 
 pub type HandleType = u64;
