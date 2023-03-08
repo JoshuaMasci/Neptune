@@ -14,7 +14,8 @@ pub trait InstanceTrait {
         &self,
         surface: Option<SurfaceHandle>,
     ) -> Vec<(usize, PhysicalDeviceInfo)>;
-    fn create_device(&self, index: usize, frames_in_flight_count: usize) -> Result<Device>;
+
+    fn create_device(&self, index: usize, create_info: &DeviceCreateInfo) -> Result<Device>;
 }
 
 pub trait DeviceTrait {

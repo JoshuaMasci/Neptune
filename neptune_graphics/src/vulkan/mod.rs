@@ -1,4 +1,5 @@
 mod debug_utils;
+mod device;
 mod instance;
 
 slotmap::new_key_type! {
@@ -12,3 +13,4 @@ slotmap::new_key_type! {
 }
 
 pub use instance::Instance;
+pub use device::Device;

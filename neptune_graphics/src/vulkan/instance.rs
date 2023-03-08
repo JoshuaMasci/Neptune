@@ -2,8 +2,10 @@ use crate::interfaces::Device;
 use crate::traits::InstanceTrait;
 use crate::vulkan::debug_utils::DebugUtils;
 use crate::vulkan::AshSurfaceHandle;
-use crate::{AppInfo, DeviceType, DeviceVendor, PhysicalDeviceInfo, SurfaceHandle};
-use ash::prelude::VkResult;
+use crate::{
+    AppInfo, DeviceCreateInfo, DeviceType, DeviceVendor, PhysicalDeviceInfo, SurfaceHandle,
+};
+
 use ash::vk;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use slotmap::{KeyData, SlotMap};
@@ -40,12 +42,50 @@ fn get_device_vendor(vendor_id: u32) -> DeviceVendor {
     }
 }
 
-pub struct AshPhysicalDevice {
+#[derive(Clone)]
+pub(crate) struct AshPhysicalDeviceQueues {
+    pub(crate) primary_queue_family_index: u32,
+    pub(crate) compute_queue_family_index: Option<u32>,
+    pub(crate) transfer_queue_family_index: Option<u32>,
+}
+
+#[derive(Clone)]
+pub(crate) struct AshPhysicalDeviceExtensions {
+    pub(crate) supports_dynamic_rendering: bool,
+    pub(crate) supports_ray_tracing: bool,
+}
+
+pub(crate) struct AshPhysicalDevice {
     pub(crate) handle: vk::PhysicalDevice,
     pub(crate) info: PhysicalDeviceInfo,
-    pub(crate) graphics_queue_family_index: u32,
-    pub(crate) transfer_queue_family_index: Option<u32>,
-    pub(crate) compute_queue_family_index: Option<u32>,
+    pub(crate) queues: AshPhysicalDeviceQueues,
+    pub(crate) extensions: AshPhysicalDeviceExtensions,
+}
+
+fn find_queue(
+    queue_family_properties: &[vk::QueueFamilyProperties],
+    contains_flags: vk::QueueFlags,
+    exclude_flags: vk::QueueFlags,
+) -> Option<u32> {
+    queue_family_properties
+        .iter()
+        .enumerate()
+        .find(|(_index, &queue_family)| {
+            queue_family.queue_flags.contains(contains_flags)
+                && !queue_family.queue_flags.intersects(exclude_flags)
+        })
+        .map(|(index, _queue_family)| index as u32)
+}
+
+fn supports_extension(
+    supported_extensions: &[vk::ExtensionProperties],
+    extension_name: &CStr,
+) -> bool {
+    supported_extensions.iter().any(|supported_extension| {
+        let supported_extension_name =
+            unsafe { CStr::from_ptr(supported_extension.extension_name.as_ptr()) };
+        supported_extension_name == extension_name
+    })
 }
 
 impl AshPhysicalDevice {
@@ -56,32 +96,69 @@ impl AshPhysicalDevice {
         //TODO: for the moment, only choose a queue family that supports all operations
         // This will work for most desktop GPU's, as they will have this type of queue family
         // However I would still like to make a more robust queue family selection system for the other GPU's
-        let graphics_queue_family_index = queue_family_properties
-            .iter()
-            .enumerate()
-            .find(|(_index, &queue_family)| {
-                queue_family.queue_flags.contains(
-                    vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
-                )
-            })
-            .unwrap()
-            .0 as u32;
+        let primary_queue_family_index = find_queue(
+            &queue_family_properties,
+            vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
+            vk::QueueFlags::empty(),
+        )
+        .expect("Failed to find primary queue family, TODO: remove this expect statement");
+
+        let compute_queue_family_index = find_queue(
+            &queue_family_properties,
+            vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
+            vk::QueueFlags::GRAPHICS,
+        );
+
+        let transfer_queue_family_index = find_queue(
+            &queue_family_properties,
+            vk::QueueFlags::TRANSFER,
+            vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE,
+        );
 
         let properties = unsafe { instance.get_physical_device_properties(handle) };
+
+        let supported_extensions: Vec<vk::ExtensionProperties> = unsafe {
+            instance
+                .enumerate_device_extension_properties(handle)
+                .unwrap()
+        };
+
+        let extensions = AshPhysicalDeviceExtensions {
+            supports_dynamic_rendering: supports_extension(
+                &supported_extensions,
+                ash::extensions::khr::DynamicRendering::name(),
+            ),
+            supports_ray_tracing: supports_extension(
+                &supported_extensions,
+                ash::extensions::khr::AccelerationStructure::name(),
+            ) && supports_extension(
+                &supported_extensions,
+                ash::extensions::khr::RayTracingPipeline::name(),
+            ) && supports_extension(
+                &supported_extensions,
+                ash::extensions::khr::DeferredHostOperations::name(),
+            ),
+        };
 
         let info = PhysicalDeviceInfo {
             name: c_char_to_string(&properties.device_name),
             device_type: get_device_type(properties.device_type),
             vendor: get_device_vendor(properties.vendor_id),
             driver: format!("{:x}", properties.driver_version),
+            supports_async_compute: compute_queue_family_index.is_some(),
+            supports_async_transfer: transfer_queue_family_index.is_some(),
+            supports_ray_tracing: extensions.supports_dynamic_rendering,
         };
 
         Self {
             handle,
             info,
-            graphics_queue_family_index,
-            transfer_queue_family_index: None,
-            compute_queue_family_index: None,
+            queues: AshPhysicalDeviceQueues {
+                primary_queue_family_index,
+                compute_queue_family_index,
+                transfer_queue_family_index,
+            },
+            extensions,
         }
     }
 
@@ -94,7 +171,7 @@ impl AshPhysicalDevice {
             unsafe {
                 surface_ext.get_physical_device_surface_support(
                     self.handle,
-                    self.graphics_queue_family_index,
+                    self.queues.primary_queue_family_index,
                     surface,
                 )
             }
@@ -176,9 +253,9 @@ impl Drop for AshInstance {
 }
 
 pub struct Instance {
-    instance: Arc<AshInstance>,
-    physical_devices: Vec<AshPhysicalDevice>,
-    surfaces: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurface>>>,
+    pub(crate) instance: Arc<AshInstance>,
+    pub(crate) physical_devices: Vec<AshPhysicalDevice>,
+    pub(crate) surfaces: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurface>>>,
 }
 
 impl Instance {
@@ -320,7 +397,9 @@ impl InstanceTrait for Instance {
             .collect()
     }
 
-    fn create_device(&self, index: usize, frames_in_flight_count: usize) -> crate::Result<Device> {
-        todo!()
+    fn create_device(&self, index: usize, create_info: &DeviceCreateInfo) -> crate::Result<Device> {
+        Ok(crate::Device {
+            device: Arc::new(crate::vulkan::Device::new(self, index, create_info).unwrap()),
+        })
     }
 }

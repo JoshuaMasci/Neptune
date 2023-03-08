@@ -34,8 +34,8 @@ fn main() {
         );
 
         let device = new_instance
-            .select_and_create_device(None, |_index, device_info| {
-                println!("\t\t{:?}", device_info);
+            .select_and_create_device(None, |index, device_info| {
+                println!("{}: {:#?}", index, device_info);
                 match device_info.device_type {
                     neptune_graphics::DeviceType::Integrated => Some(50),
                     neptune_graphics::DeviceType::Discrete => Some(100),

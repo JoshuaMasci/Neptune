@@ -58,11 +58,17 @@ pub struct PhysicalDeviceInfo {
     pub device_type: DeviceType,
     pub vendor: DeviceVendor,
     pub driver: String,
+    pub supports_async_compute: bool,
+    pub supports_async_transfer: bool,
+    pub supports_ray_tracing: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct DeviceCreateInfo {
-    frames_in_flight_count: u32,
+    pub frames_in_flight_count: u32,
+    pub enable_async_compute: bool,
+    pub enable_async_transfer: bool,
+    pub enable_ray_tracing: bool,
 }
 
 pub type HandleType = u64;

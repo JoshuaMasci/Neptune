@@ -47,7 +47,22 @@ impl Instance {
             });
 
         if let Some(highest_scored_device) = highest_scored_device {
-            self.instance.create_device(highest_scored_device, 3)
+            //TODO: return device builder instead
+            let create_info = DeviceCreateInfo {
+                frames_in_flight_count: 3,
+                enable_async_compute: supported_devices[highest_scored_device]
+                    .1
+                    .supports_async_compute,
+                enable_async_transfer: supported_devices[highest_scored_device]
+                    .1
+                    .supports_async_transfer,
+                enable_ray_tracing: supported_devices[highest_scored_device]
+                    .1
+                    .supports_ray_tracing,
+            };
+
+            self.instance
+                .create_device(highest_scored_device, &create_info)
         } else {
             Err(crate::Error::NoSuitableDeviceFound)
         }

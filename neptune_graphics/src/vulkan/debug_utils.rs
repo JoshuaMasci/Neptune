@@ -84,6 +84,11 @@ unsafe extern "system" fn vulkan_debug_callback(
         CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
+    //Ignore annoying messages
+    if message.contains("Inserted device layer") || message.contains("with driver") {
+        return vk::FALSE;
+    }
+
     if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE {
         trace!("{:?}", message);
     } else if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
