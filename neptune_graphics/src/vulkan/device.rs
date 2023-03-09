@@ -3,9 +3,9 @@ use crate::vulkan::instance::AshPhysicalDeviceQueues;
 use crate::vulkan::Instance;
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineDescription, ComputePipelineHandle,
-    DeviceCreateInfo, RasterPipelineDescription, RasterPipelineHandle, SamplerDescription,
-    SamplerHandle, SurfaceHandle, SwapchainDescription, SwapchainHandle, TextureDescription,
-    TextureHandle,
+    DeviceCreateInfo, PhysicalDeviceExtensions, PhysicalDeviceFeatures, RasterPipelineDescription,
+    RasterPipelineHandle, SamplerDescription, SamplerHandle, SurfaceHandle, SwapchainDescription,
+    SwapchainHandle, TextureDescription, TextureHandle,
 };
 use ash::vk;
 use log::trace;
@@ -33,6 +33,7 @@ pub(crate) struct AshDevice {
 
     swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
     dynamic_rendering_extension: Option<Arc<ash::extensions::khr::DynamicRendering>>,
+    mesh_shading_extension: Option<Arc<ash::extensions::ext::MeshShader>>,
     acceleration_structure_extension: Option<Arc<ash::extensions::khr::AccelerationStructure>>,
     ray_tracing_pipeline_extension: Option<Arc<ash::extensions::khr::RayTracingPipeline>>,
 }
@@ -42,17 +43,16 @@ impl AshDevice {
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
         queues: &AshPhysicalDeviceQueues,
-        dynamic_rendering_support: bool,
-        ray_tracing_support: bool,
+        extensions: &PhysicalDeviceExtensions,
     ) -> ash::prelude::VkResult<Self> {
         let mut device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-        if dynamic_rendering_support {
+        if extensions.dynamic_rendering {
             device_extension_names_raw
                 .push(ash::extensions::khr::DynamicRendering::name().as_ptr());
         }
 
-        if ray_tracing_support {
+        if extensions.ray_tracing {
             device_extension_names_raw
                 .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
             device_extension_names_raw
@@ -60,6 +60,10 @@ impl AshDevice {
             //Required by AccelerationStructureKHR but it won't be used
             device_extension_names_raw
                 .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
+        }
+
+        if extensions.mesh_shading {
+            device_extension_names_raw.push(ash::extensions::ext::MeshShader::name().as_ptr());
         }
 
         //TODO: check feature support
@@ -137,7 +141,7 @@ impl AshDevice {
 
         let swapchain_extension = Arc::new(ash::extensions::khr::Swapchain::new(instance, &device));
 
-        let dynamic_rendering_extension = if dynamic_rendering_support {
+        let dynamic_rendering_extension = if extensions.dynamic_rendering {
             Some(Arc::new(ash::extensions::khr::DynamicRendering::new(
                 instance, &device,
             )))
@@ -145,8 +149,16 @@ impl AshDevice {
             None
         };
 
+        let mesh_shading_extension = if extensions.mesh_shading {
+            Some(Arc::new(ash::extensions::ext::MeshShader::new(
+                instance, &device,
+            )))
+        } else {
+            None
+        };
+
         let (acceleration_structure_extension, ray_tracing_pipeline_extension) =
-            if dynamic_rendering_support {
+            if extensions.ray_tracing {
                 (
                     Some(Arc::new(ash::extensions::khr::AccelerationStructure::new(
                         instance, &device,
@@ -167,6 +179,7 @@ impl AshDevice {
             transfer_queue,
             swapchain_extension,
             dynamic_rendering_extension,
+            mesh_shading_extension,
             acceleration_structure_extension,
             ray_tracing_pipeline_extension,
         })
@@ -197,12 +210,21 @@ impl Device {
 
         //TODO: verify that queue and extensions are supported
 
+        let mut queues = physical_device.queues.clone();
+
+        if !create_info.features.async_compute {
+            queues.compute_queue_family_index = None;
+        }
+
+        if !create_info.features.async_transfer {
+            queues.transfer_queue_family_index = None;
+        }
+
         let ash_device = match AshDevice::new(
             &instance.instance.handle,
             physical_device.handle,
-            &physical_device.queues,
-            true,
-            create_info.enable_ray_tracing,
+            &queues,
+            &create_info.extensions,
         ) {
             Ok(device) => Arc::new(device),
             Err(e) => return Err(DeviceCreateError::VkError(e)),

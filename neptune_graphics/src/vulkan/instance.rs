@@ -3,7 +3,8 @@ use crate::traits::InstanceTrait;
 use crate::vulkan::debug_utils::DebugUtils;
 use crate::vulkan::AshSurfaceHandle;
 use crate::{
-    AppInfo, DeviceCreateInfo, DeviceType, DeviceVendor, PhysicalDeviceInfo, SurfaceHandle,
+    AppInfo, DeviceCreateInfo, DeviceType, DeviceVendor, PhysicalDeviceExtensions,
+    PhysicalDeviceFeatures, PhysicalDeviceInfo, SurfaceHandle,
 };
 
 use ash::vk;
@@ -49,17 +50,11 @@ pub(crate) struct AshPhysicalDeviceQueues {
     pub(crate) transfer_queue_family_index: Option<u32>,
 }
 
-#[derive(Clone)]
-pub(crate) struct AshPhysicalDeviceExtensions {
-    pub(crate) supports_dynamic_rendering: bool,
-    pub(crate) supports_ray_tracing: bool,
-}
-
 pub(crate) struct AshPhysicalDevice {
     pub(crate) handle: vk::PhysicalDevice,
     pub(crate) info: PhysicalDeviceInfo,
     pub(crate) queues: AshPhysicalDeviceQueues,
-    pub(crate) extensions: AshPhysicalDeviceExtensions,
+    pub(crate) extensions: PhysicalDeviceExtensions,
 }
 
 fn find_queue(
@@ -123,12 +118,16 @@ impl AshPhysicalDevice {
                 .unwrap()
         };
 
-        let extensions = AshPhysicalDeviceExtensions {
-            supports_dynamic_rendering: supports_extension(
+        let extensions = PhysicalDeviceExtensions {
+            dynamic_rendering: supports_extension(
                 &supported_extensions,
                 ash::extensions::khr::DynamicRendering::name(),
             ),
-            supports_ray_tracing: supports_extension(
+            mesh_shading: supports_extension(
+                &supported_extensions,
+                ash::extensions::ext::MeshShader::name(),
+            ),
+            ray_tracing: supports_extension(
                 &supported_extensions,
                 ash::extensions::khr::AccelerationStructure::name(),
             ) && supports_extension(
@@ -145,9 +144,11 @@ impl AshPhysicalDevice {
             device_type: get_device_type(properties.device_type),
             vendor: get_device_vendor(properties.vendor_id),
             driver: format!("{:x}", properties.driver_version),
-            supports_async_compute: compute_queue_family_index.is_some(),
-            supports_async_transfer: transfer_queue_family_index.is_some(),
-            supports_ray_tracing: extensions.supports_dynamic_rendering,
+            features: PhysicalDeviceFeatures {
+                async_compute: compute_queue_family_index.is_some(),
+                async_transfer: transfer_queue_family_index.is_some(),
+            },
+            extensions: extensions.clone(),
         };
 
         Self {

@@ -27,7 +27,7 @@ impl Instance {
         &self,
         surface: Option<&Surface>,
         score_function: impl Fn(usize, &PhysicalDeviceInfo) -> Option<u32>,
-    ) -> Result<Device> {
+    ) -> Option<SelectedDevice> {
         let supported_devices = self
             .instance
             .get_supported_devices(surface.map(|surface| surface.0));
@@ -46,26 +46,31 @@ impl Instance {
                 }
             });
 
-        if let Some(highest_scored_device) = highest_scored_device {
-            //TODO: return device builder instead
-            let create_info = DeviceCreateInfo {
-                frames_in_flight_count: 3,
-                enable_async_compute: supported_devices[highest_scored_device]
-                    .1
-                    .supports_async_compute,
-                enable_async_transfer: supported_devices[highest_scored_device]
-                    .1
-                    .supports_async_transfer,
-                enable_ray_tracing: supported_devices[highest_scored_device]
-                    .1
-                    .supports_ray_tracing,
-            };
+        highest_scored_device.map(|highest_scored_device| SelectedDevice {
+            instance: self.instance.clone(),
+            device_index: highest_scored_device,
+            device_info: supported_devices[highest_scored_device].1.clone(),
+        })
+    }
+}
 
-            self.instance
-                .create_device(highest_scored_device, &create_info)
-        } else {
-            Err(crate::Error::NoSuitableDeviceFound)
-        }
+pub struct SelectedDevice {
+    instance: Arc<dyn InstanceTrait>,
+    device_index: usize,
+    device_info: PhysicalDeviceInfo,
+}
+
+impl SelectedDevice {
+    pub fn index(&self) -> usize {
+        self.device_index
+    }
+
+    pub fn info(&self) -> PhysicalDeviceInfo {
+        self.device_info.clone()
+    }
+
+    pub fn create(self, create_info: &DeviceCreateInfo) -> Result<Device> {
+        self.instance.create_device(self.device_index, create_info)
     }
 }
 

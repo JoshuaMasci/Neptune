@@ -53,22 +53,33 @@ pub enum DeviceVendor {
 }
 
 #[derive(Debug, Clone)]
+pub struct PhysicalDeviceFeatures {
+    pub async_compute: bool,
+    pub async_transfer: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PhysicalDeviceExtensions {
+    pub dynamic_rendering: bool,
+    pub mesh_shading: bool,
+    pub ray_tracing: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct PhysicalDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,
     pub vendor: DeviceVendor,
     pub driver: String,
-    pub supports_async_compute: bool,
-    pub supports_async_transfer: bool,
-    pub supports_ray_tracing: bool,
+    pub features: PhysicalDeviceFeatures,
+    pub extensions: PhysicalDeviceExtensions,
 }
 
 #[derive(Debug, Clone)]
 pub struct DeviceCreateInfo {
     pub frames_in_flight_count: u32,
-    pub enable_async_compute: bool,
-    pub enable_async_transfer: bool,
-    pub enable_ray_tracing: bool,
+    pub features: PhysicalDeviceFeatures,
+    pub extensions: PhysicalDeviceExtensions,
 }
 
 pub type HandleType = u64;
