@@ -1,12 +1,11 @@
 #[macro_use]
 extern crate log;
 
-use neptune_graphics::AppInfo;
-use neptune_vulkan::ash::vk::Format;
-use neptune_vulkan::{
-    AddressMode, BufferUsage, ColorAttachment, CompositeAlphaMode, DepthStencilAttachment,
-    FilterMode, PresentMode, SamplerCreateInfo, TextureSize, TextureUsage,
+use neptune_graphics::{
+    AddressMode, AppInfo, BufferDescription, BufferUsage, FilterMode, SamplerDescription,
+    TextureDescription, TextureFormat, TextureUsage,
 };
+use std::default::Default;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 pub use winit::{
@@ -27,14 +26,16 @@ fn main() {
         .unwrap();
     window.set_maximized(true);
 
-    {
+    let device = {
         let new_instance = neptune_graphics::create_vulkan_instance(
             &AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
             &AppInfo::new(APP_NAME, [0, 0, 1, 0]),
         );
 
+        let surface = new_instance.create_surface("Main Surface", &window).ok();
+
         let selected_device = new_instance
-            .select_and_create_device(None, |index, device_info| {
+            .select_and_create_device(surface.as_ref(), |index, device_info| {
                 println!("{}: {:#?}", index, device_info);
                 match device_info.device_type {
                     neptune_graphics::DeviceType::Integrated => Some(50),
@@ -52,8 +53,45 @@ fn main() {
             extensions: device_info.extensions,
         };
 
-        let device = selected_device.create(&create_info).unwrap();
-    }
+        selected_device.create(&create_info).unwrap()
+    };
+
+    let buffer = device
+        .create_buffer(
+            "Test Buffer",
+            &BufferDescription {
+                size: 4096,
+                usage: BufferUsage::VERTEX,
+            },
+        )
+        .unwrap();
+
+    let sampler = device
+        .create_sampler(
+            "Linear Sampler",
+            &SamplerDescription {
+                address_mode_u: AddressMode::Repeat,
+                address_mode_v: AddressMode::Repeat,
+                address_mode_w: AddressMode::Repeat,
+                mag_filter: FilterMode::Linear,
+                min_filter: FilterMode::Linear,
+                mip_filter: FilterMode::Linear,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    let texture = device
+        .create_texture(
+            "Test Image",
+            &TextureDescription {
+                size: [4096, 4096],
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsage::RENDER_ATTACHMENT | TextureUsage::TRANSFER_SRC,
+                sampler: None,
+            },
+        )
+        .unwrap();
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
@@ -70,6 +108,8 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
+                device.render_frame(|_render_graph_builder| {}).unwrap();
+
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();
 

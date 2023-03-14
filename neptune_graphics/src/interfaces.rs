@@ -92,14 +92,10 @@ impl Device {
             .map(|handle| Buffer::Persistent(PersistentBuffer(handle, self.device.clone())))
     }
 
-    pub fn create_texture(
-        &self,
-        name: &str,
-        description: &TextureDescription,
-    ) -> Result<PersistentTexture> {
+    pub fn create_texture(&self, name: &str, description: &TextureDescription) -> Result<Texture> {
         self.device
             .create_texture(name, description)
-            .map(|handle| PersistentTexture(handle, self.device.clone()))
+            .map(|handle| Texture::Persistent(PersistentTexture(handle, self.device.clone())))
     }
 
     pub fn create_sampler(&self, name: &str, description: &SamplerDescription) -> Result<Sampler> {

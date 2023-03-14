@@ -9,7 +9,6 @@ shaderc = "0.8.0"
 
 [dependencies]
 neptune_core = { path = "../neptune_core"}
-neptune_vulkan = { path = "../neptune_vulkan" }
 neptune_graphics = { path = "../neptune_graphics" }
 
 log = "0.4"

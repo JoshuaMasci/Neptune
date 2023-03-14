@@ -1,15 +1,20 @@
 use crate::traits::{DeviceTrait, RenderGraphBuilderTrait};
-use crate::vulkan::instance::AshPhysicalDeviceQueues;
-use crate::vulkan::Instance;
+use crate::vulkan::buffer::AshBuffer;
+use crate::vulkan::image::AshImage;
+use crate::vulkan::instance::{AshInstance, AshPhysicalDeviceQueues};
+use crate::vulkan::sampler::AshSampler;
+use crate::vulkan::{AshBufferHandle, AshSamplerHandle, AshTextureHandle, Instance};
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineDescription, ComputePipelineHandle,
-    DeviceCreateInfo, PhysicalDeviceExtensions, PhysicalDeviceFeatures, RasterPipelineDescription,
-    RasterPipelineHandle, SamplerDescription, SamplerHandle, SurfaceHandle, SwapchainDescription,
-    SwapchainHandle, TextureDescription, TextureHandle,
+    DeviceCreateInfo, PhysicalDeviceExtensions, RasterPipelineDescription, RasterPipelineHandle,
+    SamplerDescription, SamplerHandle, SurfaceHandle, SwapchainDescription, SwapchainHandle,
+    TextureDescription, TextureHandle,
 };
+use ash::prelude::VkResult;
 use ash::vk;
-use log::trace;
-use std::sync::Arc;
+use gpu_allocator::MemoryLocation;
+use slotmap::{KeyData, SlotMap};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 pub struct DropDevice(Arc<ash::Device>);
@@ -17,7 +22,6 @@ impl Drop for DropDevice {
     fn drop(&mut self) {
         unsafe {
             self.0.destroy_device(None);
-            trace!("Drop Device");
         }
     }
 }
@@ -196,8 +200,15 @@ pub(crate) enum DeviceCreateError {
 }
 
 pub struct Device {
+    device: AshDevice,
+    buffers: Mutex<SlotMap<AshBufferHandle, Arc<AshBuffer>>>,
+    textures: Mutex<SlotMap<AshTextureHandle, Arc<AshImage>>>,
+    samplers: Mutex<SlotMap<AshSamplerHandle, Arc<AshSampler>>>,
+
+    allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
+    #[allow(unused)]
     drop_device: DropDevice,
-    device: Arc<AshDevice>,
+    instance: Arc<AshInstance>,
 }
 
 impl Device {
@@ -220,19 +231,37 @@ impl Device {
             queues.transfer_queue_family_index = None;
         }
 
-        let ash_device = match AshDevice::new(
+        let device = match AshDevice::new(
             &instance.instance.handle,
             physical_device.handle,
             &queues,
             &create_info.extensions,
         ) {
-            Ok(device) => Arc::new(device),
+            Ok(device) => device,
             Err(e) => return Err(DeviceCreateError::VkError(e)),
         };
 
+        let allocator = match gpu_allocator::vulkan::Allocator::new(
+            &gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance: instance.instance.handle.clone(),
+                device: (*device.handle).clone(),
+                physical_device: device.physical_device,
+                debug_settings: gpu_allocator::AllocatorDebugSettings::default(),
+                buffer_device_address: false,
+            },
+        ) {
+            Ok(allocator) => Arc::new(Mutex::new(allocator)),
+            Err(e) => return Err(DeviceCreateError::GpuAllocError(e)),
+        };
+
         Ok(Self {
-            drop_device: DropDevice(ash_device.handle.clone()),
-            device: ash_device,
+            buffers: Mutex::new(SlotMap::with_key()),
+            textures: Mutex::new(SlotMap::with_key()),
+            samplers: Mutex::new(SlotMap::with_key()),
+            allocator,
+            instance: instance.instance.clone(),
+            drop_device: DropDevice(device.handle.clone()),
+            device,
         })
     }
 }
@@ -243,11 +272,34 @@ impl DeviceTrait for Device {
         name: &str,
         description: &BufferDescription,
     ) -> crate::Result<BufferHandle> {
-        todo!()
+        let create_info = vk::BufferCreateInfo::builder()
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .usage(description.usage.to_vk())
+            .size(description.size)
+            .build();
+
+        let buffer = match AshBuffer::new(
+            self.device.handle.clone(),
+            self.allocator.clone(),
+            name,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        ) {
+            Ok(buffer) => buffer,
+            Err(_e) => return Err(crate::Error::TempError),
+        };
+
+        if let Some(debug_utils) = &self.instance.debug_utils {
+            let _ = debug_utils.set_object_name(self.device.handle.handle(), buffer.handle, name);
+        }
+
+        let buffer_handle = self.buffers.lock().unwrap().insert(Arc::new(buffer));
+        Ok(buffer_handle.0.as_ffi())
     }
 
     fn destroy_buffer(&self, handle: BufferHandle) {
-        todo!()
+        let buffer_handle = AshBufferHandle::from(KeyData::from_ffi(handle));
+        let _ = self.buffers.lock().unwrap().remove(buffer_handle);
     }
 
     fn create_texture(
@@ -255,11 +307,75 @@ impl DeviceTrait for Device {
         name: &str,
         description: &TextureDescription,
     ) -> crate::Result<TextureHandle> {
-        todo!()
+        let is_color = description.format.is_color();
+        let format = description.format.to_vk();
+
+        let create_info = vk::ImageCreateInfo::builder()
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .usage(
+                description
+                    .usage
+                    .to_vk(is_color, description.sampler.is_some()),
+            )
+            .format(format)
+            .extent(vk::Extent3D {
+                width: description.size[0],
+                height: description.size[1],
+                depth: 1,
+            })
+            .image_type(vk::ImageType::TYPE_2D)
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .flags(vk::ImageCreateFlags::empty())
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .build();
+        let mut image = match AshImage::new(
+            self.device.handle.clone(),
+            self.allocator.clone(),
+            name,
+            &create_info,
+            MemoryLocation::GpuOnly,
+        ) {
+            Ok(image) => image,
+            Err(_e) => return Err(crate::Error::TempError),
+        };
+
+        let view_create_info = vk::ImageViewCreateInfo::builder()
+            .image(image.handle)
+            .format(format)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .components(vk::ComponentMapping::default())
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: if is_color {
+                    vk::ImageAspectFlags::COLOR
+                } else {
+                    vk::ImageAspectFlags::DEPTH
+                },
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .build();
+        if let Err(_e) = image.create_view(&view_create_info) {
+            return Err(crate::Error::TempError);
+        }
+
+        if let Some(debug_utils) = &self.instance.debug_utils {
+            let _ = debug_utils.set_object_name(self.device.handle.handle(), image.handle, name);
+            let _ =
+                debug_utils.set_object_name(self.device.handle.handle(), image.view_handle, name);
+        }
+
+        let texture_handle = self.textures.lock().unwrap().insert(Arc::new(image));
+        Ok(texture_handle.0.as_ffi())
     }
 
     fn destroy_texture(&self, handle: TextureHandle) {
-        todo!()
+        let texture_handle = AshTextureHandle::from(KeyData::from_ffi(handle));
+        let _ = self.textures.lock().unwrap().remove(texture_handle);
     }
 
     fn create_sampler(
@@ -267,11 +383,22 @@ impl DeviceTrait for Device {
         name: &str,
         description: &SamplerDescription,
     ) -> crate::Result<SamplerHandle> {
-        todo!()
+        let sampler = match AshSampler::new(self.device.handle.clone(), &description.to_vk()) {
+            Ok(sampler) => sampler,
+            Err(_e) => return Err(crate::Error::TempError),
+        };
+
+        if let Some(debug_utils) = &self.instance.debug_utils {
+            let _ = debug_utils.set_object_name(self.device.handle.handle(), sampler.handle, name);
+        }
+
+        let sampler_handle = self.samplers.lock().unwrap().insert(Arc::new(sampler));
+        Ok(sampler_handle.0.as_ffi())
     }
 
     fn destroy_sampler(&self, handle: SamplerHandle) {
-        todo!()
+        let sampler_handle = AshSamplerHandle::from(KeyData::from_ffi(handle));
+        let _ = self.samplers.lock().unwrap().remove(sampler_handle);
     }
 
     fn create_compute_pipeline(

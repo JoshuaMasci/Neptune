@@ -66,11 +66,18 @@ pub struct PhysicalDeviceExtensions {
 }
 
 #[derive(Debug, Clone)]
+pub struct PhysicalDeviceMemory {
+    /// The amount of local memory in bytes
+    pub device_local_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct PhysicalDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,
     pub vendor: DeviceVendor,
     pub driver: String,
+    pub memory: PhysicalDeviceMemory,
     pub features: PhysicalDeviceFeatures,
     pub extensions: PhysicalDeviceExtensions,
 }
@@ -98,7 +105,10 @@ bitflags! {
         const INDEX = 1 << 1;
         const UNIFORM = 1 << 2;
         const STORAGE = 1 << 3;
-        const INDIRECT  = 1 << 4;
+        const INDIRECT = 1 << 4;
+        const TRANSFER_SRC = 1 << 5;
+        const TRANSFER_DST = 1 << 6;
+        const TRANSFER = (1 << 5) | (1 << 6);
     }
 }
 
@@ -110,9 +120,12 @@ pub struct BufferDescription {
 
 bitflags! {
     pub struct TextureUsage: u32 {
-        const ATTACHMENT = 1 << 0;
-        const SAMPLED = 1 << 1;
+        const RENDER_ATTACHMENT = 1 << 0;
+        const INPUT_ATTACHMENT = 1 << 0;
         const STORAGE = 1 << 2;
+        const TRANSFER_SRC = 1 << 5;
+        const TRANSFER_DST = 1 << 6;
+        const TRANSFER = (1 << 5) | (1 << 6);
     }
 }
 

@@ -4,7 +4,7 @@ use crate::vulkan::debug_utils::DebugUtils;
 use crate::vulkan::AshSurfaceHandle;
 use crate::{
     AppInfo, DeviceCreateInfo, DeviceType, DeviceVendor, PhysicalDeviceExtensions,
-    PhysicalDeviceFeatures, PhysicalDeviceInfo, SurfaceHandle,
+    PhysicalDeviceFeatures, PhysicalDeviceInfo, PhysicalDeviceMemory, SurfaceHandle,
 };
 
 use ash::vk;
@@ -139,11 +139,30 @@ impl AshPhysicalDevice {
             ),
         };
 
+        let memory_properties = unsafe { instance.get_physical_device_memory_properties(handle) };
+        let heap_slice = &memory_properties.memory_heaps[0..(memory_properties.memory_heap_count
+            as usize)
+            .min(memory_properties.memory_heaps.len())];
+        let device_local_bytes: usize = heap_slice
+            .iter()
+            .map(|memory_heap| {
+                if memory_heap
+                    .flags
+                    .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+                {
+                    memory_heap.size as usize
+                } else {
+                    0
+                }
+            })
+            .sum();
+
         let info = PhysicalDeviceInfo {
             name: c_char_to_string(&properties.device_name),
             device_type: get_device_type(properties.device_type),
             vendor: get_device_vendor(properties.vendor_id),
             driver: format!("{:x}", properties.driver_version),
+            memory: PhysicalDeviceMemory { device_local_bytes },
             features: PhysicalDeviceFeatures {
                 async_compute: compute_queue_family_index.is_some(),
                 async_transfer: transfer_queue_family_index.is_some(),
@@ -363,6 +382,12 @@ impl InstanceTrait for Instance {
             Ok(surface) => surface,
             Err(_e) => return Err(crate::Error::TempError),
         };
+
+        let _ = name;
+        //TODO: Surface name cannot be set using debug without a device handle
+        // if let Some(debug_utils) = &self.instance.debug_utils {
+        //     let _ = debug_utils.set_object_name(vk::Device::null(), surface.handle, name);
+        // }
 
         Ok(self.surfaces.lock().unwrap().insert(surface).0.as_ffi())
     }
