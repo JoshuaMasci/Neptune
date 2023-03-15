@@ -3,8 +3,9 @@ use crate::traits::InstanceTrait;
 use crate::vulkan::debug_utils::DebugUtils;
 use crate::vulkan::AshSurfaceHandle;
 use crate::{
-    AppInfo, DeviceCreateInfo, DeviceType, DeviceVendor, PhysicalDeviceExtensions,
-    PhysicalDeviceFeatures, PhysicalDeviceInfo, PhysicalDeviceMemory, SurfaceHandle,
+    AppInfo, ColorSpace, CompositeAlphaMode, DeviceCreateInfo, DeviceType, DeviceVendor,
+    PhysicalDeviceExtensions, PhysicalDeviceFeatures, PhysicalDeviceInfo, PhysicalDeviceMemory,
+    PresentMode, SurfaceFormat, SurfaceHandle, SwapchainSupportInfo, TextureFormat, TextureUsage,
 };
 
 use ash::vk;
@@ -256,7 +257,7 @@ fn get_surface_extensions(extension_names_raw: &mut Vec<*const c_char>) {
 
 pub struct AshInstance {
     pub(crate) entry: ash::Entry,
-    pub(crate) surface_ext: Arc<ash::extensions::khr::Surface>,
+    pub(crate) surface_extension: Arc<ash::extensions::khr::Surface>,
     pub(crate) debug_utils: Option<Arc<DebugUtils>>,
     pub(crate) handle: ash::Instance,
 }
@@ -341,7 +342,7 @@ impl Instance {
 
         let ash_instance = Arc::new(AshInstance {
             entry,
-            surface_ext,
+            surface_extension: surface_ext,
             debug_utils,
             handle: instance,
         });
@@ -375,7 +376,7 @@ impl InstanceTrait for Instance {
         let surface = match AshSurface::new(
             &self.instance.entry,
             &self.instance.handle,
-            self.instance.surface_ext.clone(),
+            self.instance.surface_extension.clone(),
             display_handle,
             window_handle,
         ) {
@@ -417,15 +418,98 @@ impl InstanceTrait for Instance {
             .iter()
             .enumerate()
             .filter(|(_index, physical_device)| {
-                physical_device.get_surface_support(&self.instance.surface_ext, surface)
+                physical_device.get_surface_support(&self.instance.surface_extension, surface)
             })
             .map(|(index, physical_device)| (index, physical_device.info.clone()))
             .collect()
     }
 
-    fn create_device(&self, index: usize, create_info: &DeviceCreateInfo) -> crate::Result<Device> {
+    fn create_device(
+        &self,
+        device_index: usize,
+        create_info: &DeviceCreateInfo,
+    ) -> crate::Result<Device> {
         Ok(crate::Device {
-            device: Arc::new(crate::vulkan::Device::new(self, index, create_info).unwrap()),
+            device: Arc::new(crate::vulkan::Device::new(self, device_index, create_info).unwrap()),
         })
+    }
+
+    fn get_surface_support(
+        &self,
+        device_index: usize,
+        surface_handle: SurfaceHandle,
+    ) -> Option<SwapchainSupportInfo> {
+        let physical_device = self
+            .physical_devices
+            .get(device_index)
+            .map(|physical_device| physical_device.handle);
+        let surface = self
+            .surfaces
+            .lock()
+            .unwrap()
+            .get(AshSurfaceHandle::from(KeyData::from_ffi(surface_handle)))
+            .map(|surface| surface.handle);
+
+        if physical_device.is_none() || surface.is_none() {
+            return None;
+        }
+
+        let physical_device: vk::PhysicalDevice = physical_device.unwrap();
+        let surface: vk::SurfaceKHR = surface.unwrap();
+
+        let surface_formats = unsafe {
+            self.instance
+                .surface_extension
+                .get_physical_device_surface_formats(physical_device, surface)
+        };
+        let surface_present_modes = unsafe {
+            self.instance
+                .surface_extension
+                .get_physical_device_surface_present_modes(physical_device, surface)
+        };
+        let surface_capabilities = unsafe {
+            self.instance
+                .surface_extension
+                .get_physical_device_surface_capabilities(physical_device, surface)
+        };
+
+        if surface_formats.is_err()
+            || surface_present_modes.is_err()
+            || surface_capabilities.is_err()
+        {
+            return None;
+        }
+
+        let mut surface_support = SwapchainSupportInfo {
+            surface_formats: Vec::new(),
+            present_modes: Vec::new(),
+            usages: TextureUsage::empty(),
+            composite_alpha_modes: Vec::new(),
+        };
+
+        for surface_format in surface_formats.unwrap().iter() {
+            let format = TextureFormat::from_vk(surface_format.format);
+            let color_space = ColorSpace::from_vk(surface_format.color_space);
+
+            if let (Some(format), Some(color_space)) = (format, color_space) {
+                surface_support.surface_formats.push(SurfaceFormat {
+                    format,
+                    color_space,
+                });
+            }
+        }
+
+        for surface_present_mode in surface_present_modes.unwrap().iter() {
+            if let Some(present_mode) = PresentMode::from_vk(surface_present_mode) {
+                surface_support.present_modes.push(present_mode);
+            }
+        }
+
+        let surface_capabilities = surface_capabilities.unwrap();
+        surface_support.composite_alpha_modes =
+            CompositeAlphaMode::from_vk(&surface_capabilities.supported_composite_alpha);
+        surface_support.usages = TextureUsage::from_vk(surface_capabilities.supported_usage_flags);
+
+        Some(surface_support)
     }
 }

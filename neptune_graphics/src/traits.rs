@@ -15,7 +15,13 @@ pub trait InstanceTrait {
         surface: Option<SurfaceHandle>,
     ) -> Vec<(usize, PhysicalDeviceInfo)>;
 
-    fn create_device(&self, index: usize, create_info: &DeviceCreateInfo) -> Result<Device>;
+    fn create_device(&self, device_index: usize, create_info: &DeviceCreateInfo) -> Result<Device>;
+
+    fn get_surface_support(
+        &self,
+        device_index: usize,
+        surface_handle: SurfaceHandle,
+    ) -> Option<SwapchainSupportInfo>;
 }
 
 pub trait DeviceTrait {
@@ -44,16 +50,9 @@ pub trait DeviceTrait {
     ) -> Result<RasterPipelineHandle>;
     fn destroy_raster_pipeline(&self, handle: RasterPipelineHandle);
 
-    fn create_swapchain(
+    fn configure_swapchain(
         &self,
-        name: &str,
-        surface: SurfaceHandle,
-        description: &SwapchainDescription,
-    ) -> Result<SwapchainHandle>;
-    fn destroy_swapchain(&self, handle: SwapchainHandle);
-    fn update_swapchain(
-        &self,
-        handle: SwapchainHandle,
+        surface_handle: SurfaceHandle,
         description: &SwapchainDescription,
     ) -> Result<()>;
 
@@ -64,7 +63,7 @@ pub trait DeviceTrait {
 pub trait RenderGraphBuilderTrait {
     fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> Buffer;
     fn create_texture(&mut self, name: &str, description: &TextureDescription) -> Texture;
-    fn acquire_swapchain_texture(&mut self, swapchain: &Swapchain) -> Texture;
+    fn acquire_swapchain_texture(&mut self, surface: &Surface) -> Texture;
 
     fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]);
 

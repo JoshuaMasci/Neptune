@@ -1,19 +1,21 @@
 use crate::traits::{DeviceTrait, RenderGraphBuilderTrait};
 use crate::vulkan::buffer::AshBuffer;
 use crate::vulkan::image::AshImage;
-use crate::vulkan::instance::{AshInstance, AshPhysicalDeviceQueues};
+use crate::vulkan::instance::{AshInstance, AshPhysicalDeviceQueues, AshSurface};
 use crate::vulkan::sampler::AshSampler;
-use crate::vulkan::{AshBufferHandle, AshSamplerHandle, AshTextureHandle, Instance};
+use crate::vulkan::swapchain::{AshSwapchain, SwapchainConfig};
+use crate::vulkan::{
+    AshBufferHandle, AshSamplerHandle, AshSurfaceHandle, AshTextureHandle, Instance,
+};
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineDescription, ComputePipelineHandle,
     DeviceCreateInfo, PhysicalDeviceExtensions, RasterPipelineDescription, RasterPipelineHandle,
     SamplerDescription, SamplerHandle, SurfaceHandle, SwapchainDescription, SwapchainHandle,
-    TextureDescription, TextureHandle,
+    TextureDescription, TextureHandle, TextureUsage,
 };
-use ash::prelude::VkResult;
 use ash::vk;
 use gpu_allocator::MemoryLocation;
-use slotmap::{KeyData, SlotMap};
+use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
@@ -28,18 +30,20 @@ impl Drop for DropDevice {
 
 pub(crate) struct AshDevice {
     #[allow(dead_code)]
-    physical_device: vk::PhysicalDevice,
-    handle: Arc<ash::Device>,
+    pub(crate) physical_device: vk::PhysicalDevice,
+    pub(crate) handle: Arc<ash::Device>,
 
-    primary_queue: vk::Queue,
-    compute_queue: Option<vk::Queue>,
-    transfer_queue: Option<vk::Queue>,
+    pub(crate) primary_queue: vk::Queue,
+    pub(crate) compute_queue: Option<vk::Queue>,
+    pub(crate) transfer_queue: Option<vk::Queue>,
 
-    swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
-    dynamic_rendering_extension: Option<Arc<ash::extensions::khr::DynamicRendering>>,
-    mesh_shading_extension: Option<Arc<ash::extensions::ext::MeshShader>>,
-    acceleration_structure_extension: Option<Arc<ash::extensions::khr::AccelerationStructure>>,
-    ray_tracing_pipeline_extension: Option<Arc<ash::extensions::khr::RayTracingPipeline>>,
+    pub(crate) swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
+    pub(crate) dynamic_rendering_extension: Option<Arc<ash::extensions::khr::DynamicRendering>>,
+    pub(crate) mesh_shading_extension: Option<Arc<ash::extensions::ext::MeshShader>>,
+    pub(crate) acceleration_structure_extension:
+        Option<Arc<ash::extensions::khr::AccelerationStructure>>,
+    pub(crate) ray_tracing_pipeline_extension:
+        Option<Arc<ash::extensions::khr::RayTracingPipeline>>,
 }
 
 impl AshDevice {
@@ -205,6 +209,9 @@ pub struct Device {
     textures: Mutex<SlotMap<AshTextureHandle, Arc<AshImage>>>,
     samplers: Mutex<SlotMap<AshSamplerHandle, Arc<AshSampler>>>,
 
+    surfaces: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurface>>>,
+    swapchains: Mutex<SecondaryMap<AshSurfaceHandle, AshSwapchain>>,
+
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
     #[allow(unused)]
     drop_device: DropDevice,
@@ -258,6 +265,8 @@ impl Device {
             buffers: Mutex::new(SlotMap::with_key()),
             textures: Mutex::new(SlotMap::with_key()),
             samplers: Mutex::new(SlotMap::with_key()),
+            surfaces: instance.surfaces.clone(),
+            swapchains: Mutex::new(SecondaryMap::new()),
             allocator,
             instance: instance.instance.clone(),
             drop_device: DropDevice(device.handle.clone()),
@@ -310,13 +319,16 @@ impl DeviceTrait for Device {
         let is_color = description.format.is_color();
         let format = description.format.to_vk();
 
+        let usage = description.usage
+            | if description.sampler.is_some() {
+                TextureUsage::SAMPLED
+            } else {
+                TextureUsage::empty()
+            };
+
         let create_info = vk::ImageCreateInfo::builder()
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .usage(
-                description
-                    .usage
-                    .to_vk(is_color, description.sampler.is_some()),
-            )
+            .usage(usage.to_vk(is_color))
             .format(format)
             .extent(vk::Extent3D {
                 width: description.size[0],
@@ -425,25 +437,52 @@ impl DeviceTrait for Device {
         todo!()
     }
 
-    fn create_swapchain(
+    fn configure_swapchain(
         &self,
-        name: &str,
-        surface: SurfaceHandle,
-        description: &SwapchainDescription,
-    ) -> crate::Result<SwapchainHandle> {
-        todo!()
-    }
-
-    fn destroy_swapchain(&self, handle: SwapchainHandle) {
-        todo!()
-    }
-
-    fn update_swapchain(
-        &self,
-        handle: SwapchainHandle,
+        surface_handle: SurfaceHandle,
         description: &SwapchainDescription,
     ) -> crate::Result<()> {
-        todo!()
+        let surface_handle = AshSurfaceHandle::from(KeyData::from_ffi(surface_handle));
+
+        let surface = match self.surfaces.lock().unwrap().get(surface_handle) {
+            None => return Err(crate::Error::TempError),
+            Some(surface) => surface.get_handle(),
+        };
+
+        let swapchain_config = SwapchainConfig {
+            image_count: 3, //TODO: choose this
+            format: vk::SurfaceFormatKHR {
+                format: description.surface_format.format.to_vk(),
+                color_space: description.surface_format.color_space.to_vk(),
+            },
+            present_mode: description.present_mode.to_vk(),
+            usage: description.usage.to_vk(true),
+            composite_alpha: description.composite_alpha.to_vk(),
+            transform: vk::SurfaceTransformFlagsKHR::IDENTITY, //TODO: choose this
+        };
+
+        let mut swapchains = self.swapchains.lock().unwrap();
+        if let Some(swapchain) = swapchains.get_mut(surface_handle) {
+            if let Err(_e) = swapchain.update_config(swapchain_config) {
+                return Err(crate::Error::TempError);
+            }
+        } else {
+            match AshSwapchain::new(
+                self.device.handle.clone(),
+                self.device.swapchain_extension.clone(),
+                self.instance.surface_extension.clone(),
+                self.device.physical_device,
+                surface,
+                swapchain_config,
+            ) {
+                Ok(swapchain) => {
+                    swapchains.insert(surface_handle, swapchain);
+                }
+                Err(_e) => return Err(crate::Error::TempError),
+            }
+        }
+
+        Ok(())
     }
 
     fn begin_frame(&self) -> Box<dyn RenderGraphBuilderTrait> {

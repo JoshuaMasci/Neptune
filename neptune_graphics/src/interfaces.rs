@@ -27,7 +27,7 @@ impl Instance {
         &self,
         surface: Option<&Surface>,
         score_function: impl Fn(usize, &PhysicalDeviceInfo) -> Option<u32>,
-    ) -> Option<SelectedDevice> {
+    ) -> Option<PhysicalDevice> {
         let supported_devices = self
             .instance
             .get_supported_devices(surface.map(|surface| surface.0));
@@ -46,7 +46,7 @@ impl Instance {
                 }
             });
 
-        highest_scored_device.map(|highest_scored_device| SelectedDevice {
+        highest_scored_device.map(|highest_scored_device| PhysicalDevice {
             instance: self.instance.clone(),
             device_index: highest_scored_device,
             device_info: supported_devices[highest_scored_device].1.clone(),
@@ -54,19 +54,24 @@ impl Instance {
     }
 }
 
-pub struct SelectedDevice {
+pub struct PhysicalDevice {
     instance: Arc<dyn InstanceTrait>,
     device_index: usize,
     device_info: PhysicalDeviceInfo,
 }
 
-impl SelectedDevice {
+impl PhysicalDevice {
     pub fn index(&self) -> usize {
         self.device_index
     }
 
-    pub fn info(&self) -> PhysicalDeviceInfo {
+    pub fn get_device_info(&self) -> PhysicalDeviceInfo {
         self.device_info.clone()
+    }
+
+    pub fn get_surface_support(&self, surface: &Surface) -> Option<SwapchainSupportInfo> {
+        self.instance
+            .get_surface_support(self.device_index, surface.0)
     }
 
     pub fn create(self, create_info: &DeviceCreateInfo) -> Result<Device> {
@@ -124,15 +129,12 @@ impl Device {
             .map(|handle| RasterPipeline(handle, self.device.clone()))
     }
 
-    pub fn create_swapchain(
+    pub fn configure_swapchain(
         &self,
-        name: &str,
         surface: &Surface,
         description: &SwapchainDescription,
-    ) -> Result<Swapchain> {
-        self.device
-            .create_swapchain(name, surface.0, description)
-            .map(|handle| Swapchain(handle, self.device.clone()))
+    ) -> Result<()> {
+        self.device.configure_swapchain(surface.0, description)
     }
 
     pub fn render_frame(
@@ -226,14 +228,5 @@ impl Drop for RasterPipeline {
     }
 }
 
-pub struct Swapchain(SwapchainHandle, Arc<dyn DeviceTrait>);
-impl Swapchain {
-    pub fn update(&self, description: &SwapchainDescription) -> Result<()> {
-        self.1.update_swapchain(self.0, description)
-    }
-}
-impl Drop for Swapchain {
-    fn drop(&mut self) {
-        self.1.destroy_swapchain(self.0);
-    }
-}
+pub struct RenderGraphBuilder(Box<dyn RenderGraphBuilderTrait>);
+impl RenderGraphBuilder {}

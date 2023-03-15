@@ -2,8 +2,9 @@
 extern crate log;
 
 use neptune_graphics::{
-    AddressMode, AppInfo, BufferDescription, BufferUsage, FilterMode, SamplerDescription,
-    TextureDescription, TextureFormat, TextureUsage,
+    AddressMode, AppInfo, BufferDescription, BufferUsage, CompositeAlphaMode, FilterMode,
+    PresentMode, SamplerDescription, SwapchainDescription, TextureDescription, TextureFormat,
+    TextureUsage,
 };
 use std::default::Default;
 use std::time::Instant;
@@ -14,6 +15,7 @@ pub use winit::{
 };
 
 const APP_NAME: &str = "Neptune Editor";
+const APP_VESRION: [u32; 4] = [0, 0, 1, 0];
 
 fn main() {
     pretty_env_logger::init_timed();
@@ -26,16 +28,18 @@ fn main() {
         .unwrap();
     window.set_maximized(true);
 
-    let device = {
+    let (device, surface) = {
         let new_instance = neptune_graphics::create_vulkan_instance(
             &AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
-            &AppInfo::new(APP_NAME, [0, 0, 1, 0]),
+            &AppInfo::new(APP_NAME, APP_VESRION),
         );
 
-        let surface = new_instance.create_surface("Main Surface", &window).ok();
+        let surface = new_instance
+            .create_surface("Main Surface", &window)
+            .unwrap();
 
         let selected_device = new_instance
-            .select_and_create_device(surface.as_ref(), |index, device_info| {
+            .select_and_create_device(Some(&surface), |index, device_info| {
                 println!("{}: {:#?}", index, device_info);
                 match device_info.device_type {
                     neptune_graphics::DeviceType::Integrated => Some(50),
@@ -45,15 +49,34 @@ fn main() {
             })
             .unwrap();
 
-        let device_info = selected_device.info();
+        let device_info = selected_device.get_device_info();
         println!("Selected: {:#?}", device_info);
-        let create_info = neptune_graphics::DeviceCreateInfo {
-            frames_in_flight_count: 3,
-            features: device_info.features,
-            extensions: device_info.extensions,
-        };
 
-        selected_device.create(&create_info).unwrap()
+        let surface_support_info = selected_device.get_surface_support(&surface).unwrap();
+        println!("Surface Support: {:#?}", surface_support_info);
+
+        let device = selected_device
+            .create(&neptune_graphics::DeviceCreateInfo {
+                frames_in_flight_count: 3,
+                features: device_info.features,
+                extensions: device_info.extensions,
+            })
+            .unwrap();
+
+        //Configure Swapchain
+        device
+            .configure_swapchain(
+                &surface,
+                &SwapchainDescription {
+                    surface_format: surface_support_info.surface_formats[0].clone(),
+                    present_mode: PresentMode::Fifo,
+                    usage: TextureUsage::RENDER_ATTACHMENT | TextureUsage::TRANSFER_DST,
+                    composite_alpha: CompositeAlphaMode::Auto,
+                },
+            )
+            .unwrap();
+
+        (device, surface)
     };
 
     let buffer = device

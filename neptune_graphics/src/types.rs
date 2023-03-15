@@ -121,11 +121,12 @@ pub struct BufferDescription {
 bitflags! {
     pub struct TextureUsage: u32 {
         const RENDER_ATTACHMENT = 1 << 0;
-        const INPUT_ATTACHMENT = 1 << 0;
-        const STORAGE = 1 << 2;
-        const TRANSFER_SRC = 1 << 5;
-        const TRANSFER_DST = 1 << 6;
-        const TRANSFER = (1 << 5) | (1 << 6);
+        const INPUT_ATTACHMENT = 1 << 1;
+        const SAMPLED = 1 << 2;
+        const STORAGE = 1 << 3;
+        const TRANSFER_SRC = 1 << 4;
+        const TRANSFER_DST = 1 << 5;
+        const TRANSFER = (1 << 4) | (1 << 5);
     }
 }
 
@@ -133,6 +134,7 @@ bitflags! {
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum TextureFormat {
     //Color Formats
+    //TODO: which ones of these are actually worth having?
     R8Unorm,
     Rg8Unorm,
     Rgb8Unorm,
@@ -172,6 +174,11 @@ pub enum TextureFormat {
     Rg16Sint,
     Rgb16Sint,
     Rgba16Sint,
+
+    //Swapchain formats (Needed cause of nvidia)
+    Bgra8Unorm,
+    Bgra8Srgb,
+    A2Bgr10Unorm,
 
     //Depth Stencil Formats
     D16Unorm,
@@ -394,9 +401,16 @@ pub struct RasterPipelineDescription<'a> {
 }
 
 #[derive(Default, PartialEq, Eq, Hash, Debug, Clone, Copy)]
+pub enum ColorSpace {
+    #[default]
+    SrgbNonlinear,
+}
+
+#[derive(Default, PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum PresentMode {
     #[default]
     Fifo,
+    FifoRelaxed,
     Immediate,
     Mailbox,
 }
@@ -413,10 +427,24 @@ pub enum CompositeAlphaMode {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct SwapchainDescription {
-    pub format: TextureFormat,
+    pub surface_format: SurfaceFormat,
     pub present_mode: PresentMode,
     pub usage: TextureUsage,
     pub composite_alpha: CompositeAlphaMode,
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct SurfaceFormat {
+    pub format: TextureFormat,
+    pub color_space: ColorSpace,
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct SwapchainSupportInfo {
+    pub surface_formats: Vec<SurfaceFormat>,
+    pub present_modes: Vec<PresentMode>,
+    pub usages: TextureUsage,
+    pub composite_alpha_modes: Vec<CompositeAlphaMode>,
 }
 
 #[derive(Debug, Copy, Clone, Hash)]
