@@ -56,14 +56,13 @@ pub trait DeviceTrait {
         description: &SwapchainDescription,
     ) -> Result<()>;
 
-    fn begin_frame(&self) -> Box<dyn RenderGraphBuilderTrait>;
-    fn end_frame(&self, render_graph: Box<dyn RenderGraphBuilderTrait>) -> Result<()>;
+    fn begin_frame(&self) -> Result<Box<dyn RenderGraphBuilderTrait>>;
 }
 
 pub trait RenderGraphBuilderTrait {
-    fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> Buffer;
-    fn create_texture(&mut self, name: &str, description: &TextureDescription) -> Texture;
-    fn acquire_swapchain_texture(&mut self, surface: &Surface) -> Texture;
+    fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> TransientBuffer;
+    fn create_texture(&mut self, name: &str, description: &TextureDescription) -> TransientTexture;
+    fn acquire_swapchain_texture(&mut self, surface: SurfaceHandle) -> TransientTexture;
 
     fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]);
 
@@ -82,4 +81,6 @@ pub trait RenderGraphBuilderTrait {
         description: &RasterPassDescription,
         raster_commands: &[RasterCommand],
     );
+
+    fn execute_graph(&mut self) -> Result<()>;
 }

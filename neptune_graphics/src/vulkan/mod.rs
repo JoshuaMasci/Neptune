@@ -3,6 +3,7 @@ mod debug_utils;
 mod device;
 mod image;
 mod instance;
+mod render_graph_builder;
 mod sampler;
 mod swapchain;
 
@@ -16,7 +17,6 @@ slotmap::new_key_type! {
     pub struct AshSwapchainHandle;
 }
 
-use crate::TextureFormat::R16Unorm;
 use crate::{
     AddressMode, BorderColor, ColorSpace, CompositeAlphaMode, FilterMode, PresentMode,
     TextureFormat,
@@ -276,7 +276,6 @@ impl crate::PresentMode {
 impl crate::CompositeAlphaMode {
     pub(crate) fn to_vk(&self) -> vk::CompositeAlphaFlagsKHR {
         match self {
-            CompositeAlphaMode::Auto => unimplemented!(),
             CompositeAlphaMode::Opaque => vk::CompositeAlphaFlagsKHR::OPAQUE,
             CompositeAlphaMode::PreMultiplied => vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
             CompositeAlphaMode::PostMultiplied => vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,

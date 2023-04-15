@@ -15,7 +15,7 @@ pub use winit::{
 };
 
 const APP_NAME: &str = "Neptune Editor";
-const APP_VESRION: [u32; 4] = [0, 0, 1, 0];
+const APP_VERSION: [u32; 4] = [0, 0, 1, 0];
 
 fn main() {
     pretty_env_logger::init_timed();
@@ -31,7 +31,7 @@ fn main() {
     let (device, surface) = {
         let new_instance = neptune_graphics::create_vulkan_instance(
             &AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
-            &AppInfo::new(APP_NAME, APP_VESRION),
+            &AppInfo::new(APP_NAME, APP_VERSION),
         );
 
         let surface = new_instance
@@ -71,13 +71,15 @@ fn main() {
                     surface_format: surface_support_info.surface_formats[0].clone(),
                     present_mode: PresentMode::Fifo,
                     usage: TextureUsage::RENDER_ATTACHMENT | TextureUsage::TRANSFER_DST,
-                    composite_alpha: CompositeAlphaMode::Auto,
+                    composite_alpha: CompositeAlphaMode::Opaque,
                 },
             )
             .unwrap();
 
         (device, surface)
     };
+
+    let mut surface = Some(surface);
 
     let buffer = device
         .create_buffer(
@@ -131,7 +133,14 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                device.render_frame(|_render_graph_builder| {}).unwrap();
+                if let Some(surface) = &surface {
+                    device
+                        .render_frame(|render_graph_builder| {
+                            let _swapchain_texture =
+                                render_graph_builder.acquire_swapchain_texture(surface);
+                        })
+                        .unwrap();
+                }
 
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();

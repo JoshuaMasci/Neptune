@@ -2,8 +2,11 @@ use crate::traits::*;
 use crate::types::*;
 use std::sync::Arc;
 
+type InstanceType = crate::vulkan::Instance;
+type DeviceType = crate::vulkan::Device;
+
 pub struct Instance {
-    pub(crate) instance: Arc<dyn InstanceTrait>,
+    pub(crate) instance: Arc<InstanceType>,
 }
 
 impl Instance {
@@ -55,7 +58,7 @@ impl Instance {
 }
 
 pub struct PhysicalDevice {
-    instance: Arc<dyn InstanceTrait>,
+    instance: Arc<InstanceType>,
     device_index: usize,
     device_info: PhysicalDeviceInfo,
 }
@@ -79,7 +82,7 @@ impl PhysicalDevice {
     }
 }
 
-pub struct Surface(SurfaceHandle, Arc<dyn InstanceTrait>);
+pub struct Surface(SurfaceHandle, Arc<InstanceType>);
 impl Drop for Surface {
     fn drop(&mut self) {
         self.1.destroy_surface(self.0);
@@ -87,7 +90,7 @@ impl Drop for Surface {
 }
 
 pub struct Device {
-    pub(crate) device: Arc<dyn DeviceTrait>,
+    pub(crate) device: Arc<DeviceType>,
 }
 
 impl Device {
@@ -137,33 +140,30 @@ impl Device {
         self.device.configure_swapchain(surface.0, description)
     }
 
-    pub fn render_frame(
-        &self,
-        render_fn: impl FnOnce(&mut dyn RenderGraphBuilderTrait),
-    ) -> Result<()> {
-        let mut render_graph = self.device.begin_frame();
-        render_fn(render_graph.as_mut());
-        self.device.end_frame(render_graph)
+    pub fn render_frame(&self, render_fn: impl FnOnce(&mut RenderGraphBuilder)) -> Result<()> {
+        let mut render_graph_builder = RenderGraphBuilder(self.device.begin_frame()?);
+        render_fn(&mut render_graph_builder);
+        render_graph_builder.0.execute_graph()
     }
 }
 
-pub struct PersistentBuffer(pub(crate) BufferHandle, Arc<dyn DeviceTrait>);
+pub struct PersistentBuffer(pub(crate) BufferHandle, Arc<DeviceType>);
 impl Drop for PersistentBuffer {
     fn drop(&mut self) {
         self.1.destroy_buffer(self.0);
     }
 }
 
-pub struct TransientBuffer(usize);
+pub struct TransientBuffer(pub(crate) usize);
 
-pub struct PersistentTexture(pub(crate) TextureHandle, Arc<dyn DeviceTrait>);
+pub struct PersistentTexture(pub(crate) TextureHandle, Arc<DeviceType>);
 impl Drop for PersistentTexture {
     fn drop(&mut self) {
         self.1.destroy_texture(self.0);
     }
 }
 
-pub struct TransientTexture(usize);
+pub struct TransientTexture(pub(crate) usize);
 
 pub enum Buffer {
     Persistent(PersistentBuffer),
@@ -207,21 +207,21 @@ impl Texture {
     }
 }
 
-pub struct Sampler(SamplerHandle, Arc<dyn DeviceTrait>);
+pub struct Sampler(SamplerHandle, Arc<DeviceType>);
 impl Drop for Sampler {
     fn drop(&mut self) {
         self.1.destroy_sampler(self.0);
     }
 }
 
-pub struct ComputePipeline(ComputePipelineHandle, Arc<dyn DeviceTrait>);
+pub struct ComputePipeline(ComputePipelineHandle, Arc<DeviceType>);
 impl Drop for ComputePipeline {
     fn drop(&mut self) {
         self.1.destroy_compute_pipeline(self.0);
     }
 }
 
-pub struct RasterPipeline(RasterPipelineHandle, Arc<dyn DeviceTrait>);
+pub struct RasterPipeline(RasterPipelineHandle, Arc<DeviceType>);
 impl Drop for RasterPipeline {
     fn drop(&mut self) {
         self.1.destroy_raster_pipeline(self.0);
@@ -229,4 +229,16 @@ impl Drop for RasterPipeline {
 }
 
 pub struct RenderGraphBuilder(Box<dyn RenderGraphBuilderTrait>);
-impl RenderGraphBuilder {}
+impl RenderGraphBuilder {
+    pub fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> Buffer {
+        Buffer::Transient(self.0.create_buffer(name, description))
+    }
+
+    pub fn create_texture(&mut self, name: &str, description: &TextureDescription) -> Texture {
+        Texture::Transient(self.0.create_texture(name, description))
+    }
+
+    pub fn acquire_swapchain_texture(&mut self, surface: &Surface) -> Texture {
+        Texture::Transient(self.0.acquire_swapchain_texture(surface.0))
+    }
+}

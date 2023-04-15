@@ -7,8 +7,11 @@ use crate::{
     PhysicalDeviceExtensions, PhysicalDeviceFeatures, PhysicalDeviceInfo, PhysicalDeviceMemory,
     PresentMode, SurfaceFormat, SurfaceHandle, SwapchainSupportInfo, TextureFormat, TextureUsage,
 };
+use std::collections::HashMap;
 
+use crate::vulkan::swapchain::AshSwapchain;
 use ash::vk;
+use log::warn;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use slotmap::{KeyData, SlotMap};
 use std::ffi::{c_char, CStr, CString};
@@ -42,6 +45,17 @@ fn get_device_vendor(vendor_id: u32) -> DeviceVendor {
         0x5132 => DeviceVendor::Qualcomm,
         x => DeviceVendor::Unknown(x),
     }
+}
+
+fn get_driver_version(v: u32) -> String {
+    let major_version = ((v >> 22) & 0x3ff).to_string();
+    let minor_version = ((v >> 14) & 0x0ff).to_string();
+    let patch_version = ((v >> 6) & 0x0ff).to_string();
+    let build_version = (v & 0x003ff).to_string();
+    format!(
+        "{}.{}.{}.{}",
+        major_version, minor_version, patch_version, build_version
+    )
 }
 
 #[derive(Clone)]
@@ -162,7 +176,7 @@ impl AshPhysicalDevice {
             name: c_char_to_string(&properties.device_name),
             device_type: get_device_type(properties.device_type),
             vendor: get_device_vendor(properties.vendor_id),
-            driver: format!("{:x}", properties.driver_version),
+            driver: get_driver_version(properties.driver_version),
             memory: PhysicalDeviceMemory { device_local_bytes },
             features: PhysicalDeviceFeatures {
                 async_compute: compute_queue_family_index.is_some(),
@@ -204,8 +218,8 @@ impl AshPhysicalDevice {
 }
 
 pub(crate) struct AshSurface {
-    handle: vk::SurfaceKHR,
     surface_ext: Arc<ash::extensions::khr::Surface>,
+    handle: vk::SurfaceKHR,
 }
 impl AshSurface {
     pub(crate) fn new(
@@ -229,8 +243,24 @@ impl AshSurface {
 }
 impl Drop for AshSurface {
     fn drop(&mut self) {
+        warn!("Dropping Surface");
+
         unsafe {
             self.surface_ext.destroy_surface(self.handle, None);
+        }
+    }
+}
+
+pub(crate) struct AshSurfaceSwapchains {
+    pub(crate) surface: Arc<AshSurface>,
+    pub(crate) swapchains: HashMap<vk::PhysicalDevice, AshSwapchain>,
+}
+
+impl AshSurfaceSwapchains {
+    fn new(surface: Arc<AshSurface>) -> Self {
+        Self {
+            surface,
+            swapchains: HashMap::new(),
         }
     }
 }
@@ -264,6 +294,8 @@ pub struct AshInstance {
 
 impl Drop for AshInstance {
     fn drop(&mut self) {
+        warn!("Dropping Instance");
+
         //Drop the debug_utils before instance
         drop(self.debug_utils.take());
         unsafe {
@@ -276,7 +308,7 @@ impl Drop for AshInstance {
 pub struct Instance {
     pub(crate) instance: Arc<AshInstance>,
     pub(crate) physical_devices: Vec<AshPhysicalDevice>,
-    pub(crate) surfaces: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurface>>>,
+    pub(crate) surfaces_swapchains: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurfaceSwapchains>>>,
 }
 
 impl Instance {
@@ -357,7 +389,7 @@ impl Instance {
         Ok(Self {
             instance: ash_instance,
             physical_devices,
-            surfaces,
+            surfaces_swapchains: surfaces,
         })
     }
 }
@@ -380,7 +412,7 @@ impl InstanceTrait for Instance {
             display_handle,
             window_handle,
         ) {
-            Ok(surface) => surface,
+            Ok(surface) => Arc::new(surface),
             Err(_e) => return Err(crate::Error::TempError),
         };
 
@@ -390,12 +422,18 @@ impl InstanceTrait for Instance {
         //     let _ = debug_utils.set_object_name(vk::Device::null(), surface.handle, name);
         // }
 
-        Ok(self.surfaces.lock().unwrap().insert(surface).0.as_ffi())
+        Ok(self
+            .surfaces_swapchains
+            .lock()
+            .unwrap()
+            .insert(AshSurfaceSwapchains::new(surface))
+            .0
+            .as_ffi())
     }
 
     fn destroy_surface(&self, handle: SurfaceHandle) {
         drop(
-            self.surfaces
+            self.surfaces_swapchains
                 .lock()
                 .unwrap()
                 .remove(AshSurfaceHandle::from(KeyData::from_ffi(handle))),
@@ -407,11 +445,11 @@ impl InstanceTrait for Instance {
         surface: Option<SurfaceHandle>,
     ) -> Vec<(usize, PhysicalDeviceInfo)> {
         let surface: Option<vk::SurfaceKHR> = surface.and_then(|handle| {
-            self.surfaces
+            self.surfaces_swapchains
                 .lock()
                 .unwrap()
                 .get(AshSurfaceHandle::from(KeyData::from_ffi(handle)))
-                .map(|surface| surface.handle)
+                .map(|surface| surface.surface.handle)
         });
 
         self.physical_devices
@@ -444,11 +482,11 @@ impl InstanceTrait for Instance {
             .get(device_index)
             .map(|physical_device| physical_device.handle);
         let surface = self
-            .surfaces
+            .surfaces_swapchains
             .lock()
             .unwrap()
             .get(AshSurfaceHandle::from(KeyData::from_ffi(surface_handle)))
-            .map(|surface| surface.handle);
+            .map(|surface| surface.surface.handle);
 
         if physical_device.is_none() || surface.is_none() {
             return None;

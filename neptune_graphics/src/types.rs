@@ -418,7 +418,6 @@ pub enum PresentMode {
 #[derive(Default, PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompositeAlphaMode {
     #[default]
-    Auto,
     Opaque,
     PreMultiplied,
     PostMultiplied,

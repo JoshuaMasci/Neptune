@@ -1,6 +1,6 @@
-use crate::vulkan::device::AshDevice;
-use ash::prelude::VkResult;
+use crate::vulkan::instance::AshSurface;
 use ash::vk;
+use log::warn;
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -10,7 +10,6 @@ pub(crate) struct SwapchainConfig {
     pub(crate) present_mode: vk::PresentModeKHR,
     pub(crate) usage: vk::ImageUsageFlags,
     pub(crate) composite_alpha: vk::CompositeAlphaFlagsKHR,
-    pub(crate) transform: vk::SurfaceTransformFlagsKHR,
 }
 
 pub(crate) struct AshSwapchainImage {
@@ -65,26 +64,29 @@ pub(crate) struct AshSwapchainInstance {
 }
 
 impl AshSwapchainInstance {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         device: Arc<ash::Device>,
         swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
         surface: vk::SurfaceKHR,
         swapchain_config: &SwapchainConfig,
         swapchain_extent: vk::Extent2D,
+        transform: vk::SurfaceTransformFlagsKHR,
+        image_count: u32,
         old_swapchain: vk::SwapchainKHR,
     ) -> ash::prelude::VkResult<Self> {
         let handle = unsafe {
             swapchain_extension.create_swapchain(
                 &vk::SwapchainCreateInfoKHR::builder()
                     .surface(surface)
-                    .min_image_count(swapchain_config.image_count)
+                    .min_image_count(image_count)
                     .image_color_space(swapchain_config.format.color_space)
                     .image_format(swapchain_config.format.format)
                     .image_extent(swapchain_extent)
                     .image_array_layers(1)
                     .image_usage(swapchain_config.usage)
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .pre_transform(swapchain_config.transform)
+                    .pre_transform(transform)
                     .composite_alpha(swapchain_config.composite_alpha)
                     .present_mode(swapchain_config.present_mode)
                     .clipped(true)
@@ -113,6 +115,8 @@ impl AshSwapchainInstance {
 
 impl Drop for AshSwapchainInstance {
     fn drop(&mut self) {
+        warn!("Dropping Swapchain");
+
         self.images.clear();
         unsafe {
             self.swapchain_extension
@@ -126,12 +130,14 @@ pub(crate) struct AshSwapchain {
     swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
     surface_extension: Arc<ash::extensions::khr::Surface>,
     physical_device: vk::PhysicalDevice,
-    surface: vk::SurfaceKHR,
 
     current_config: SwapchainConfig,
     current_swapchain: AshSwapchainInstance,
 
     suboptimal: bool,
+
+    //Should drop last
+    surface: Arc<AshSurface>,
 }
 
 impl AshSwapchain {
@@ -140,17 +146,25 @@ impl AshSwapchain {
         swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
         surface_extension: Arc<ash::extensions::khr::Surface>,
         physical_device: vk::PhysicalDevice,
-        surface: vk::SurfaceKHR,
+        surface: Arc<AshSurface>,
         swapchain_config: SwapchainConfig,
     ) -> ash::prelude::VkResult<Self> {
-        let current_extent = get_swapchain_extent(&surface_extension, physical_device, surface)?;
+        let (current_extent, current_transform, image_count) =
+            get_swapchain_extent_transform_count(
+                &surface_extension,
+                physical_device,
+                surface.get_handle(),
+                swapchain_config.image_count,
+            )?;
 
         let current_swapchain = AshSwapchainInstance::new(
             device.clone(),
             swapchain_extension.clone(),
-            surface,
+            surface.get_handle(),
             &swapchain_config,
             current_extent,
+            current_transform,
+            image_count,
             vk::SwapchainKHR::null(),
         )?;
 
@@ -179,15 +193,22 @@ impl AshSwapchain {
     }
 
     pub(crate) fn rebuild(&mut self) -> ash::prelude::VkResult<()> {
-        let current_extent =
-            get_swapchain_extent(&self.surface_extension, self.physical_device, self.surface)?;
+        let (current_extent, current_transform, image_count) =
+            get_swapchain_extent_transform_count(
+                &self.surface_extension,
+                self.physical_device,
+                self.surface.get_handle(),
+                self.current_config.image_count,
+            )?;
 
         self.current_swapchain = AshSwapchainInstance::new(
             self.device.clone(),
             self.swapchain_extension.clone(),
-            self.surface,
+            self.surface.get_handle(),
             &self.current_config,
             current_extent,
+            current_transform,
+            image_count,
             self.current_swapchain.handle,
         )?;
 
@@ -247,24 +268,29 @@ impl AshSwapchain {
     }
 }
 
-fn get_swapchain_extent(
+fn get_swapchain_extent_transform_count(
     surface_extension: &Arc<ash::extensions::khr::Surface>,
     physical_device: vk::PhysicalDevice,
     surface: vk::SurfaceKHR,
-) -> ash::prelude::VkResult<vk::Extent2D> {
+    image_count: u32,
+) -> ash::prelude::VkResult<(vk::Extent2D, vk::SurfaceTransformFlagsKHR, u32)> {
     unsafe {
         let capabilities =
             surface_extension.get_physical_device_surface_capabilities(physical_device, surface)?;
 
-        Ok(vk::Extent2D {
-            width: capabilities.current_extent.width.clamp(
-                capabilities.min_image_extent.width,
-                capabilities.max_image_extent.width,
-            ),
-            height: capabilities.current_extent.height.clamp(
-                capabilities.min_image_extent.height,
-                capabilities.max_image_extent.height,
-            ),
-        })
+        Ok((
+            vk::Extent2D {
+                width: capabilities.current_extent.width.clamp(
+                    capabilities.min_image_extent.width,
+                    capabilities.max_image_extent.width,
+                ),
+                height: capabilities.current_extent.height.clamp(
+                    capabilities.min_image_extent.height,
+                    capabilities.max_image_extent.height,
+                ),
+            },
+            capabilities.current_transform,
+            image_count.clamp(capabilities.min_image_count, capabilities.max_image_count),
+        ))
     }
 }
