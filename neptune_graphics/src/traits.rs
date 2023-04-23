@@ -57,6 +57,29 @@ pub trait DeviceTrait {
     ) -> Result<()>;
 
     fn begin_frame(&self) -> Result<Box<dyn RenderGraphBuilderTrait>>;
+
+    //Render Graph Function
+    fn acquire_swapchain_texture(&mut self, surface: SurfaceHandle) -> TransientTexture;
+
+    fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]);
+
+    fn add_compute_pass(
+        &mut self,
+        name: &str,
+        queue: Queue,
+        pipeline: ComputePipeline,
+        dispatch_size: &ComputeDispatch,
+        resources: &[ShaderResourceAccess],
+    );
+
+    fn add_raster_pass(
+        &mut self,
+        name: &str,
+        description: &RasterPassDescription,
+        raster_commands: &[RasterCommand],
+    );
+
+    fn submit_frame(&mut self) -> Result<()>;
 }
 
 pub trait RenderGraphBuilderTrait {

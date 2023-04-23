@@ -9,10 +9,11 @@ use crate::vulkan::{
     AshBufferHandle, AshSamplerHandle, AshSurfaceHandle, AshTextureHandle, Instance,
 };
 use crate::{
-    BufferDescription, BufferHandle, ComputePipelineDescription, ComputePipelineHandle,
-    DeviceCreateInfo, PhysicalDeviceExtensions, RasterPipelineDescription, RasterPipelineHandle,
-    SamplerDescription, SamplerHandle, SurfaceHandle, SwapchainDescription, TextureDescription,
-    TextureHandle, TextureUsage,
+    BufferDescription, BufferHandle, ComputeDispatch, ComputePipeline, ComputePipelineDescription,
+    ComputePipelineHandle, DeviceCreateInfo, PhysicalDeviceExtensions, Queue, RasterCommand,
+    RasterPassDescription, RasterPipelineDescription, RasterPipelineHandle, SamplerDescription,
+    SamplerHandle, ShaderResourceAccess, SurfaceHandle, SwapchainDescription, TextureDescription,
+    TextureHandle, TextureUsage, Transfer, TransientTexture,
 };
 use ash::vk;
 use gpu_allocator::MemoryLocation;
@@ -524,5 +525,37 @@ impl DeviceTrait for Device {
             self.device.clone(),
             self.surfaces_swapchains.clone(),
         )))
+    }
+
+    fn acquire_swapchain_texture(&mut self, surface: SurfaceHandle) -> TransientTexture {
+        todo!()
+    }
+
+    fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]) {
+        todo!()
+    }
+
+    fn add_compute_pass(
+        &mut self,
+        name: &str,
+        queue: Queue,
+        pipeline: ComputePipeline,
+        dispatch_size: &ComputeDispatch,
+        resources: &[ShaderResourceAccess],
+    ) {
+        todo!()
+    }
+
+    fn add_raster_pass(
+        &mut self,
+        name: &str,
+        description: &RasterPassDescription,
+        raster_commands: &[RasterCommand],
+    ) {
+        todo!()
+    }
+
+    fn submit_frame(&mut self) -> crate::Result<()> {
+        todo!()
     }
 }

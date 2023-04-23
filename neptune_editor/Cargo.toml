@@ -13,5 +13,5 @@ neptune_graphics = { path = "../neptune_graphics" }
 
 log = "0.4"
 pretty_env_logger = "0.4"
-winit = "0.27.4"
+winit = "0.28.3"
 image = "0.24.2"
