@@ -266,6 +266,10 @@ impl AshSwapchain {
 
         Ok(())
     }
+
+    pub(crate) fn get_image(&self, index: u32) -> vk::Image {
+        self.current_swapchain.images[index as usize].handle
+    }
 }
 
 fn get_swapchain_extent_transform_count(

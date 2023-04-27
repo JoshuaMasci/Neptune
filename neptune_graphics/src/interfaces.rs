@@ -140,10 +140,17 @@ impl Device {
         self.device.configure_swapchain(surface.0, description)
     }
 
-    pub fn render_frame(&self, render_fn: impl FnOnce(&mut RenderGraphBuilder)) -> Result<()> {
-        let mut render_graph_builder = RenderGraphBuilder(self.device.begin_frame()?);
-        render_fn(&mut render_graph_builder);
-        render_graph_builder.0.execute_graph()
+    pub fn render_frame(&self, render_fn: impl FnOnce()) -> Result<()> {
+        render_fn();
+        self.device.submit_frame()
+    }
+
+    pub fn acquire_swapchain_texture(&self, surface: &Surface) -> Texture {
+        Texture::Transient(self.device.acquire_swapchain_texture(surface.0))
+    }
+
+    pub fn submit_frame(&self) -> Result<()> {
+        self.device.submit_frame()
     }
 }
 
@@ -225,20 +232,5 @@ pub struct RasterPipeline(RasterPipelineHandle, Arc<DeviceType>);
 impl Drop for RasterPipeline {
     fn drop(&mut self) {
         self.1.destroy_raster_pipeline(self.0);
-    }
-}
-
-pub struct RenderGraphBuilder(Box<dyn RenderGraphBuilderTrait>);
-impl RenderGraphBuilder {
-    pub fn create_buffer(&mut self, name: &str, description: &BufferDescription) -> Buffer {
-        Buffer::Transient(self.0.create_buffer(name, description))
-    }
-
-    pub fn create_texture(&mut self, name: &str, description: &TextureDescription) -> Texture {
-        Texture::Transient(self.0.create_texture(name, description))
-    }
-
-    pub fn acquire_swapchain_texture(&mut self, surface: &Surface) -> Texture {
-        Texture::Transient(self.0.acquire_swapchain_texture(surface.0))
     }
 }

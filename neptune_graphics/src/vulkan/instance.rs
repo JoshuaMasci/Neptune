@@ -290,6 +290,7 @@ pub struct AshInstance {
     pub(crate) surface_extension: Arc<ash::extensions::khr::Surface>,
     pub(crate) debug_utils: Option<Arc<DebugUtils>>,
     pub(crate) handle: ash::Instance,
+    pub(crate) surfaces: Mutex<SlotMap<AshSurfaceHandle, AshSurfaceSwapchains>>,
 }
 
 impl Drop for AshInstance {
@@ -308,7 +309,6 @@ impl Drop for AshInstance {
 pub struct Instance {
     pub(crate) instance: Arc<AshInstance>,
     pub(crate) physical_devices: Vec<AshPhysicalDevice>,
-    pub(crate) surfaces_swapchains: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurfaceSwapchains>>>,
 }
 
 impl Instance {
@@ -377,6 +377,7 @@ impl Instance {
             surface_extension: surface_ext,
             debug_utils,
             handle: instance,
+            surfaces: Mutex::new(SlotMap::with_key()),
         });
 
         let physical_devices = unsafe { ash_instance.handle.enumerate_physical_devices()? }
@@ -384,12 +385,9 @@ impl Instance {
             .map(|handle| AshPhysicalDevice::new(&ash_instance.handle, handle.clone()))
             .collect();
 
-        let surfaces = Arc::new(Mutex::new(SlotMap::with_key()));
-
         Ok(Self {
             instance: ash_instance,
             physical_devices,
-            surfaces_swapchains: surfaces,
         })
     }
 }
@@ -423,7 +421,8 @@ impl InstanceTrait for Instance {
         // }
 
         Ok(self
-            .surfaces_swapchains
+            .instance
+            .surfaces
             .lock()
             .unwrap()
             .insert(AshSurfaceSwapchains::new(surface))
@@ -433,7 +432,8 @@ impl InstanceTrait for Instance {
 
     fn destroy_surface(&self, handle: SurfaceHandle) {
         drop(
-            self.surfaces_swapchains
+            self.instance
+                .surfaces
                 .lock()
                 .unwrap()
                 .remove(AshSurfaceHandle::from(KeyData::from_ffi(handle))),
@@ -445,7 +445,8 @@ impl InstanceTrait for Instance {
         surface: Option<SurfaceHandle>,
     ) -> Vec<(usize, PhysicalDeviceInfo)> {
         let surface: Option<vk::SurfaceKHR> = surface.and_then(|handle| {
-            self.surfaces_swapchains
+            self.instance
+                .surfaces
                 .lock()
                 .unwrap()
                 .get(AshSurfaceHandle::from(KeyData::from_ffi(handle)))
@@ -482,7 +483,8 @@ impl InstanceTrait for Instance {
             .get(device_index)
             .map(|physical_device| physical_device.handle);
         let surface = self
-            .surfaces_swapchains
+            .instance
+            .surfaces
             .lock()
             .unwrap()
             .get(AshSurfaceHandle::from(KeyData::from_ffi(surface_handle)))

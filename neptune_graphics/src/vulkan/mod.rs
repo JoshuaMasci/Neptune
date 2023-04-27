@@ -3,7 +3,6 @@ mod debug_utils;
 mod device;
 mod image;
 mod instance;
-mod render_graph_builder;
 mod sampler;
 mod swapchain;
 

@@ -84,7 +84,7 @@ pub struct PhysicalDeviceInfo {
 
 #[derive(Debug, Clone)]
 pub struct DeviceCreateInfo {
-    pub frames_in_flight_count: u32,
+    pub frames_in_flight_count: usize,
     pub features: PhysicalDeviceFeatures,
     pub extensions: PhysicalDeviceExtensions,
 }

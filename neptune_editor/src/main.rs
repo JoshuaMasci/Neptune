@@ -79,7 +79,7 @@ fn main() {
         (device, surface)
     };
 
-    let mut surface = Some(surface);
+    let surface = Some(surface);
 
     let buffer = device
         .create_buffer(
@@ -134,12 +134,8 @@ fn main() {
             }
             Event::MainEventsCleared => {
                 if let Some(surface) = &surface {
-                    device
-                        .render_frame(|render_graph_builder| {
-                            let _swapchain_texture =
-                                render_graph_builder.acquire_swapchain_texture(surface);
-                        })
-                        .unwrap();
+                    let _surface_texture = device.acquire_swapchain_texture(surface);
+                    device.submit_frame().unwrap();
                 }
 
                 let last_frame_time = last_frame_start.elapsed();

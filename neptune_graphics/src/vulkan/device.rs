@@ -1,8 +1,7 @@
-use crate::traits::{DeviceTrait, RenderGraphBuilderTrait};
+use crate::traits::DeviceTrait;
 use crate::vulkan::buffer::AshBuffer;
 use crate::vulkan::image::AshImage;
 use crate::vulkan::instance::{AshInstance, AshPhysicalDeviceQueues, AshSurfaceSwapchains};
-use crate::vulkan::render_graph_builder::AshRenderGraphBuilder;
 use crate::vulkan::sampler::AshSampler;
 use crate::vulkan::swapchain::{AshSwapchain, SwapchainConfig};
 use crate::vulkan::{
@@ -13,7 +12,7 @@ use crate::{
     ComputePipelineHandle, DeviceCreateInfo, PhysicalDeviceExtensions, Queue, RasterCommand,
     RasterPassDescription, RasterPipelineDescription, RasterPipelineHandle, SamplerDescription,
     SamplerHandle, ShaderResourceAccess, SurfaceHandle, SwapchainDescription, TextureDescription,
-    TextureHandle, TextureUsage, Transfer, TransientTexture,
+    TextureHandle, TextureUsage, Transfer, TransientBuffer, TransientTexture,
 };
 use ash::vk;
 use gpu_allocator::MemoryLocation;
@@ -35,38 +34,11 @@ impl Drop for DropDevice {
 
 #[derive(Clone)]
 pub(crate) struct AshQueue {
-    device: Arc<ash::Device>,
-    pub(crate) queue: vk::Queue,
-    pub(crate) command_pool: vk::CommandPool,
-}
-
-impl AshQueue {
-    fn new(device: Arc<ash::Device>, queue_family_index: u32) -> ash::prelude::VkResult<Self> {
-        Ok(unsafe {
-            Self {
-                queue: device.get_device_queue(queue_family_index, 0),
-                command_pool: device.create_command_pool(
-                    &vk::CommandPoolCreateInfo::builder()
-                        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                        .queue_family_index(queue_family_index),
-                    None,
-                )?,
-                device,
-            }
-        })
-    }
-}
-
-impl Drop for AshQueue {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_command_pool(self.command_pool, None);
-        }
-    }
+    pub(crate) handle: vk::Queue,
+    pub(crate) family_index: u32,
 }
 
 pub(crate) struct AshDevice {
-    #[allow(dead_code)]
     pub(crate) physical_device: vk::PhysicalDevice,
     pub(crate) handle: Arc<ash::Device>,
 
@@ -169,17 +141,25 @@ impl AshDevice {
 
         let handle = Arc::new(device.clone());
 
-        let primary_queue = AshQueue::new(handle.clone(), queues.primary_queue_family_index)?;
+        let primary_queue = AshQueue {
+            handle: unsafe { handle.get_device_queue(queues.primary_queue_family_index, 0) },
+            family_index: queues.primary_queue_family_index,
+        };
 
-        let mut compute_queue: Option<AshQueue> = None;
-        if let Some(compute_queue_family_index) = queues.compute_queue_family_index {
-            compute_queue = Some(AshQueue::new(handle.clone(), compute_queue_family_index)?);
-        }
+        let compute_queue = queues
+            .compute_queue_family_index
+            .map(|family_index| AshQueue {
+                handle: unsafe { handle.get_device_queue(family_index, 0) },
+                family_index,
+            });
 
-        let mut transfer_queue: Option<AshQueue> = None;
-        if let Some(transfer_queue_family_index) = queues.transfer_queue_family_index {
-            transfer_queue = Some(AshQueue::new(handle.clone(), transfer_queue_family_index)?);
-        }
+        let mut transfer_queue: Option<AshQueue> =
+            queues
+                .transfer_queue_family_index
+                .map(|family_index| AshQueue {
+                    handle: unsafe { handle.get_device_queue(family_index, 0) },
+                    family_index,
+                });
 
         let swapchain_extension = Arc::new(ash::extensions::khr::Swapchain::new(instance, &device));
 
@@ -228,6 +208,68 @@ impl AshDevice {
     }
 }
 
+pub(crate) struct DeviceFrame {
+    device: Arc<AshDevice>,
+    primary_command_pool: vk::CommandPool,
+    compute_command_pool: Option<vk::CommandPool>,
+    transfer_command_pool: Option<vk::CommandPool>,
+}
+
+impl DeviceFrame {
+    fn new(device: Arc<AshDevice>) -> ash::prelude::VkResult<Self> {
+        unsafe {
+            let pool_flags = vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER;
+            Ok(Self {
+                primary_command_pool: device.handle.create_command_pool(
+                    &vk::CommandPoolCreateInfo::builder()
+                        .queue_family_index(device.primary_queue.family_index)
+                        .flags(pool_flags),
+                    None,
+                )?,
+                compute_command_pool: device.compute_queue.as_ref().map(|queue| {
+                    device
+                        .handle
+                        .create_command_pool(
+                            &vk::CommandPoolCreateInfo::builder()
+                                .queue_family_index(queue.family_index)
+                                .flags(pool_flags),
+                            None,
+                        )
+                        .unwrap()
+                }),
+                transfer_command_pool: device.transfer_queue.as_ref().map(|queue| {
+                    device
+                        .handle
+                        .create_command_pool(
+                            &vk::CommandPoolCreateInfo::builder()
+                                .queue_family_index(queue.family_index)
+                                .flags(pool_flags),
+                            None,
+                        )
+                        .unwrap()
+                }),
+                device,
+            })
+        }
+    }
+}
+
+impl Drop for DeviceFrame {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .handle
+                .destroy_command_pool(self.primary_command_pool, None);
+            if let Some(command_pool) = self.compute_command_pool.take() {
+                self.device.handle.destroy_command_pool(command_pool, None);
+            }
+            if let Some(command_pool) = self.transfer_command_pool.take() {
+                self.device.handle.destroy_command_pool(command_pool, None);
+            }
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub(crate) enum DeviceCreateError {
     #[error("Vk error: {0}")]
@@ -243,11 +285,13 @@ pub struct Device {
     textures: Mutex<SlotMap<AshTextureHandle, Arc<AshImage>>>,
     samplers: Mutex<SlotMap<AshSamplerHandle, Arc<AshSampler>>>,
 
-    surfaces_swapchains: Arc<Mutex<SlotMap<AshSurfaceHandle, AshSurfaceSwapchains>>>,
+    frames: Vec<Mutex<DeviceFrame>>,
+
+    //Temp Frame Stuff
+    temp_used_surfaces: Mutex<Vec<AshSurfaceHandle>>,
 
     allocator: Arc<Mutex<gpu_allocator::vulkan::Allocator>>,
-    #[allow(unused)]
-    drop_device: DropDevice,
+    _drop_device: DropDevice,
     instance: Arc<AshInstance>,
 }
 
@@ -294,15 +338,23 @@ impl Device {
             Err(e) => return Err(DeviceCreateError::GpuAllocError(e)),
         };
 
+        let _drop_device = DropDevice(device.handle.clone());
+        let device = Arc::new(device);
+
+        let frames = (0..create_info.frames_in_flight_count)
+            .map(|_| unsafe { Mutex::new(DeviceFrame::new(device.clone()).unwrap()) })
+            .collect();
+
         Ok(Self {
             buffers: Mutex::new(SlotMap::with_key()),
             textures: Mutex::new(SlotMap::with_key()),
             samplers: Mutex::new(SlotMap::with_key()),
-            surfaces_swapchains: instance.surfaces_swapchains.clone(),
+            frames,
+            temp_used_surfaces: Mutex::new(vec![]),
             allocator,
             instance: instance.instance.clone(),
-            drop_device: DropDevice(device.handle.clone()),
-            device: Arc::new(device),
+            _drop_device,
+            device,
         })
     }
 }
@@ -487,8 +539,8 @@ impl DeviceTrait for Device {
             composite_alpha: description.composite_alpha.to_vk(),
         };
 
-        let mut surfaces_swapchains = self.surfaces_swapchains.lock().unwrap();
-        if let Some(surface_swapchains) = surfaces_swapchains.get_mut(surface_handle) {
+        let mut surfaces = self.instance.surfaces.lock().unwrap();
+        if let Some(surface_swapchains) = surfaces.get_mut(surface_handle) {
             if let Some(swapchain) = surface_swapchains
                 .swapchains
                 .get_mut(&self.device.physical_device)
@@ -520,23 +572,34 @@ impl DeviceTrait for Device {
         Ok(())
     }
 
-    fn begin_frame(&self) -> crate::Result<Box<dyn RenderGraphBuilderTrait>> {
-        Ok(Box::new(AshRenderGraphBuilder::new(
-            self.device.clone(),
-            self.surfaces_swapchains.clone(),
-        )))
-    }
-
-    fn acquire_swapchain_texture(&mut self, surface: SurfaceHandle) -> TransientTexture {
+    fn create_transient_buffer(
+        &self,
+        name: &str,
+        description: &BufferDescription,
+    ) -> TransientBuffer {
         todo!()
     }
 
-    fn add_transfer_pass(&mut self, name: &str, queue: Queue, transfers: &[Transfer]) {
+    fn create_transient_texture(
+        &self,
+        name: &str,
+        description: &TextureDescription,
+    ) -> TransientTexture {
+        todo!()
+    }
+
+    fn acquire_swapchain_texture(&self, surface: SurfaceHandle) -> TransientTexture {
+        let mut lock = self.temp_used_surfaces.lock().unwrap();
+        lock.push(AshSurfaceHandle::from(KeyData::from_ffi(surface)));
+        TransientTexture(lock.len())
+    }
+
+    fn add_transfer_pass(&self, name: &str, queue: Queue, transfers: &[Transfer]) {
         todo!()
     }
 
     fn add_compute_pass(
-        &mut self,
+        &self,
         name: &str,
         queue: Queue,
         pipeline: ComputePipeline,
@@ -547,7 +610,7 @@ impl DeviceTrait for Device {
     }
 
     fn add_raster_pass(
-        &mut self,
+        &self,
         name: &str,
         description: &RasterPassDescription,
         raster_commands: &[RasterCommand],
@@ -555,7 +618,63 @@ impl DeviceTrait for Device {
         todo!()
     }
 
-    fn submit_frame(&mut self) -> crate::Result<()> {
-        todo!()
+    fn submit_frame(&self) -> crate::Result<()> {
+        let frame = self.frames[0].lock().unwrap();
+        let mut lock = self.temp_used_surfaces.lock().unwrap();
+        lock.clear();
+
+        unsafe {
+            let frame_done_fence = self
+                .device
+                .handle
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+                .unwrap();
+
+            let command_buffer = self
+                .device
+                .handle
+                .allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::builder()
+                        .command_pool(frame.primary_command_pool)
+                        .command_buffer_count(1),
+                )
+                .unwrap()[0];
+
+            self.device
+                .handle
+                .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
+                .unwrap();
+            self.device
+                .handle
+                .end_command_buffer(command_buffer)
+                .unwrap();
+
+            self.device
+                .handle
+                .queue_submit(
+                    self.device.primary_queue.handle,
+                    &[vk::SubmitInfo::builder()
+                        .command_buffers(&[command_buffer])
+                        .build()],
+                    frame_done_fence,
+                )
+                .unwrap();
+
+            self.device
+                .handle
+                .wait_for_fences(
+                    &[frame_done_fence],
+                    true,
+                    std::time::Duration::from_millis(2).as_nanos() as u64,
+                )
+                .unwrap();
+
+            self.device.handle.destroy_fence(frame_done_fence, None);
+            self.device
+                .handle
+                .free_command_buffers(frame.primary_command_pool, &[command_buffer]);
+        }
+
+        Ok(())
     }
 }
