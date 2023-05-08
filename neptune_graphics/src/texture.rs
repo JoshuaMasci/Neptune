@@ -76,6 +76,7 @@ impl TextureFormat {
 }
 
 bitflags! {
+    #[derive(PartialEq, Eq, Debug, Copy, Clone)]
     pub struct TextureUsages: u32 {
         const TRANSFER_SRC = 1 << 0;
         const TRANSFER_DST = 1 << 1;
@@ -88,7 +89,7 @@ bitflags! {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum TextureDimensions {
     D1(u32),
     D2(u32, u32),

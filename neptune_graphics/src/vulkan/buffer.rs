@@ -1,6 +1,7 @@
 use crate::buffer::{BufferDescription, BufferUsages};
 use crate::vulkan::descriptor_set::Binding;
 use ash::vk;
+use gpu_allocator::vulkan::AllocationScheme;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -60,6 +61,7 @@ impl Buffer {
                 requirements,
                 location: description.memory_type.to_gpu_alloc(),
                 linear: true,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })
             .expect("Failed to allocate buffer memory");
 

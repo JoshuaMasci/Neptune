@@ -2,6 +2,7 @@ use crate::MemoryType;
 use bitflags::bitflags;
 
 bitflags! {
+    #[derive(PartialEq, Eq, Debug, Copy, Clone)]
     pub struct BufferUsages: u32 {
         const TRANSFER_SRC = 1 << 0;
         const TRANSFER_DST = 1 << 1;
@@ -11,7 +12,7 @@ bitflags! {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub struct BufferDescription {
     pub size: usize,
     pub usage: BufferUsages,

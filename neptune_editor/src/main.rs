@@ -2,7 +2,7 @@ mod imgui_layer;
 mod shader;
 
 use crate::imgui_layer::ImguiLayer;
-use neptune_core::log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use neptune_graphics::{
     MemoryType, TextureDescription, TextureDimensions, TextureFormat, TextureUsages,
 };
@@ -15,9 +15,9 @@ pub use winit::{
 };
 
 fn main() {
-    neptune_graphics::render_interface_test::test_render_interface();
+    pretty_env_logger::init_timed();
 
-    neptune_core::setup_logger().expect("Failed to init logger");
+    neptune_graphics::render_interface_test::test_render_interface();
 
     let mut event_loop = winit::event_loop::EventLoop::new();
     let window = winit::window::WindowBuilder::new()

@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use imgui::{Context, DrawCmd, DrawCmdParams, DrawData};
 use imgui_winit_support::WinitPlatform;
-use neptune_core::log::warn;
 
 use neptune_graphics::{
     vulkan, BufferDescription, BufferUsages, ColorAttachment, IndexSize, MemoryType, PipelineState,

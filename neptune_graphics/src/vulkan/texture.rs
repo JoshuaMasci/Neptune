@@ -2,6 +2,7 @@ use crate::texture::{TextureDescription, TextureDimensions, TextureFormat, Textu
 use crate::vulkan::descriptor_set::Binding;
 use ash::vk;
 use gpu_allocator::vulkan;
+use gpu_allocator::vulkan::AllocationScheme;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -231,6 +232,7 @@ impl Texture {
                 requirements,
                 location: description.memory_type.to_gpu_alloc(),
                 linear: true,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
             })
             .expect("Failed to allocate image memory");
 

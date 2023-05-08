@@ -1,6 +1,7 @@
 use crate::vulkan::debug_messenger::DebugMessenger;
 use crate::vulkan::Device;
 use ash::vk;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::ffi::CString;
 use std::rc::Rc;
 
@@ -13,7 +14,11 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(window: &winit::window::Window, app_name: &str, validation: bool) -> Self {
+    pub fn new<T: HasRawDisplayHandle + HasRawWindowHandle>(
+        window: &T,
+        app_name: &str,
+        validation: bool,
+    ) -> Self {
         let app_name = CString::new(app_name).unwrap();
         let app_version = vk::make_api_version(0, 0, 0, 0);
 
@@ -33,14 +38,11 @@ impl Instance {
             .map(|raw_name| raw_name.as_ptr())
             .collect();
 
-        let surface_extensions = ash_window::enumerate_required_extensions(window)
-            .expect("Failed to get required surface extensions");
+        let surface_extensions =
+            ash_window::enumerate_required_extensions(window.raw_display_handle())
+                .expect("Failed to get required surface extensions");
 
-        let mut extension_names_raw = surface_extensions
-            .iter()
-            .map(|&ext| ext.as_ptr())
-            .collect::<Vec<_>>();
-
+        let mut extension_names_raw = surface_extensions.to_vec();
         extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
         extension_names_raw
             .push(ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr());
@@ -73,8 +75,14 @@ impl Instance {
 
         let surface_ext = Rc::new(ash::extensions::khr::Surface::new(&entry, &instance));
         let surface = unsafe {
-            ash_window::create_surface(&entry, &instance, window, None)
-                .expect("Failed to create vulkan surface")
+            ash_window::create_surface(
+                &entry,
+                &instance,
+                window.raw_display_handle(),
+                window.raw_window_handle(),
+                None,
+            )
+            .expect("Failed to create vulkan surface")
         };
 
         Self {
