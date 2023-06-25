@@ -1,14 +1,12 @@
 #[macro_use]
 extern crate log;
 
-use neptune_vulkan::ash::vk::Format;
-use neptune_vulkan::{
-    AddressMode, BufferUsage, ColorAttachment, CompositeAlphaMode, DepthStencilAttachment,
-    FilterMode, PresentMode, SamplerCreateInfo, TextureSize, TextureUsage,
-};
+use neptune_vulkan::vk;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::sync::Arc;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
-pub use winit::{
+use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
 };
@@ -26,70 +24,47 @@ fn main() {
         .unwrap();
     window.set_maximized(true);
 
-    let mut instance =
-        neptune_vulkan::Instance::new(APP_NAME).expect("Failed to create vulkan instance");
+    //API Test
+    neptune_vulkan::test_api();
 
-    let surface = instance
-        .create_surface(&window)
-        .expect("Failed to create vulkan surface");
-
-    info!("Available Devices: ");
-    let device = instance
-        .select_and_create_device(Some(&surface), |device_info| {
-            println!("\t\t{:?}", device_info);
-            match device_info.device_type {
-                neptune_vulkan::DeviceType::Integrated => 50,
-                neptune_vulkan::DeviceType::Discrete => 100,
-                neptune_vulkan::DeviceType::Unknown => 0,
-            }
-        })
+    {
+        let _instance = neptune_vulkan::AshInstance::new(
+            &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
+            &neptune_vulkan::AppInfo::new("Neptune Editor", [0, 0, 1, 0]),
+            true,
+            Some(event_loop.raw_display_handle()),
+        )
+        .map(Arc::new)
         .unwrap();
-    info!("Selected Device: {:?}", device.info());
+        let surface = _instance
+            .crate_surface(window.raw_display_handle(), window.raw_window_handle())
+            .unwrap();
 
-    let swapchain = device
-        .create_swapchain(
-            &surface,
-            neptune_vulkan::SwapchainConfig {
-                format: Format::B8G8R8A8_UNORM,
-                present_mode: PresentMode::Fifo,
-                usage: TextureUsage::ATTACHMENT,
-                composite_alpha: CompositeAlphaMode::Auto,
+        let physical_device = unsafe { _instance.core.enumerate_physical_devices() }.unwrap()[0];
+        let _device = neptune_vulkan::AshDevice::new(_instance, physical_device, &[0])
+            .map(Arc::new)
+            .unwrap();
+        let _swapchain = neptune_vulkan::AshSwapchain::new(
+            _device.clone(),
+            surface,
+            neptune_vulkan::AshSwapchainSettings {
+                image_count: 3,
+                format: vk::SurfaceFormatKHR {
+                    format: vk::Format::B8G8R8A8_UNORM,
+                    color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                },
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
+                present_mode: vk::PresentModeKHR::FIFO,
             },
         )
         .unwrap();
+        let _resource_manager = neptune_vulkan::PersistentResourceManager::new(3);
 
-    let buffer = device
-        .create_buffer_with_data(
-            "Test Buffer",
-            BufferUsage::VERTEX | BufferUsage::STORAGE | BufferUsage::UNIFORM,
-            &[0u8; 16],
-        )
-        .unwrap();
-
-    let sampler = device
-        .create_sampler(
-            "Test Sampler",
-            &SamplerCreateInfo {
-                address_mode_u: AddressMode::Repeat,
-                address_mode_v: AddressMode::Repeat,
-                address_mode_w: AddressMode::Repeat,
-                mag_filter: FilterMode::Linear,
-                min_filter: FilterMode::Linear,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-    let texture = device
-        .create_texture_with_data(
-            "Test Texture",
-            TextureUsage::STORAGE,
-            Format::R8G8B8A8_UNORM,
-            [1; 2],
-            Some(&sampler),
-            &[93, 63, 211, 255],
-        )
-        .unwrap();
+        drop(_swapchain);
+        unsafe {
+            _device.instance.surface.destroy_surface(surface, None);
+        }
+    }
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
@@ -97,7 +72,14 @@ fn main() {
     event_loop.run_return(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
-            Event::NewEvents(_) => {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                info!("The close button was pressed; stopping");
+                *control_flow = ControlFlow::Exit
+            }
+            Event::MainEventsCleared => {
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();
 
@@ -108,37 +90,6 @@ fn main() {
                     info!("FPS: {}", frame_count_time.0);
                     frame_count_time = (0, 0.0);
                 }
-            }
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                info!("The close button was pressed; stopping");
-                *control_flow = ControlFlow::Exit
-            }
-            Event::MainEventsCleared => {
-                device.render_frame(|render_graph_builder| {
-                    let swapchain_graph_texture =
-                        render_graph_builder.acquire_swapchain_texture(&swapchain);
-
-                    let depth_texture = render_graph_builder.create_texture(
-                        "Depth Stencil Attachment",
-                        Format::D16_UNORM,
-                        TextureSize::Relative(swapchain_graph_texture, [1.0; 2]),
-                        None,
-                    );
-
-                    let imported_texture = render_graph_builder.import_texture(&texture);
-
-                    render_graph_builder.add_raster_pass(
-                        "Swapchain Raster Pass",
-                        &[ColorAttachment::new_clear(
-                            swapchain_graph_texture,
-                            [0.0; 4],
-                        )],
-                        Some(DepthStencilAttachment::new_clear(depth_texture, (1.0, 0))),
-                    );
-                });
             }
             Event::RedrawRequested(_window_id) => {}
             _ => {}

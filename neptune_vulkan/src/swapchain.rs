@@ -1,341 +1,192 @@
-use crate::{AshDevice, TextureUsage};
-use ash::prelude::VkResult;
+use crate::AshDevice;
 use ash::vk;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-#[derive(Default)]
-pub enum PresentMode {
-    #[default]
-    Fifo,
-    Immediate,
-    Mailbox,
+struct SwapchainInstance {
+    device: Arc<AshDevice>,
+    handle: vk::SwapchainKHR,
+    images: Vec<vk::Image>,
+    views: Vec<vk::ImageView>,
+
+    pub image_format: vk::Format,
+    pub image_color_space: vk::ColorSpaceKHR,
+    pub image_extent: vk::Extent2D,
+    pub image_usage: vk::ImageUsageFlags,
+    pub pre_transform: vk::SurfaceTransformFlagsKHR,
+    pub composite_alpha: vk::CompositeAlphaFlagsKHR,
+    pub present_mode: vk::PresentModeKHR,
 }
 
-impl PresentMode {
-    pub(crate) fn to_vk(&self) -> vk::PresentModeKHR {
-        match self {
-            PresentMode::Fifo => vk::PresentModeKHR::FIFO,
-            PresentMode::Immediate => vk::PresentModeKHR::IMMEDIATE,
-            PresentMode::Mailbox => vk::PresentModeKHR::MAILBOX,
-        }
-    }
-}
+impl SwapchainInstance {
+    fn new(
+        device: Arc<AshDevice>,
+        create_info: &vk::SwapchainCreateInfoKHR,
+    ) -> ash::prelude::VkResult<Self> {
+        let handle = unsafe { device.swapchain.create_swapchain(create_info, None) }?;
 
-#[derive(Default)]
-pub enum CompositeAlphaMode {
-    #[default]
-    Auto,
-    Opaque,
-    PreMultiplied,
-    PostMultiplied,
-    Inherit,
-}
+        let images = unsafe { device.swapchain.get_swapchain_images(handle) }?;
 
-pub struct SwapchainConfig {
-    pub format: vk::Format,
-    pub present_mode: PresentMode,
-    pub usage: TextureUsage,
-    pub composite_alpha: CompositeAlphaMode,
-}
-
-pub(crate) struct AcquiredSwapchainTexture {
-    pub(crate) index: u32,
-    pub(crate) suboptimal: bool,
-}
-
-#[derive(Debug)]
-struct SwapchainCapabilities {
-    capabilities: vk::SurfaceCapabilitiesKHR,
-    formats: Vec<vk::SurfaceFormatKHR>,
-    present_modes: Vec<vk::PresentModeKHR>,
-}
-
-impl SwapchainCapabilities {
-    pub fn new(
-        physical_device: vk::PhysicalDevice,
-        surface: vk::SurfaceKHR,
-        surface_ext: &Arc<ash::extensions::khr::Surface>,
-    ) -> crate::Result<Self> {
-        unsafe {
-            let capabilities = match surface_ext
-                .get_physical_device_surface_capabilities(physical_device, surface)
-            {
-                Ok(capabilities) => capabilities,
-                Err(e) => return Err(crate::Error::VkError(e)),
-            };
-            let formats =
-                match surface_ext.get_physical_device_surface_formats(physical_device, surface) {
-                    Ok(formats) => formats,
-                    Err(e) => return Err(crate::Error::VkError(e)),
-                };
-            let present_modes = match surface_ext
-                .get_physical_device_surface_present_modes(physical_device, surface)
-            {
-                Ok(present_modes) => present_modes,
-                Err(e) => return Err(crate::Error::VkError(e)),
-            };
-
-            Ok(Self {
-                capabilities,
-                formats,
-                present_modes,
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .image(vk::Image::null())
+            .format(create_info.image_format)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
             })
+            .components(vk::ComponentMapping {
+                r: vk::ComponentSwizzle::R,
+                g: vk::ComponentSwizzle::G,
+                b: vk::ComponentSwizzle::B,
+                a: vk::ComponentSwizzle::A,
+            })
+            .build();
+
+        let mut views = Vec::with_capacity(images.len());
+        for &image in images.iter() {
+            views.push(unsafe {
+                device.core.create_image_view(
+                    &vk::ImageViewCreateInfo {
+                        image,
+                        ..image_view_create_info
+                    },
+                    None,
+                )?
+            });
         }
-    }
 
-    pub fn get_size(&self, desired_size: Option<vk::Extent2D>) -> vk::Extent2D {
-        let desired_size = desired_size.unwrap_or(self.capabilities.current_extent);
-        vk::Extent2D::builder()
-            .width(u32::clamp(
-                desired_size.width,
-                self.capabilities.min_image_extent.width,
-                self.capabilities.max_image_extent.width,
-            ))
-            .height(u32::clamp(
-                desired_size.height,
-                self.capabilities.min_image_extent.height,
-                self.capabilities.max_image_extent.height,
-            ))
-            .build()
-    }
-
-    pub fn get_format(&self, desired_format: vk::Format) -> Option<vk::SurfaceFormatKHR> {
-        self.formats
-            .iter()
-            .find(|surface_format| surface_format.format == desired_format)
-            .copied()
-    }
-
-    pub fn get_present_mode(&self, desired_mode: vk::PresentModeKHR) -> Option<vk::PresentModeKHR> {
-        self.present_modes
-            .iter()
-            .find(|&&present_mode| present_mode == desired_mode)
-            .copied()
-    }
-
-    pub fn get_image_count(&self, desired_count: u32) -> u32 {
-        u32::clamp(
-            desired_count,
-            self.capabilities.min_image_count,
-            self.capabilities.max_image_count,
-        )
+        Ok(Self {
+            device,
+            handle,
+            images,
+            views,
+            image_format: create_info.image_format,
+            image_color_space: create_info.image_color_space,
+            image_extent: create_info.image_extent,
+            image_usage: create_info.image_usage,
+            pre_transform: create_info.pre_transform,
+            composite_alpha: create_info.composite_alpha,
+            present_mode: create_info.present_mode,
+        })
     }
 }
 
-pub(crate) struct AshSwapchain {
-    physical_device: vk::PhysicalDevice,
+impl Drop for SwapchainInstance {
+    fn drop(&mut self) {
+        unsafe {
+            self.views
+                .iter()
+                .for_each(|&view| self.device.core.destroy_image_view(view, None));
+            self.device.swapchain.destroy_swapchain(self.handle, None);
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct AshSwapchainSettings {
+    /// Preferred number of swapchain images, actual number will vary
+    pub image_count: u32,
+
+    pub format: vk::SurfaceFormatKHR,
+    pub usage: vk::ImageUsageFlags,
+    pub present_mode: vk::PresentModeKHR,
+}
+
+pub struct AshSwapchain {
     device: Arc<AshDevice>,
     surface: vk::SurfaceKHR,
-    surface_ext: Arc<ash::extensions::khr::Surface>,
-    swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
+    settings: AshSwapchainSettings,
 
-    current_config: SwapchainConfig,
-    current_swapchain: AshSwapchainInstance,
+    current_swapchain: Option<SwapchainInstance>,
 }
 
 impl AshSwapchain {
-    const ACQUIRE_IMAGE_TIMEOUT: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
-
-    pub(crate) fn new(
-        physical_device: vk::PhysicalDevice,
+    pub fn new(
         device: Arc<AshDevice>,
         surface: vk::SurfaceKHR,
-        surface_ext: Arc<ash::extensions::khr::Surface>,
-        swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
-        swapchain_config: SwapchainConfig,
-    ) -> crate::Result<Self> {
-        let current_swapchain = AshSwapchainInstance::new(
-            physical_device,
-            &device,
-            surface,
-            &surface_ext,
-            &swapchain_ext,
-            &swapchain_config,
-            vk::SwapchainKHR::null(),
-        )?;
-
-        Ok(Self {
-            physical_device,
+        settings: AshSwapchainSettings,
+    ) -> ash::prelude::VkResult<Self> {
+        let mut new_self = Self {
             device,
             surface,
-            surface_ext,
-            swapchain_ext,
-            current_config: swapchain_config,
-            current_swapchain,
-        })
+            settings,
+            current_swapchain: None,
+        };
+        new_self.rebuild()?;
+        Ok(new_self)
     }
 
-    pub(crate) fn get_handle(&self) -> vk::SwapchainKHR {
-        self.current_swapchain.handle
-    }
-
-    pub(crate) fn acquire_next_image(
-        &self,
-        image_ready_semaphore: vk::Semaphore,
-    ) -> crate::Result<AcquiredSwapchainTexture> {
-        match unsafe {
-            self.swapchain_ext.acquire_next_image(
-                self.current_swapchain.handle,
-                Self::ACQUIRE_IMAGE_TIMEOUT,
-                image_ready_semaphore,
-                vk::Fence::null(),
-            )
-        } {
-            Ok((index, suboptimal)) => Ok(AcquiredSwapchainTexture { index, suboptimal }),
-            Err(e) => Err(crate::Error::VkError(e)),
-        }
-    }
-
-    pub(crate) fn update(&mut self, swapchain_config: SwapchainConfig) -> crate::Result<()> {
-        self.current_config = swapchain_config;
+    pub fn update_settings(
+        &mut self,
+        settings: AshSwapchainSettings,
+    ) -> ash::prelude::VkResult<()> {
+        self.settings = settings;
         self.rebuild()
     }
 
-    pub(crate) fn rebuild(&mut self) -> crate::Result<()> {
-        self.current_swapchain = AshSwapchainInstance::new(
-            self.physical_device,
-            &self.device,
+    pub fn rebuild(&mut self) -> ash::prelude::VkResult<()> {
+        let (extent, transform, image_count) = get_swapchain_extent_transform_count(
+            &self.device.instance.surface,
+            self.device.physical,
             self.surface,
-            &self.surface_ext,
-            &self.swapchain_ext,
-            &self.current_config,
-            self.current_swapchain.handle,
+            self.settings.image_count,
         )?;
+
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(self.surface)
+            .min_image_count(image_count)
+            .image_format(self.settings.format.format)
+            .image_color_space(self.settings.format.color_space)
+            .image_extent(extent)
+            .image_array_layers(1)
+            .image_usage(self.settings.usage)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(self.settings.present_mode)
+            .clipped(true)
+            .old_swapchain(
+                self.current_swapchain
+                    .as_ref()
+                    .map(|swapchain| swapchain.handle)
+                    .unwrap_or(vk::SwapchainKHR::null()),
+            );
+
+        self.current_swapchain = Some(SwapchainInstance::new(
+            self.device.clone(),
+            &swapchain_create_info,
+        )?);
+
         Ok(())
     }
 }
 
-pub(crate) struct AshSwapchainInstance {
-    device: Arc<AshDevice>,
-    swapchain_ext: Arc<ash::extensions::khr::Swapchain>,
+fn get_swapchain_extent_transform_count(
+    surface_extension: &ash::extensions::khr::Surface,
+    physical_device: vk::PhysicalDevice,
+    surface: vk::SurfaceKHR,
+    image_count: u32,
+) -> ash::prelude::VkResult<(vk::Extent2D, vk::SurfaceTransformFlagsKHR, u32)> {
+    unsafe {
+        let capabilities =
+            surface_extension.get_physical_device_surface_capabilities(physical_device, surface)?;
 
-    pub(crate) handle: vk::SwapchainKHR,
-    pub(crate) textures: Vec<AshSwapchainTexture>,
-}
-
-impl AshSwapchainInstance {
-    fn new(
-        physical_device: vk::PhysicalDevice,
-        device: &Arc<AshDevice>,
-        surface: vk::SurfaceKHR,
-        surface_ext: &Arc<ash::extensions::khr::Surface>,
-        swapchain_ext: &Arc<ash::extensions::khr::Swapchain>,
-        swapchain_config: &SwapchainConfig,
-        old_swapchain: vk::SwapchainKHR,
-    ) -> crate::Result<Self> {
-        let capabilities = SwapchainCapabilities::new(physical_device, surface, surface_ext)?;
-
-        let surface_size = capabilities.get_size(None);
-        let surface_format = capabilities.get_format(swapchain_config.format).unwrap();
-        let present_mode = capabilities
-            .get_present_mode(swapchain_config.present_mode.to_vk())
-            .unwrap();
-        let image_count = capabilities.get_image_count(0);
-
-        let mut image_usage = vk::ImageUsageFlags::TRANSFER_DST;
-
-        if swapchain_config.usage.contains(TextureUsage::ATTACHMENT) {
-            image_usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
-        }
-
-        let composite_alpha_mode = match swapchain_config.composite_alpha {
-            CompositeAlphaMode::Auto => capabilities.capabilities.supported_composite_alpha, //TODO: is this correct for auto
-            _ => todo!("Need to support more than Auto"),
-        };
-
-        let handle = match unsafe {
-            swapchain_ext.create_swapchain(
-                &vk::SwapchainCreateInfoKHR::builder()
-                    .surface(surface)
-                    .min_image_count(image_count)
-                    .image_color_space(surface_format.color_space)
-                    .image_format(surface_format.format)
-                    .image_extent(surface_size)
-                    .image_array_layers(1)
-                    .image_usage(image_usage)
-                    .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .pre_transform(capabilities.capabilities.current_transform)
-                    .composite_alpha(composite_alpha_mode)
-                    .present_mode(present_mode)
-                    .clipped(true)
-                    .old_swapchain(old_swapchain),
-                None,
-            )
-        } {
-            Ok(swapchain) => swapchain,
-            Err(e) => return Err(crate::Error::VkError(e)),
-        };
-
-        let textures: Vec<AshSwapchainTexture> =
-            unsafe { swapchain_ext.get_swapchain_images(handle) }
-                .unwrap()
-                .drain(..)
-                .map(|image| {
-                    AshSwapchainTexture::new(device.clone(), image, surface_format.format).unwrap()
-                })
-                .collect();
-
-        Ok(Self {
-            device: device.clone(),
-            swapchain_ext: swapchain_ext.clone(),
-            handle,
-            textures,
-        })
-    }
-}
-
-impl Drop for AshSwapchainInstance {
-    fn drop(&mut self) {
-        self.textures.clear();
-        unsafe {
-            self.swapchain_ext.destroy_swapchain(self.handle, None);
-        }
-    }
-}
-
-pub struct AshSwapchainTexture {
-    device: Arc<AshDevice>,
-    pub(crate) handle: vk::Image,
-    pub(crate) view: vk::ImageView,
-}
-
-impl AshSwapchainTexture {
-    pub(crate) fn new(
-        device: Arc<AshDevice>,
-        handle: vk::Image,
-        format: vk::Format,
-    ) -> crate::Result<Self> {
-        let view = match unsafe {
-            device.create_image_view(
-                &vk::ImageViewCreateInfo::builder()
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(format)
-                    .image(handle)
-                    .components(vk::ComponentMapping::default())
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    }),
-                None,
-            )
-        } {
-            Ok(view) => view,
-            Err(e) => return Err(crate::Error::VkError(e)),
-        };
-
-        Ok(Self {
-            device,
-            handle,
-            view,
-        })
-    }
-}
-
-impl Drop for AshSwapchainTexture {
-    fn drop(&mut self) {
-        unsafe { self.device.destroy_image_view(self.view, None) }
+        Ok((
+            vk::Extent2D {
+                width: capabilities.current_extent.width.clamp(
+                    capabilities.min_image_extent.width,
+                    capabilities.max_image_extent.width,
+                ),
+                height: capabilities.current_extent.height.clamp(
+                    capabilities.min_image_extent.height,
+                    capabilities.max_image_extent.height,
+                ),
+            },
+            capabilities.current_transform,
+            image_count.clamp(capabilities.min_image_count, capabilities.max_image_count),
+        ))
     }
 }

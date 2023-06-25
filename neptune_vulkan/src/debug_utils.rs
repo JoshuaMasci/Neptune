@@ -2,16 +2,21 @@ use ash::vk;
 use ash::vk::DebugUtilsObjectNameInfoEXT;
 use std::ffi::{CStr, CString};
 
+use log::{error, info, trace, warn};
+
 #[allow(dead_code)]
-pub(crate) struct DebugUtils {
+pub struct DebugUtils {
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_call_back: vk::DebugUtilsMessengerEXT,
 }
 
 impl DebugUtils {
-    pub(crate) fn new(entry: &ash::Entry, instance: &ash::Instance) -> crate::Result<Self> {
+    pub(crate) fn new(
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+    ) -> ash::prelude::VkResult<Self> {
         let debug_utils_loader = ash::extensions::ext::DebugUtils::new(entry, instance);
-        let debug_call_back = match unsafe {
+        let debug_call_back = unsafe {
             debug_utils_loader.create_debug_utils_messenger(
                 &vk::DebugUtilsMessengerCreateInfoEXT::builder()
                     .message_severity(
@@ -27,10 +32,7 @@ impl DebugUtils {
                     )
                     .pfn_user_callback(Some(vulkan_debug_callback)),
                 None,
-            )
-        } {
-            Ok(debug_call_back) => debug_call_back,
-            Err(e) => return Err(crate::Error::VkError(e)),
+            )?
         };
 
         Ok(Self {
@@ -48,7 +50,7 @@ impl DebugUtils {
         let object_name = CString::new(object_name).expect("Failed to create CString");
         unsafe {
             self.debug_utils_loader
-                .debug_utils_set_object_name(
+                .set_debug_utils_object_name(
                     device,
                     &DebugUtilsObjectNameInfoEXT::builder()
                         .object_type(T::TYPE)
