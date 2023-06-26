@@ -1,5 +1,6 @@
 use crate::AshDevice;
 use ash::vk;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 struct SwapchainInstance {
@@ -188,5 +189,21 @@ fn get_swapchain_extent_transform_count(
             capabilities.current_transform,
             image_count.clamp(capabilities.min_image_count, capabilities.max_image_count),
         ))
+    }
+}
+
+#[derive(Default)]
+pub struct SwapchainManager {
+    pub swapchains: HashMap<vk::SurfaceKHR, AshSwapchain>,
+}
+
+impl SwapchainManager {
+    pub fn add_swapchain(&mut self, swapchain: AshSwapchain) {
+        let surface = swapchain.surface;
+        assert!(
+            self.swapchains.insert(surface, swapchain).is_none(),
+            "Swapchain for surface {:?} already exists, this shouldn't happen",
+            surface
+        );
     }
 }

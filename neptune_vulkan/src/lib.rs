@@ -1,200 +1,33 @@
 mod debug_utils;
 mod device;
 mod instance;
+mod render_graph;
 mod swapchain;
 
 //Public Types
 pub use crate::device::AshDevice;
 pub use crate::instance::AppInfo;
 pub use crate::instance::AshInstance;
-pub use crate::swapchain::{AshSwapchain, AshSwapchainSettings};
+pub use crate::render_graph::{
+    BufferAccess, BufferResource, ColorAttachment, DepthStencilAttachment, Framebuffer,
+    ImageAccess, ImageResource, RenderGraph, RenderPass,
+};
+pub use crate::swapchain::{AshSwapchain, AshSwapchainSettings, SwapchainManager};
+
 pub use ash::vk;
 
 use log::warn;
 use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
 
-pub fn test_api() {
-    let pretend_color_image =
-        ImageResource::Persistent(ImageKey::from(slotmap::KeyData::from_ffi(0)));
-    let pretend_depth_stencil_image =
-        ImageResource::Persistent(ImageKey::from(slotmap::KeyData::from_ffi(0)));
-
-    let mut image_usages = HashMap::new();
-    image_usages.insert(
-        pretend_color_image,
-        ImageAccess {
-            write: true,
-            stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-        },
-    );
-    image_usages.insert(
-        pretend_depth_stencil_image,
-        ImageAccess {
-            write: true,
-            stage: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
-            access: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-        },
-    );
-
-    let task = RenderPass {
-        name: "Some Task".to_string(),
-        queue: vk::Queue::null(),
-        buffer_usages: HashMap::new(),
-        image_usages,
-        framebuffer: None,
-        build_cmd_fn: Some(Box::new(
-            move |_device, _command_buffer, _persistent_resources| {
-                // let color_image = persistent_resources.get_image(pretend_color_image).unwrap();
-                // let depth_stencil_image = persistent_resources
-                //     .get_image(pretend_depth_stencil_image)
-                //     .unwrap();
-                //
-                // assert_eq!(color_image.extend, depth_stencil_image.extend);
-                //
-                // let color_info = [vk::RenderingAttachmentInfo::builder()
-                //     .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL) //TODO: get this value
-                //     .image_view(color_image.view)
-                //     .clear_value(vk::ClearValue {
-                //         color: vk::ClearColorValue { float32: [0.0; 4] },
-                //     })
-                //     .load_op(vk::AttachmentLoadOp::CLEAR) //TODO: Must be calculated from ether or not this is used again
-                //     .store_op(vk::AttachmentStoreOp::STORE)
-                //     .build()];
-                //
-                // let depth_stencil_info = vk::RenderingAttachmentInfo::builder()
-                //     .image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-                //     .image_view(depth_stencil_image.view)
-                //     .clear_value(vk::ClearValue {
-                //         depth_stencil: vk::ClearDepthStencilValue {
-                //             depth: 0.0,
-                //             stencil: 0,
-                //         },
-                //     })
-                //     .load_op(vk::AttachmentLoadOp::CLEAR) //TODO: Must be calculated from ether or not this is used again
-                //     .store_op(vk::AttachmentStoreOp::STORE)
-                //     .build();
-                //
-                // let rendering_info = vk::RenderingInfo::builder()
-                //     .color_attachments(&color_info)
-                //     .depth_attachment(&depth_stencil_info)
-                //     .stencil_attachment(&depth_stencil_info)
-                //     .render_area(vk::Rect2D {
-                //         offset: Default::default(),
-                //         extent: color_image.extend,
-                //     });
-                //
-                // unsafe {
-                //     device
-                //         .core
-                //         .cmd_begin_rendering(command_buffer, &rendering_info);
-                // }
-            },
-        )),
-    };
-
-    //Not using this task yet
-    let _ = task;
-}
-
 new_key_type! {
    pub struct BufferKey;
    pub struct ImageKey;
 }
 
-pub struct BufferAccess {
-    write: bool, //TODO: calculate this from stage+access?
-    stage: vk::PipelineStageFlags2,
-    access: vk::AccessFlags2,
+pub struct AshBuffer {
+    handle: vk::Buffer,
 }
-
-pub struct ImageAccess {
-    write: bool, //TODO: calculate this from stage+access+layout?
-    stage: vk::PipelineStageFlags2,
-    access: vk::AccessFlags2,
-    layout: vk::ImageLayout,
-}
-
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum BufferResource {
-    Persistent(BufferKey),
-    Transient(usize),
-}
-
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum ImageResource {
-    Persistent(ImageKey),
-    Transient(usize),
-    Swapchain(usize),
-}
-
-pub type BuildCommandFn = dyn Fn(
-    &AshDevice,
-    vk::CommandBuffer,
-    &mut PersistentResourceManager,
-    // &mut TransientResourceManager,
-    // &SwapchainManager,
-);
-
-pub struct ColorAttachment {
-    pub image: ImageResource,
-    pub clear: Option<[f32; 4]>,
-}
-
-impl ColorAttachment {
-    pub fn new(image: ImageResource) -> Self {
-        Self { image, clear: None }
-    }
-
-    pub fn new_clear(image: ImageResource, clear: [f32; 4]) -> Self {
-        Self {
-            image,
-            clear: Some(clear),
-        }
-    }
-}
-
-pub struct DepthStencilAttachment {
-    pub image: ImageResource,
-    pub clear: Option<(f32, u32)>,
-}
-
-impl DepthStencilAttachment {
-    pub fn new(image: ImageResource) -> Self {
-        Self { image, clear: None }
-    }
-
-    pub fn new_clear(image: ImageResource, clear: (f32, u32)) -> Self {
-        Self {
-            image,
-            clear: Some(clear),
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct Framebuffer {
-    color_attachments: Vec<ColorAttachment>,
-    depth_stencil_attachment: Option<DepthStencilAttachment>,
-    input_attachments: Vec<ImageResource>,
-}
-
-#[derive(Default)]
-pub struct RenderPass {
-    name: String,
-    queue: vk::Queue,
-    buffer_usages: HashMap<BufferResource, BufferAccess>,
-    image_usages: HashMap<ImageResource, ImageAccess>,
-    framebuffer: Option<Framebuffer>,
-    build_cmd_fn: Option<Box<BuildCommandFn>>,
-}
-
-pub const FRAMES_IN_FLIGHT_COUNT: usize = 3;
-
-pub struct AshBuffer {}
 pub struct AshBufferResource {
     buffer: AshBuffer,
 }
@@ -421,7 +254,6 @@ impl PersistentResourceManager {
 }
 
 pub struct TransientResourceManager {}
-pub struct SwapchainManager {}
 
 #[derive(PartialEq)]
 enum LoopState {
@@ -443,36 +275,6 @@ where
             index = length - 1;
         } else {
             index -= 1;
-        }
-    }
-}
-
-struct RenderGraph {
-    passes: Vec<RenderPass>,
-}
-
-fn record_single_queue_render_graph_bad_sync(
-    render_graph: &RenderGraph,
-    device: &AshDevice,
-    command_buffer: vk::CommandBuffer,
-    resource_manager: &mut PersistentResourceManager,
-) {
-    for pass in render_graph.passes.iter() {
-        //Bad Barrier
-        unsafe {
-            device.core.cmd_pipeline_barrier2(
-                command_buffer,
-                &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .build()]),
-            );
-
-            if let Some(build_cmd_fn) = &pass.build_cmd_fn {
-                build_cmd_fn(device, command_buffer, resource_manager);
-            }
         }
     }
 }

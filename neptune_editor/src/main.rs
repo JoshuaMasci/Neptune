@@ -3,6 +3,7 @@ extern crate log;
 
 use neptune_vulkan::vk;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -24,9 +25,6 @@ fn main() {
         .unwrap();
     window.set_maximized(true);
 
-    //API Test
-    neptune_vulkan::test_api();
-
     {
         let _instance = neptune_vulkan::AshInstance::new(
             &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
@@ -41,28 +39,62 @@ fn main() {
             .unwrap();
 
         let physical_device = unsafe { _instance.core.enumerate_physical_devices() }.unwrap()[0];
-        let _device = neptune_vulkan::AshDevice::new(_instance, physical_device, &[0])
+        let device = neptune_vulkan::AshDevice::new(_instance, physical_device, &[0])
             .map(Arc::new)
             .unwrap();
-        let _swapchain = neptune_vulkan::AshSwapchain::new(
-            _device.clone(),
-            surface,
-            neptune_vulkan::AshSwapchainSettings {
-                image_count: 3,
-                format: vk::SurfaceFormatKHR {
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        let mut swapchain_manager = neptune_vulkan::SwapchainManager::default();
+        swapchain_manager.add_swapchain(
+            neptune_vulkan::AshSwapchain::new(
+                device.clone(),
+                surface,
+                neptune_vulkan::AshSwapchainSettings {
+                    image_count: 3,
+                    format: vk::SurfaceFormatKHR {
+                        format: vk::Format::B8G8R8A8_UNORM,
+                        color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                    },
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSFER_DST,
+                    present_mode: vk::PresentModeKHR::FIFO,
                 },
-                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
-                present_mode: vk::PresentModeKHR::FIFO,
-            },
-        )
-        .unwrap();
+            )
+            .unwrap(),
+        );
         let _resource_manager = neptune_vulkan::PersistentResourceManager::new(3);
 
-        drop(_swapchain);
+        let mut render_graph = neptune_vulkan::RenderGraph::default();
+        let swapchain_image = render_graph.acquire_swapchain_image(surface);
+
+        let mut image_usages = HashMap::new();
+        image_usages.insert(
+            swapchain_image,
+            neptune_vulkan::ImageAccess {
+                write: true,
+                stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+            },
+        );
+        let basic_render_pass = neptune_vulkan::RenderPass {
+            name: String::from("Basic Render Pass"),
+            queue: vk::Queue::null(), //TODO: this
+            buffer_usages: Default::default(),
+            image_usages,
+            framebuffer: Some(neptune_vulkan::Framebuffer {
+                color_attachments: vec![neptune_vulkan::ColorAttachment::new_clear(
+                    swapchain_image,
+                    [0.0, 0.0, 0.0, 0.0],
+                )],
+                depth_stencil_attachment: None,
+                input_attachments: vec![],
+            }),
+            build_cmd_fn: Some(Box::new(|_, _, _| info!("Basic Render Pass Cmd Build"))),
+        };
+        render_graph.add_pass(basic_render_pass);
+
+        drop(swapchain_manager);
         unsafe {
-            _device.instance.surface.destroy_surface(surface, None);
+            device.instance.surface.destroy_surface(surface, None);
         }
     }
 
