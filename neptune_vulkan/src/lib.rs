@@ -9,8 +9,9 @@ pub use crate::device::AshDevice;
 pub use crate::instance::AppInfo;
 pub use crate::instance::AshInstance;
 pub use crate::render_graph::{
-    BufferAccess, BufferResource, ColorAttachment, DepthStencilAttachment, Framebuffer,
-    ImageAccess, ImageResource, RenderGraph, RenderPass,
+    BasicRenderGraphExecutor, BufferAccess, BufferResource, ColorAttachment,
+    DepthStencilAttachment, Framebuffer, ImageAccess, ImageResource, RenderGraph,
+    RenderGraphResources, RenderPass,
 };
 pub use crate::swapchain::{AshSwapchain, AshSwapchainSettings, SwapchainManager};
 

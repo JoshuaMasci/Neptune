@@ -7,6 +7,13 @@ pub struct AshRaytracing {
     pub raytracing_pipeline: ash::extensions::khr::RayTracingPipeline,
 }
 
+#[derive(Clone, Debug)]
+pub struct AshQueue {
+    pub family_index: u32,
+    pub handle: vk::Queue,
+    pub flags: vk::QueueFlags,
+}
+
 pub struct AshDevice {
     pub physical: vk::PhysicalDevice,
     pub instance: Arc<AshInstance>,
@@ -15,6 +22,7 @@ pub struct AshDevice {
     pub full_screen_exclusive: Option<ash::extensions::ext::FullScreenExclusive>,
     pub mesh_shading: Option<ash::extensions::ext::MeshShader>,
     pub raytracing: Option<AshRaytracing>,
+    pub queues: Vec<AshQueue>,
 }
 
 impl AshDevice {
@@ -54,6 +62,21 @@ impl AshDevice {
 
         let swapchain = ash::extensions::khr::Swapchain::new(&instance.core, &core);
 
+        let queue_family_properties = unsafe {
+            instance
+                .core
+                .get_physical_device_queue_family_properties(physical_device)
+        };
+
+        let queues = queues
+            .iter()
+            .map(|&family_index| AshQueue {
+                family_index,
+                handle: unsafe { core.get_device_queue(family_index, 0) },
+                flags: queue_family_properties[family_index as usize].queue_flags,
+            })
+            .collect();
+
         Ok(Self {
             physical: physical_device,
             instance,
@@ -62,6 +85,7 @@ impl AshDevice {
             full_screen_exclusive: None,
             mesh_shading: None,
             raytracing: None,
+            queues,
         })
     }
 }

@@ -163,6 +163,28 @@ impl AshSwapchain {
 
         Ok(())
     }
+
+    pub(crate) fn get_handle(&self) -> vk::SwapchainKHR {
+        self.current_swapchain.as_ref().unwrap().handle
+    }
+
+    pub(crate) fn get_image(&self, index: u32) -> vk::Image {
+        self.current_swapchain.as_ref().unwrap().images[index as usize]
+    }
+
+    pub(crate) fn acquire_next_image(
+        &self,
+        image_ready_semaphore: vk::Semaphore,
+    ) -> ash::prelude::VkResult<(u32, bool)> {
+        unsafe {
+            self.device.swapchain.acquire_next_image(
+                self.get_handle(),
+                u64::MAX,
+                image_ready_semaphore,
+                vk::Fence::null(),
+            )
+        }
+    }
 }
 
 fn get_swapchain_extent_transform_count(
