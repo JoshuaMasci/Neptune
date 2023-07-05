@@ -80,6 +80,8 @@ impl AshInstance {
         if enable_debug {
             layer_names_raw.push(validation_layer_name.as_ptr());
             extension_names_raw.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+            extension_names_raw
+                .push(ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr());
         }
 
         let app_info = vk::ApplicationInfo::builder()

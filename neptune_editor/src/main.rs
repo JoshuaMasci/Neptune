@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use neptune_vulkan::vk;
+use neptune_vulkan::{vk, AshInstance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +13,22 @@ use winit::{
 };
 
 const APP_NAME: &str = "Neptune Editor";
+
+fn get_device_local_memory(instance: &AshInstance, physical_device: vk::PhysicalDevice) -> u64 {
+    let properties = unsafe {
+        instance
+            .core
+            .get_physical_device_memory_properties(physical_device)
+    };
+    properties
+        .memory_heaps
+        .iter()
+        .enumerate()
+        .filter(|&(_, heap)| heap.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL))
+        .map(|(index, _)| properties.memory_heaps[index].size)
+        .max()
+        .unwrap_or_default()
+}
 
 fn main() {
     pretty_env_logger::init_timed();
@@ -38,7 +54,36 @@ fn main() {
         .crate_surface(window.raw_display_handle(), window.raw_window_handle())
         .unwrap();
 
-    let physical_device = unsafe { instance.core.enumerate_physical_devices() }.unwrap()[0];
+    let physical_devices = unsafe { instance.core.enumerate_physical_devices() }.unwrap();
+    for (i, &physical_device) in physical_devices.iter().enumerate() {
+        unsafe {
+            let mut properties2 = vk::PhysicalDeviceProperties2::builder();
+            instance
+                .core
+                .get_physical_device_properties2(physical_device, &mut properties2);
+
+            let name = std::ffi::CStr::from_ptr(properties2.properties.device_name.as_ptr());
+            info!("Device Name {}: {:?}", i, name);
+        }
+    }
+
+    let best_physical_device = physical_devices
+        .iter()
+        .max_by_key(|&&physical_device| get_device_local_memory(&instance, physical_device))
+        .expect("Failed to find a physical device");
+
+    let physical_device = *best_physical_device;
+
+    unsafe {
+        let mut properties2 = vk::PhysicalDeviceProperties2::builder();
+        instance
+            .core
+            .get_physical_device_properties2(physical_device, &mut properties2);
+
+        let name = std::ffi::CStr::from_ptr(properties2.properties.device_name.as_ptr());
+        info!("Picked Device: {:?}", name);
+    }
+
     let device = neptune_vulkan::AshDevice::new(instance, physical_device, &[0])
         .map(Arc::new)
         .unwrap();

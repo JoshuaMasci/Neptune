@@ -43,10 +43,9 @@ impl AshDevice {
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-        let mut synchronization2_features =
-            vk::PhysicalDeviceSynchronization2FeaturesKHR::builder()
-                .synchronization2(true)
-                .build();
+        let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::builder()
+            .synchronization2(true)
+            .dynamic_rendering(true);
 
         let core = unsafe {
             instance.core.create_device(
@@ -54,7 +53,7 @@ impl AshDevice {
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_create_infos)
                     .enabled_extension_names(&device_extension_names_raw)
-                    .push_next(&mut synchronization2_features)
+                    .push_next(&mut vulkan_1_3_features)
                     .build(),
                 None,
             )
