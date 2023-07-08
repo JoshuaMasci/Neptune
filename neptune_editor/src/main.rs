@@ -129,7 +129,7 @@ fn main() {
         framebuffer: Some(neptune_vulkan::Framebuffer {
             color_attachments: vec![neptune_vulkan::ColorAttachment::new_clear(
                 swapchain_image,
-                [0.0, 0.0, 0.0, 0.0],
+                [0.29, 0.0, 0.5, 0.0],
             )],
             depth_stencil_attachment: None,
             input_attachments: vec![],
@@ -165,13 +165,7 @@ fn main() {
 
                 //Vulkan Frame
                 graph_executor
-                    .execute_graph(
-                        &render_graph,
-                        &mut neptune_vulkan::RenderGraphResources {
-                            persistent: &mut resource_manager,
-                            swapchain: &mut swapchain_manager,
-                        },
-                    )
+                    .execute_graph(&render_graph, &mut resource_manager, &mut swapchain_manager)
                     .expect("Failed to execute graph");
             }
             Event::RedrawRequested(_window_id) => {}

@@ -3,11 +3,22 @@ use ash::vk;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone)]
+pub struct SwapchainImage {
+    pub index: u32,
+    pub handle: vk::Image,
+    pub view: vk::ImageView,
+
+    pub format: vk::Format,
+    pub extent: vk::Extent2D,
+    pub usage: vk::ImageUsageFlags,
+}
+
 struct SwapchainInstance {
     device: Arc<AshDevice>,
     handle: vk::SwapchainKHR,
-    images: Vec<vk::Image>,
-    views: Vec<vk::ImageView>,
+
+    images: Vec<SwapchainImage>,
 
     pub image_format: vk::Format,
     pub image_color_space: vk::ColorSpaceKHR,
@@ -27,35 +38,42 @@ impl SwapchainInstance {
 
         let images = unsafe { device.swapchain.get_swapchain_images(handle) }?;
 
-        let image_view_create_info = vk::ImageViewCreateInfo::builder()
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .image(vk::Image::null())
-            .format(create_info.image_format)
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .components(vk::ComponentMapping {
-                r: vk::ComponentSwizzle::R,
-                g: vk::ComponentSwizzle::G,
-                b: vk::ComponentSwizzle::B,
-                a: vk::ComponentSwizzle::A,
-            })
-            .build();
+        let mut images = Vec::new();
 
-        let mut views = Vec::with_capacity(images.len());
-        for &image in images.iter() {
-            views.push(unsafe {
+        for (index, &handle) in unsafe { device.swapchain.get_swapchain_images(handle) }?
+            .iter()
+            .enumerate()
+        {
+            let view = unsafe {
                 device.core.create_image_view(
-                    &vk::ImageViewCreateInfo {
-                        image,
-                        ..image_view_create_info
-                    },
+                    &vk::ImageViewCreateInfo::builder()
+                        .image(handle)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(create_info.image_format)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .components(vk::ComponentMapping {
+                            r: vk::ComponentSwizzle::R,
+                            g: vk::ComponentSwizzle::G,
+                            b: vk::ComponentSwizzle::B,
+                            a: vk::ComponentSwizzle::A,
+                        }),
                     None,
                 )?
+            };
+
+            images.push(SwapchainImage {
+                index: index as u32,
+                handle,
+                view,
+                format: create_info.image_format,
+                extent: create_info.image_extent,
+                usage: create_info.image_usage,
             });
         }
 
@@ -63,7 +81,6 @@ impl SwapchainInstance {
             device,
             handle,
             images,
-            views,
             image_format: create_info.image_format,
             image_color_space: create_info.image_color_space,
             image_extent: create_info.image_extent,
@@ -78,9 +95,9 @@ impl SwapchainInstance {
 impl Drop for SwapchainInstance {
     fn drop(&mut self) {
         unsafe {
-            self.views
+            self.images
                 .iter()
-                .for_each(|&view| self.device.core.destroy_image_view(view, None));
+                .for_each(|image| self.device.core.destroy_image_view(image.view, None));
             self.device.swapchain.destroy_swapchain(self.handle, None);
         }
     }
@@ -168,8 +185,8 @@ impl AshSwapchain {
         self.current_swapchain.as_ref().unwrap().handle
     }
 
-    pub(crate) fn get_image(&self, index: u32) -> vk::Image {
-        self.current_swapchain.as_ref().unwrap().images[index as usize]
+    pub(crate) fn get_image(&self, index: u32) -> SwapchainImage {
+        self.current_swapchain.as_ref().unwrap().images[index as usize].clone()
     }
 
     pub(crate) fn acquire_next_image(

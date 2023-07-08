@@ -130,13 +130,50 @@ impl RenderGraph {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct VkImage {
+    handle: vk::Image,
+    view: vk::ImageView,
+    size: vk::Extent2D,
+    format: vk::Format,
+}
+
 pub struct RenderGraphResources<'a> {
-    pub persistent: &'a mut PersistentResourceManager,
-    // &mut TransientResourceManager,
-    pub swapchain: &'a mut SwapchainManager,
+    persistent: &'a mut PersistentResourceManager,
+    swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
+}
+
+impl<'a> RenderGraphResources<'a> {
+    pub fn get_image(&self, resource: ImageResource) -> VkImage {
+        match resource {
+            ImageResource::Persistent(image_key) => {
+                let image = self
+                    .persistent
+                    .get_image(image_key)
+                    .expect("Invalid Image Key");
+                VkImage {
+                    handle: image.handle,
+                    view: image.view,
+                    size: image.extend,
+                    format: image.format,
+                }
+            }
+            ImageResource::Transient(_) => unimplemented!(""),
+            ImageResource::Swapchain(index) => {
+                let swapchain_image = self.swapchain_images[index].clone();
+                VkImage {
+                    handle: swapchain_image.1.handle,
+                    view: swapchain_image.1.view,
+                    size: swapchain_image.1.extent,
+                    format: swapchain_image.1.format,
+                }
+            }
+        }
+    }
 }
 
 use crate::device::AshQueue;
+use crate::swapchain::SwapchainImage;
 use log::info;
 use std::sync::Arc;
 
@@ -204,7 +241,8 @@ impl BasicRenderGraphExecutor {
     pub fn execute_graph(
         &mut self,
         render_graph: &RenderGraph,
-        resources: &mut RenderGraphResources,
+        persistent_resource_manager: &mut PersistentResourceManager,
+        swapchain_manager: &mut SwapchainManager,
     ) -> ash::prelude::VkResult<()> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
 
@@ -238,26 +276,14 @@ impl BasicRenderGraphExecutor {
             }
         }
 
-        let mut last_usage_swapchain: Vec<ImageAccess> = render_graph
-            .swapchain_images
-            .iter()
-            .map(|_| ImageAccess {
-                write: false,
-                stage: vk::PipelineStageFlags2::NONE,
-                access: vk::AccessFlags2::NONE,
-                layout: vk::ImageLayout::UNDEFINED,
-            })
-            .collect();
-
-        let mut swapchain_image_indices: Vec<(vk::SwapchainKHR, vk::Image, u32)> =
+        let mut swapchain_image: Vec<(vk::SwapchainKHR, SwapchainImage)> =
             Vec::with_capacity(render_graph.swapchain_images.len());
         for (surface_handle, swapchain_semaphores) in render_graph
             .swapchain_images
             .iter()
             .zip(self.swapchain_semaphores.iter())
         {
-            let swapchain = resources
-                .swapchain
+            let swapchain = swapchain_manager
                 .swapchains
                 .get_mut(surface_handle)
                 .expect("Failed to find swapchain");
@@ -272,11 +298,7 @@ impl BasicRenderGraphExecutor {
 
             let index = swapchain_result.unwrap().0;
 
-            swapchain_image_indices.push((
-                swapchain.get_handle(),
-                swapchain.get_image(index),
-                index,
-            ));
+            swapchain_image.push((swapchain.get_handle(), swapchain.get_image(index)));
         }
 
         unsafe {
@@ -285,22 +307,8 @@ impl BasicRenderGraphExecutor {
                 .begin_command_buffer(self.command_buffer, &vk::CommandBufferBeginInfo::builder())
                 .unwrap();
 
-            record_single_queue_render_graph_bad_sync(
-                render_graph,
-                &self.device,
-                self.command_buffer,
-                resources,
-            );
-
-            // Transition Swapchain
+            // Transition Swapchain to General
             {
-                let next_swapchain_access = ImageAccess {
-                    write: false,
-                    stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-                    access: vk::AccessFlags2::MEMORY_READ,
-                    layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                };
-
                 let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
@@ -309,23 +317,67 @@ impl BasicRenderGraphExecutor {
                     .level_count(1)
                     .build();
 
-                let mut image_barriers = Vec::with_capacity(render_graph.swapchain_images.len());
-
-                for i in 0..render_graph.swapchain_images.len() {
-                    let last_access = last_usage_swapchain[i].clone();
-                    image_barriers.push(
+                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_image
+                    .iter()
+                    .map(|(_swapchain, image)| {
                         vk::ImageMemoryBarrier2::builder()
-                            .image(swapchain_image_indices[i].1)
-                            .src_stage_mask(last_access.stage)
-                            .src_access_mask(last_access.access)
-                            .old_layout(last_access.layout)
-                            .dst_stage_mask(next_swapchain_access.stage)
-                            .dst_access_mask(next_swapchain_access.access)
-                            .new_layout(next_swapchain_access.layout)
+                            .image(image.handle)
+                            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                            .old_layout(vk::ImageLayout::UNDEFINED)
+                            .new_layout(vk::ImageLayout::GENERAL)
                             .subresource_range(swapchain_subresource_range)
-                            .build(),
-                    );
-                }
+                            .build()
+                    })
+                    .collect();
+
+                self.device.core.cmd_pipeline_barrier2(
+                    self.command_buffer,
+                    &vk::DependencyInfo::builder()
+                        .image_memory_barriers(&image_barriers)
+                        .build(),
+                );
+            }
+
+            let mut resources = RenderGraphResources {
+                persistent: persistent_resource_manager,
+                swapchain_images: &swapchain_image,
+            };
+
+            record_single_queue_render_graph_bad_sync(
+                render_graph,
+                &self.device,
+                self.command_buffer,
+                &mut resources,
+            );
+
+            // Transition Swapchain to Present
+            {
+                let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .build();
+
+                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_image
+                    .iter()
+                    .map(|(_swapchain, image)| {
+                        vk::ImageMemoryBarrier2::builder()
+                            .image(image.handle)
+                            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                            .old_layout(vk::ImageLayout::GENERAL)
+                            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                            .subresource_range(swapchain_subresource_range)
+                            .build()
+                    })
+                    .collect();
 
                 self.device.core.cmd_pipeline_barrier2(
                     self.command_buffer,
@@ -379,17 +431,15 @@ impl BasicRenderGraphExecutor {
                 )
                 .unwrap();
 
-            let mut swapchains = Vec::with_capacity(swapchain_image_indices.len());
-            let mut swapchain_indies = Vec::with_capacity(swapchain_image_indices.len());
-            let mut wait_semaphores = Vec::with_capacity(swapchain_image_indices.len());
+            let mut swapchains = Vec::with_capacity(swapchain_image.len());
+            let mut swapchain_indies = Vec::with_capacity(swapchain_image.len());
+            let mut wait_semaphores = Vec::with_capacity(swapchain_image.len());
 
-            for ((swapchain_handle, _, swapchain_index), swapchain_semaphores) in
-                swapchain_image_indices
-                    .iter()
-                    .zip(self.swapchain_semaphores.iter())
+            for ((swapchain_handle, swapchain_image), swapchain_semaphores) in
+                swapchain_image.iter().zip(self.swapchain_semaphores.iter())
             {
                 swapchains.push(*swapchain_handle);
-                swapchain_indies.push(*swapchain_index);
+                swapchain_indies.push(swapchain_image.index);
                 wait_semaphores.push(swapchain_semaphores.1);
             }
 
@@ -443,9 +493,53 @@ fn record_single_queue_render_graph_bad_sync(
                     .build()]),
             );
 
+            if let Some(framebuffer) = &pass.framebuffer {
+                let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
+
+                let color_attachment = resources.get_image(framebuffer.color_attachments[0].image);
+                let color_clear =
+                    framebuffer.color_attachments[0]
+                        .clear
+                        .map(|color| vk::ClearValue {
+                            color: vk::ClearColorValue { float32: color },
+                        });
+
+                let color_attachments = [vk::RenderingAttachmentInfo::builder()
+                    .image_view(color_attachment.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(if color_clear.is_some() {
+                        vk::AttachmentLoadOp::CLEAR
+                    } else {
+                        vk::AttachmentLoadOp::LOAD
+                    })
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(color_clear.unwrap_or_default())
+                    .build()];
+                rendering_info_builder = rendering_info_builder
+                    .color_attachments(&color_attachments)
+                    .render_area(vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent: color_attachment.size,
+                    });
+
+                device
+                    .core
+                    .cmd_begin_rendering(command_buffer, &rendering_info_builder);
+            }
+
             if let Some(build_cmd_fn) = &pass.build_cmd_fn {
                 build_cmd_fn(device, command_buffer, resources);
+            }
+
+            if pass.framebuffer.is_some() {
+                device.core.cmd_end_rendering(command_buffer);
             }
         }
     }
 }
+
+// Render Graph Executor Evolution
+// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling
+// 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
+// 2. Whole graph evaluation with pass reordering and dead code culling.
+// 3. Multi-Queue execution

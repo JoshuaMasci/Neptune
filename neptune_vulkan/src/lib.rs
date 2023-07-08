@@ -71,9 +71,11 @@ impl AshBufferResourceAccess {
 }
 
 pub struct AshImage {
-    handle: vk::Image,
-    view: vk::ImageView,
-    extend: vk::Extent2D,
+    pub handle: vk::Image,
+    pub view: vk::ImageView,
+    pub extend: vk::Extent2D,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
 }
 pub struct AshImageResource {
     image: AshImage,
