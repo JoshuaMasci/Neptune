@@ -16,10 +16,12 @@ pub use crate::render_graph::{
 pub use crate::swapchain::{AshSwapchain, AshSwapchainSettings, SwapchainManager};
 
 pub use ash::vk;
+pub use gpu_allocator;
 
 use log::warn;
 use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 new_key_type! {
    pub struct BufferKey;
@@ -27,8 +29,62 @@ new_key_type! {
 }
 
 pub struct AshBuffer {
-    handle: vk::Buffer,
+    pub handle: vk::Buffer,
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub location: gpu_allocator::MemoryLocation,
 }
+
+impl AshBuffer {
+    pub fn new(
+        device: &AshDevice,
+        create_info: &vk::BufferCreateInfo,
+        location: gpu_allocator::MemoryLocation,
+    ) -> Self {
+        let handle =
+            unsafe { device.core.create_buffer(create_info, None) }.expect("TODO: return error");
+
+        let requirements = unsafe { device.core.get_buffer_memory_requirements(handle) };
+
+        let allocation = device
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                name: "Buffer Allocation",
+                requirements,
+                location,
+                linear: true,
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+            })
+            .expect("TODO: return error");
+
+        unsafe {
+            device
+                .core
+                .bind_buffer_memory(handle, allocation.memory(), allocation.offset())
+                .expect("TODO: return error");
+        }
+
+        Self {
+            handle,
+            allocation,
+            size: create_info.size,
+            usage: create_info.usage,
+            location,
+        }
+    }
+
+    pub fn delete(self, device: &AshDevice) {
+        unsafe {
+            device.core.destroy_buffer(self.handle, None);
+        };
+
+        let _ = device.allocator.lock().unwrap().free(self.allocation);
+    }
+}
+
 pub struct AshBufferResource {
     buffer: AshBuffer,
 }
@@ -73,10 +129,75 @@ impl AshBufferResourceAccess {
 pub struct AshImage {
     pub handle: vk::Image,
     pub view: vk::ImageView,
+    pub allocation: gpu_allocator::vulkan::Allocation,
     pub extend: vk::Extent2D,
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
+    pub location: gpu_allocator::MemoryLocation,
 }
+
+impl AshImage {
+    pub fn new(
+        device: &AshDevice,
+        create_info: &vk::ImageCreateInfo,
+        view_create_info: &vk::ImageViewCreateInfo,
+        location: gpu_allocator::MemoryLocation,
+    ) -> Self {
+        let handle =
+            unsafe { device.core.create_image(create_info, None) }.expect("TODO: return error");
+
+        let requirements = unsafe { device.core.get_image_memory_requirements(handle) };
+
+        let allocation = device
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                name: "Image Allocation",
+                requirements,
+                location,
+                linear: true,
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+            })
+            .expect("TODO: return error");
+
+        unsafe {
+            device
+                .core
+                .bind_image_memory(handle, allocation.memory(), allocation.offset())
+                .expect("TODO: return error");
+        }
+
+        let mut view_create_info = *view_create_info;
+        view_create_info.image = handle;
+
+        let view = unsafe { device.core.create_image_view(&view_create_info, None) }
+            .expect("TODO: return error");
+
+        Self {
+            handle,
+            view,
+            allocation,
+            extend: vk::Extent2D {
+                width: create_info.extent.width,
+                height: create_info.extent.height,
+            },
+            format: create_info.format,
+            usage: create_info.usage,
+            location,
+        }
+    }
+
+    pub fn delete(self, device: &AshDevice) {
+        unsafe {
+            device.core.destroy_image_view(self.view, None);
+            device.core.destroy_image(self.handle, None);
+        };
+
+        let _ = device.allocator.lock().unwrap().free(self.allocation);
+    }
+}
+
 pub struct AshImageResource {
     image: AshImage,
 }
@@ -133,6 +254,8 @@ pub struct ResourceFrame {
 }
 
 pub struct PersistentResourceManager {
+    device: Arc<AshDevice>,
+
     current_frame_index: usize,
     frames: Vec<ResourceFrame>,
 
@@ -141,8 +264,9 @@ pub struct PersistentResourceManager {
 }
 
 impl PersistentResourceManager {
-    pub fn new(frame_count: usize) -> Self {
+    pub fn new(device: Arc<AshDevice>, frame_count: usize) -> Self {
         Self {
+            device,
             current_frame_index: 0,
             frames: (0..frame_count).map(|_| ResourceFrame::default()).collect(),
             buffers: SlotMap::with_key(),
@@ -252,6 +376,18 @@ impl PersistentResourceManager {
                 "ImageKey({:?}) access was already written this frame, this shouldn't happen",
                 key
             );
+        }
+    }
+}
+
+impl Drop for PersistentResourceManager {
+    fn drop(&mut self) {
+        for (_key, buffer) in self.buffers.drain() {
+            buffer.buffer.delete(&self.device);
+        }
+
+        for (_key, image) in self.images.drain() {
+            image.image.delete(&self.device);
         }
     }
 }

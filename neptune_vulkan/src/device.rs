@@ -1,6 +1,7 @@
 use crate::AshInstance;
 use ash::vk;
-use std::sync::Arc;
+use std::mem::ManuallyDrop;
+use std::sync::{Arc, Mutex};
 
 pub struct AshRaytracing {
     pub acceleration_structure: ash::extensions::khr::AccelerationStructure,
@@ -19,10 +20,10 @@ pub struct AshDevice {
     pub instance: Arc<AshInstance>,
     pub core: ash::Device,
     pub swapchain: ash::extensions::khr::Swapchain,
-    pub full_screen_exclusive: Option<ash::extensions::ext::FullScreenExclusive>,
     pub mesh_shading: Option<ash::extensions::ext::MeshShader>,
     pub raytracing: Option<AshRaytracing>,
     pub queues: Vec<AshQueue>,
+    pub allocator: ManuallyDrop<Mutex<gpu_allocator::vulkan::Allocator>>,
 }
 
 impl AshDevice {
@@ -43,6 +44,9 @@ impl AshDevice {
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
+        let mut vulkan_1_1_features =
+            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::builder()
             .synchronization2(true)
             .dynamic_rendering(true);
@@ -53,6 +57,7 @@ impl AshDevice {
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_create_infos)
                     .enabled_extension_names(&device_extension_names_raw)
+                    .push_next(&mut vulkan_1_1_features)
                     .push_next(&mut vulkan_1_3_features)
                     .build(),
                 None,
@@ -76,15 +81,27 @@ impl AshDevice {
             })
             .collect();
 
+        //TODO: return error
+        let allocator = ManuallyDrop::new(Mutex::new(
+            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
+                instance: instance.core.clone(),
+                device: core.clone(),
+                physical_device,
+                debug_settings: gpu_allocator::AllocatorDebugSettings::default(),
+                buffer_device_address: true,
+            })
+            .expect("Failed to create memeory allocator"),
+        ));
+
         Ok(Self {
             physical: physical_device,
             instance,
             core,
             swapchain,
-            full_screen_exclusive: None,
             mesh_shading: None,
             raytracing: None,
             queues,
+            allocator,
         })
     }
 }
@@ -92,6 +109,7 @@ impl AshDevice {
 impl Drop for AshDevice {
     fn drop(&mut self) {
         unsafe {
+            ManuallyDrop::drop(&mut self.allocator);
             self.core.destroy_device(None);
         }
     }

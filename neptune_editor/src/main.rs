@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use neptune_vulkan::{vk, AshInstance};
+use neptune_vulkan::{vk, AshImage, AshInstance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,6 +37,10 @@ fn main() {
     let window = winit::window::WindowBuilder::new()
         .with_title(APP_NAME)
         .with_resizable(true)
+        .with_inner_size(winit::dpi::PhysicalSize {
+            width: 1600,
+            height: 900,
+        })
         .build(&event_loop)
         .unwrap();
     //window.set_maximized(true);
@@ -104,9 +108,36 @@ fn main() {
         )
         .unwrap(),
     );
-    let mut resource_manager = neptune_vulkan::PersistentResourceManager::new(3);
+    let mut resource_manager = neptune_vulkan::PersistentResourceManager::new(device.clone(), 3);
     let mut graph_executor =
         neptune_vulkan::BasicRenderGraphExecutor::new(device.clone(), 0).unwrap();
+
+    let depth_image = resource_manager.add_image(AshImage::new(
+        &device,
+        &vk::ImageCreateInfo::builder()
+            .format(vk::Format::D32_SFLOAT)
+            .extent(vk::Extent3D {
+                width: 1600,
+                height: 900,
+                depth: 1,
+            })
+            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+            .array_layers(1)
+            .mip_levels(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .image_type(vk::ImageType::TYPE_2D),
+        &vk::ImageViewCreateInfo::builder()
+            .format(vk::Format::D32_SFLOAT)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .view_type(vk::ImageViewType::TYPE_2D),
+        neptune_vulkan::gpu_allocator::MemoryLocation::GpuOnly,
+    ));
 
     let mut render_graph = neptune_vulkan::RenderGraph::default();
     let swapchain_image = render_graph.acquire_swapchain_image(surface);
@@ -131,7 +162,10 @@ fn main() {
                 swapchain_image,
                 [0.29, 0.0, 0.5, 0.0],
             )],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
+                neptune_vulkan::ImageResource::Persistent(depth_image),
+                (1.0, 0),
+            )),
             input_attachments: vec![],
         }),
         build_cmd_fn: None,

@@ -496,30 +496,86 @@ fn record_single_queue_render_graph_bad_sync(
             if let Some(framebuffer) = &pass.framebuffer {
                 let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
 
-                let color_attachment = resources.get_image(framebuffer.color_attachments[0].image);
-                let color_clear =
-                    framebuffer.color_attachments[0]
-                        .clear
-                        .map(|color| vk::ClearValue {
-                            color: vk::ClearColorValue { float32: color },
-                        });
+                let mut extent = None;
+                let mut color_attachments = Vec::new();
 
-                let color_attachments = [vk::RenderingAttachmentInfo::builder()
-                    .image_view(color_attachment.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(if color_clear.is_some() {
-                        vk::AttachmentLoadOp::CLEAR
+                for color_attachment in framebuffer.color_attachments.iter() {
+                    let image = resources.get_image(color_attachment.image);
+
+                    if let Some(extent) = extent {
+                        if extent != image.size {
+                            panic!("Framebuffer color attachment extent does not match");
+                        }
                     } else {
-                        vk::AttachmentLoadOp::LOAD
-                    })
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .clear_value(color_clear.unwrap_or_default())
-                    .build()];
+                        extent = Some(image.size);
+                    }
+
+                    let color_clear = color_attachment.clear.map(|color| vk::ClearValue {
+                        color: vk::ClearColorValue { float32: color },
+                    });
+
+                    color_attachments.push(
+                        vk::RenderingAttachmentInfo::builder()
+                            .image_view(image.view)
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .load_op(if color_clear.is_some() {
+                                vk::AttachmentLoadOp::CLEAR
+                            } else {
+                                vk::AttachmentLoadOp::LOAD
+                            })
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(color_clear.unwrap_or_default())
+                            .build(),
+                    );
+                }
+
+                rendering_info_builder =
+                    rendering_info_builder.color_attachments(&color_attachments);
+
+                let mut depth_stencil_attachment_info = vk::RenderingAttachmentInfo::default();
+
+                if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
+                    let image = resources.get_image(depth_stencil_image.image);
+
+                    if let Some(extent) = extent {
+                        if extent != image.size {
+                            panic!("Framebuffer depth stencil attachment extent does not match");
+                        }
+                    } else {
+                        extent = Some(image.size);
+                    }
+
+                    let color_clear =
+                        depth_stencil_image
+                            .clear
+                            .map(|depth_stencil| vk::ClearValue {
+                                depth_stencil: vk::ClearDepthStencilValue {
+                                    depth: depth_stencil.0,
+                                    stencil: depth_stencil.1,
+                                },
+                            });
+
+                    depth_stencil_attachment_info = vk::RenderingAttachmentInfo::builder()
+                        .image_view(image.view)
+                        .image_layout(vk::ImageLayout::GENERAL)
+                        .load_op(if color_clear.is_some() {
+                            vk::AttachmentLoadOp::CLEAR
+                        } else {
+                            vk::AttachmentLoadOp::LOAD
+                        })
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(color_clear.unwrap_or_default())
+                        .build();
+
+                    rendering_info_builder =
+                        rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
+                }
+
                 rendering_info_builder = rendering_info_builder
                     .color_attachments(&color_attachments)
                     .render_area(vk::Rect2D {
                         offset: vk::Offset2D::default(),
-                        extent: color_attachment.size,
+                        extent: extent.expect("Framebuffer has no attachments"),
                     });
 
                 device
