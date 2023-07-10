@@ -36,8 +36,6 @@ impl SwapchainInstance {
     ) -> ash::prelude::VkResult<Self> {
         let handle = unsafe { device.swapchain.create_swapchain(create_info, None) }?;
 
-        let images = unsafe { device.swapchain.get_swapchain_images(handle) }?;
-
         let mut images = Vec::new();
 
         for (index, &handle) in unsafe { device.swapchain.get_swapchain_images(handle) }?
