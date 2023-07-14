@@ -1,4 +1,7 @@
-use crate::{AshDevice, BufferKey, ImageKey, PersistentResourceManager, SwapchainManager};
+use crate::{
+    AshDevice, BufferKey, ImageKey, PersistentResourceManager, SwapchainManager,
+    TransientResourceManager,
+};
 use ash::vk;
 use std::collections::HashMap;
 
@@ -92,10 +95,17 @@ pub struct TransientBufferDesc {
 }
 
 #[derive(Debug, Clone)]
+pub enum TransientImageSize {
+    Exact(vk::Extent2D),
+    Relative([f32; 2], ImageResource),
+}
+
+#[derive(Debug, Clone)]
 pub struct TransientImageDesc {
-    extent: vk::Extent2D,
-    format: vk::Format,
-    memory_location: gpu_allocator::MemoryLocation,
+    pub size: TransientImageSize,
+    pub format: vk::Format,
+    pub mip_levels: u32,
+    pub memory_location: gpu_allocator::MemoryLocation,
 }
 
 #[derive(Default)]
@@ -132,15 +142,16 @@ impl RenderGraph {
 
 #[derive(Copy, Clone)]
 pub struct VkImage {
-    handle: vk::Image,
-    view: vk::ImageView,
-    size: vk::Extent2D,
-    format: vk::Format,
+    pub handle: vk::Image,
+    pub view: vk::ImageView,
+    pub size: vk::Extent2D,
+    pub format: vk::Format,
 }
 
 pub struct RenderGraphResources<'a> {
     persistent: &'a mut PersistentResourceManager,
-    swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
+    swapchain_images: &'a [(vk::SwapchainKHR, AshSwapchainImage)],
+    transient_images: &'a [VkImage],
 }
 
 impl<'a> RenderGraphResources<'a> {
@@ -158,7 +169,7 @@ impl<'a> RenderGraphResources<'a> {
                     format: image.format,
                 }
             }
-            ImageResource::Transient(_) => unimplemented!(""),
+            ImageResource::Transient(index) => self.transient_images[index].clone(),
             ImageResource::Swapchain(index) => {
                 let swapchain_image = self.swapchain_images[index].clone();
                 VkImage {
@@ -173,7 +184,7 @@ impl<'a> RenderGraphResources<'a> {
 }
 
 use crate::device::AshQueue;
-use crate::swapchain::SwapchainImage;
+use crate::swapchain::AshSwapchainImage;
 use log::info;
 use std::sync::Arc;
 
@@ -242,6 +253,7 @@ impl BasicRenderGraphExecutor {
         &mut self,
         render_graph: &RenderGraph,
         persistent_resource_manager: &mut PersistentResourceManager,
+        transient_resource_manager: &mut TransientResourceManager,
         swapchain_manager: &mut SwapchainManager,
     ) -> ash::prelude::VkResult<()> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
@@ -257,6 +269,8 @@ impl BasicRenderGraphExecutor {
                 .reset_fences(&[self.frame_done_fence])
                 .unwrap();
         }
+
+        transient_resource_manager.flush();
 
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
 
@@ -276,7 +290,7 @@ impl BasicRenderGraphExecutor {
             }
         }
 
-        let mut swapchain_image: Vec<(vk::SwapchainKHR, SwapchainImage)> =
+        let mut swapchain_image: Vec<(vk::SwapchainKHR, AshSwapchainImage)> =
             Vec::with_capacity(render_graph.swapchain_images.len());
         for (surface_handle, swapchain_semaphores) in render_graph
             .swapchain_images
@@ -341,9 +355,16 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
+            let transient_images = transient_resource_manager.resolve_images(
+                persistent_resource_manager,
+                &swapchain_image,
+                &render_graph.transient_images,
+            );
+
             let mut resources = RenderGraphResources {
                 persistent: persistent_resource_manager,
                 swapchain_images: &swapchain_image,
+                transient_images: &transient_images,
             };
 
             record_single_queue_render_graph_bad_sync(
@@ -581,6 +602,7 @@ fn record_single_queue_render_graph_bad_sync(
                 device
                     .core
                     .cmd_begin_rendering(command_buffer, &rendering_info_builder);
+                _ = depth_stencil_attachment_info;
             }
 
             if let Some(build_cmd_fn) = &pass.build_cmd_fn {

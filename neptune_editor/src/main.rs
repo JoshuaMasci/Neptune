@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use neptune_vulkan::{vk, AshImage, AshInstance};
+use neptune_vulkan::{vk, AshInstance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,39 +108,23 @@ fn main() {
         )
         .unwrap(),
     );
-    let mut resource_manager = neptune_vulkan::PersistentResourceManager::new(device.clone(), 3);
+    let mut persistent_resource_manager =
+        neptune_vulkan::PersistentResourceManager::new(device.clone(), 3);
+    let mut transient_resource_manager =
+        neptune_vulkan::TransientResourceManager::new(device.clone());
+
     let mut graph_executor =
         neptune_vulkan::BasicRenderGraphExecutor::new(device.clone(), 0).unwrap();
 
-    let depth_image = resource_manager.add_image(AshImage::new(
-        &device,
-        &vk::ImageCreateInfo::builder()
-            .format(vk::Format::D32_SFLOAT)
-            .extent(vk::Extent3D {
-                width: 1600,
-                height: 900,
-                depth: 1,
-            })
-            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
-            .array_layers(1)
-            .mip_levels(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .image_type(vk::ImageType::TYPE_2D),
-        &vk::ImageViewCreateInfo::builder()
-            .format(vk::Format::D32_SFLOAT)
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .view_type(vk::ImageViewType::TYPE_2D),
-        neptune_vulkan::gpu_allocator::MemoryLocation::GpuOnly,
-    ));
-
     let mut render_graph = neptune_vulkan::RenderGraph::default();
+
     let swapchain_image = render_graph.acquire_swapchain_image(surface);
+    let depth_image = render_graph.create_transient_image(neptune_vulkan::TransientImageDesc {
+        size: neptune_vulkan::TransientImageSize::Relative([1.0; 2], swapchain_image),
+        format: vk::Format::D32_SFLOAT,
+        mip_levels: 1,
+        memory_location: neptune_vulkan::gpu_allocator::MemoryLocation::GpuOnly,
+    });
 
     let mut image_usages = HashMap::new();
     image_usages.insert(
@@ -163,7 +147,7 @@ fn main() {
                 [0.29, 0.0, 0.5, 0.0],
             )],
             depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
-                neptune_vulkan::ImageResource::Persistent(depth_image),
+                depth_image,
                 (1.0, 0),
             )),
             input_attachments: vec![],
@@ -199,7 +183,12 @@ fn main() {
 
                 //Vulkan Frame
                 graph_executor
-                    .execute_graph(&render_graph, &mut resource_manager, &mut swapchain_manager)
+                    .execute_graph(
+                        &render_graph,
+                        &mut persistent_resource_manager,
+                        &mut transient_resource_manager,
+                        &mut swapchain_manager,
+                    )
                     .expect("Failed to execute graph");
             }
             Event::RedrawRequested(_window_id) => {}

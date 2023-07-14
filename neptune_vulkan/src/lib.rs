@@ -11,13 +11,15 @@ pub use crate::instance::AshInstance;
 pub use crate::render_graph::{
     BasicRenderGraphExecutor, BufferAccess, BufferResource, ColorAttachment,
     DepthStencilAttachment, Framebuffer, ImageAccess, ImageResource, RenderGraph,
-    RenderGraphResources, RenderPass,
+    RenderGraphResources, RenderPass, TransientImageDesc, TransientImageSize,
 };
 pub use crate::swapchain::{AshSwapchain, AshSwapchainSettings, SwapchainManager};
 
 pub use ash::vk;
 pub use gpu_allocator;
 
+use crate::render_graph::VkImage;
+use crate::swapchain::AshSwapchainImage;
 use log::warn;
 use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
@@ -126,6 +128,19 @@ impl AshBufferResourceAccess {
     }
 }
 
+pub fn vk_format_get_aspect_flags(format: vk::Format) -> vk::ImageAspectFlags {
+    match format {
+        vk::Format::D16_UNORM | vk::Format::D32_SFLOAT | vk::Format::X8_D24_UNORM_PACK32 => {
+            vk::ImageAspectFlags::DEPTH
+        }
+        vk::Format::S8_UINT => vk::ImageAspectFlags::STENCIL,
+        vk::Format::D32_SFLOAT_S8_UINT | vk::Format::D24_UNORM_S8_UINT => {
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        }
+        _ => vk::ImageAspectFlags::COLOR,
+    }
+}
+
 pub struct AshImage {
     pub handle: vk::Image,
     pub view: vk::ImageView,
@@ -186,6 +201,39 @@ impl AshImage {
             usage: create_info.usage,
             location,
         }
+    }
+
+    pub fn new_desc(
+        device: &AshDevice,
+        desc: &TransientImageDesc,
+        resolved_extent: vk::Extent2D,
+    ) -> Self {
+        Self::new(
+            device,
+            &vk::ImageCreateInfo::builder()
+                .format(desc.format)
+                .extent(vk::Extent3D {
+                    width: resolved_extent.width,
+                    height: resolved_extent.height,
+                    depth: 1,
+                })
+                .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                .array_layers(1)
+                .mip_levels(desc.mip_levels)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .image_type(vk::ImageType::TYPE_2D),
+            &vk::ImageViewCreateInfo::builder()
+                .format(desc.format)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk_format_get_aspect_flags(desc.format),
+                    base_mip_level: 0,
+                    level_count: desc.mip_levels,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .view_type(vk::ImageViewType::TYPE_2D),
+            desc.memory_location,
+        )
     }
 
     pub fn delete(self, device: &AshDevice) {
@@ -392,7 +440,93 @@ impl Drop for PersistentResourceManager {
     }
 }
 
-pub struct TransientResourceManager {}
+pub struct TransientResourceManager {
+    device: Arc<AshDevice>,
+
+    transient_images: Vec<AshImage>,
+}
+
+impl TransientResourceManager {
+    pub fn new(device: Arc<AshDevice>) -> Self {
+        Self {
+            device,
+            transient_images: vec![],
+        }
+    }
+
+    fn resolve_images(
+        &mut self,
+        persistent: &mut PersistentResourceManager,
+        swapchain_images: &[(vk::SwapchainKHR, AshSwapchainImage)],
+        transient_image_descriptions: &[TransientImageDesc],
+    ) -> Vec<VkImage> {
+        let mut transient_images = Vec::with_capacity(transient_image_descriptions.len());
+
+        for image_description in transient_image_descriptions {
+            let image_extent = get_transient_image_size(
+                image_description.size.clone(),
+                persistent,
+                swapchain_images,
+                transient_image_descriptions,
+            );
+
+            let image = AshImage::new_desc(&self.device, image_description, image_extent);
+
+            let vk_image = VkImage {
+                handle: image.handle,
+                view: image.view,
+                size: image.extend,
+                format: image.format,
+            };
+
+            self.transient_images.push(image);
+            transient_images.push(vk_image);
+        }
+
+        transient_images
+    }
+
+    fn flush(&mut self) {
+        for image in self.transient_images.drain(..) {
+            image.delete(&self.device);
+        }
+    }
+}
+
+impl Drop for TransientResourceManager {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+fn get_transient_image_size(
+    size: TransientImageSize,
+    persistent: &PersistentResourceManager,
+    swapchain_images: &[(vk::SwapchainKHR, AshSwapchainImage)],
+    transient_image_descriptions: &[TransientImageDesc],
+) -> vk::Extent2D {
+    match size {
+        TransientImageSize::Exact(extent) => extent,
+        TransientImageSize::Relative(scale, target) => {
+            let mut extent = match target {
+                ImageResource::Persistent(image_key) => {
+                    persistent.get_image(image_key).as_ref().unwrap().extend
+                }
+                ImageResource::Transient(index) => get_transient_image_size(
+                    transient_image_descriptions[index].size.clone(),
+                    persistent,
+                    swapchain_images,
+                    transient_image_descriptions,
+                ),
+                ImageResource::Swapchain(index) => swapchain_images[index].1.extent,
+            };
+            extent.width = ((extent.width as f32) * scale[0]) as u32;
+            extent.height = ((extent.height as f32) * scale[1]) as u32;
+
+            extent
+        }
+    }
+}
 
 #[derive(PartialEq)]
 enum LoopState {

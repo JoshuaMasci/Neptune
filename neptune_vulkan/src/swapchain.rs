@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct SwapchainImage {
+pub struct AshSwapchainImage {
     pub index: u32,
     pub handle: vk::Image,
     pub view: vk::ImageView,
@@ -18,7 +18,7 @@ struct SwapchainInstance {
     device: Arc<AshDevice>,
     handle: vk::SwapchainKHR,
 
-    images: Vec<SwapchainImage>,
+    images: Vec<AshSwapchainImage>,
 
     pub image_format: vk::Format,
     pub image_color_space: vk::ColorSpaceKHR,
@@ -65,7 +65,7 @@ impl SwapchainInstance {
                 )?
             };
 
-            images.push(SwapchainImage {
+            images.push(AshSwapchainImage {
                 index: index as u32,
                 handle,
                 view,
@@ -183,7 +183,7 @@ impl AshSwapchain {
         self.current_swapchain.as_ref().unwrap().handle
     }
 
-    pub(crate) fn get_image(&self, index: u32) -> SwapchainImage {
+    pub(crate) fn get_image(&self, index: u32) -> AshSwapchainImage {
         self.current_swapchain.as_ref().unwrap().images[index as usize].clone()
     }
 
