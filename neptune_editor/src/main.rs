@@ -1,3 +1,5 @@
+mod triangle_pass;
+
 #[macro_use]
 extern crate log;
 
@@ -43,7 +45,6 @@ fn main() {
         })
         .build(&event_loop)
         .unwrap();
-    //window.set_maximized(true);
 
     //Vulkan Start
     let instance = neptune_vulkan::AshInstance::new(
@@ -113,12 +114,22 @@ fn main() {
     let mut transient_resource_manager =
         neptune_vulkan::TransientResourceManager::new(device.clone());
 
+    let triangle_pass = crate::triangle_pass::TrianglePass::new(
+        device.clone(),
+        &mut persistent_resource_manager,
+        vk::Format::B8G8R8A8_UNORM,
+        vk::Format::D32_SFLOAT,
+    );
+
     let mut graph_executor =
         neptune_vulkan::BasicRenderGraphExecutor::new(device.clone(), 0).unwrap();
 
     let mut render_graph = neptune_vulkan::RenderGraph::default();
 
     let swapchain_image = render_graph.acquire_swapchain_image(surface);
+
+    triangle_pass.build_render_graph(&mut render_graph, swapchain_image);
+
     let depth_image = render_graph.create_transient_image(neptune_vulkan::TransientImageDesc {
         size: neptune_vulkan::TransientImageSize::Relative([1.0; 2], swapchain_image),
         format: vk::Format::D32_SFLOAT,
@@ -126,35 +137,35 @@ fn main() {
         memory_location: neptune_vulkan::gpu_allocator::MemoryLocation::GpuOnly,
     });
 
-    let mut image_usages = HashMap::new();
-    image_usages.insert(
-        swapchain_image,
-        neptune_vulkan::ImageAccess {
-            write: true,
-            stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-            access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-        },
-    );
-    let basic_render_pass = neptune_vulkan::RenderPass {
-        name: String::from("Basic Render Pass"),
-        queue: vk::Queue::null(), //TODO: this
-        buffer_usages: Default::default(),
-        image_usages,
-        framebuffer: Some(neptune_vulkan::Framebuffer {
-            color_attachments: vec![neptune_vulkan::ColorAttachment::new_clear(
-                swapchain_image,
-                [0.29, 0.0, 0.5, 0.0],
-            )],
-            depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
-                depth_image,
-                (1.0, 0),
-            )),
-            input_attachments: vec![],
-        }),
-        build_cmd_fn: None,
-    };
-    render_graph.add_pass(basic_render_pass);
+    // let mut image_usages = HashMap::new();
+    // image_usages.insert(
+    //     swapchain_image,
+    //     neptune_vulkan::ImageAccess {
+    //         write: true,
+    //         stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+    //         access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+    //         layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+    //     },
+    // );
+    // let basic_render_pass = neptune_vulkan::RenderPass {
+    //     name: String::from("Basic Render Pass"),
+    //     queue: vk::Queue::null(), //TODO: this
+    //     buffer_usages: Default::default(),
+    //     image_usages,
+    //     framebuffer: Some(neptune_vulkan::Framebuffer {
+    //         color_attachments: vec![neptune_vulkan::ColorAttachment::new_clear(
+    //             swapchain_image,
+    //             [0.29, 0.0, 0.5, 0.0],
+    //         )],
+    //         depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
+    //             depth_image,
+    //             (1.0, 0),
+    //         )),
+    //         input_attachments: vec![],
+    //     }),
+    //     build_cmd_fn: None,
+    // };
+    // render_graph.add_pass(basic_render_pass);
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);

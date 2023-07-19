@@ -9,7 +9,7 @@ pub use crate::device::AshDevice;
 pub use crate::instance::AppInfo;
 pub use crate::instance::AshInstance;
 pub use crate::render_graph::{
-    BasicRenderGraphExecutor, BufferAccess, BufferResource, ColorAttachment,
+    BasicRenderGraphExecutor, BufferAccess, BufferResource, BuildCommandFn, ColorAttachment,
     DepthStencilAttachment, Framebuffer, ImageAccess, ImageResource, RenderGraph,
     RenderGraphResources, RenderPass, TransientImageDesc, TransientImageSize,
 };
@@ -20,7 +20,7 @@ pub use gpu_allocator;
 
 use crate::render_graph::VkImage;
 use crate::swapchain::AshSwapchainImage;
-use log::warn;
+use log::{info, warn};
 use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
 use std::sync::Arc;

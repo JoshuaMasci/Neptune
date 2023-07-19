@@ -1,5 +1,5 @@
 use crate::{
-    AshDevice, BufferKey, ImageKey, PersistentResourceManager, SwapchainManager,
+    AshBuffer, AshDevice, BufferKey, ImageKey, PersistentResourceManager, SwapchainManager,
     TransientResourceManager,
 };
 use ash::vk;
@@ -179,6 +179,16 @@ impl<'a> RenderGraphResources<'a> {
                     format: swapchain_image.1.format,
                 }
             }
+        }
+    }
+
+    pub fn get_buffer(&self, resource: BufferResource) -> &AshBuffer {
+        match resource {
+            BufferResource::Persistent(buffer_key) => self
+                .persistent
+                .get_buffer(buffer_key)
+                .expect("render pass tried to access invalid persistent buffer"),
+            BufferResource::Transient(_) => todo!("Impliment transient buffers"),
         }
     }
 }
@@ -592,17 +602,38 @@ fn record_single_queue_render_graph_bad_sync(
                         rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
                 }
 
+                let extent = extent.expect("Framebuffer has no attachments");
+
+                let render_area = vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent,
+                };
+
                 rendering_info_builder = rendering_info_builder
                     .color_attachments(&color_attachments)
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D::default(),
-                        extent: extent.expect("Framebuffer has no attachments"),
-                    });
+                    .render_area(render_area);
 
                 device
                     .core
                     .cmd_begin_rendering(command_buffer, &rendering_info_builder);
                 _ = depth_stencil_attachment_info;
+
+                device.core.cmd_set_viewport(
+                    command_buffer,
+                    0,
+                    &[vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: extent.width as f32,
+                        height: extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    }],
+                );
+
+                device
+                    .core
+                    .cmd_set_scissor(command_buffer, 0, &[render_area])
             }
 
             if let Some(build_cmd_fn) = &pass.build_cmd_fn {
@@ -619,5 +650,6 @@ fn record_single_queue_render_graph_bad_sync(
 // Render Graph Executor Evolution
 // 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling
 // 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
-// 2. Whole graph evaluation with pass reordering and dead code culling.
+// 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
+// 4. Sub resource tracking. Allowing image levels/layers and buffer regions to be transition and accessed in parallel
