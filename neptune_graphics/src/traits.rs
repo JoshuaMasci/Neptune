@@ -1,4 +1,5 @@
 use crate::interfaces::*;
+use crate::render_graph::RenderGraph;
 use crate::types::*;
 
 pub trait InstanceTrait {
@@ -25,67 +26,48 @@ pub trait InstanceTrait {
 }
 
 pub trait DeviceTrait {
-    fn create_buffer(&self, name: &str, description: &BufferDescription) -> Result<BufferHandle>;
-    fn destroy_buffer(&self, handle: BufferHandle);
+    fn create_buffer(
+        &mut self,
+        name: &str,
+        description: &BufferDescription,
+    ) -> Result<BufferHandle>;
+    fn destroy_buffer(&mut self, handle: BufferHandle);
 
-    fn create_texture(&self, name: &str, description: &TextureDescription)
-        -> Result<TextureHandle>;
-    fn destroy_texture(&self, handle: TextureHandle);
+    fn create_texture(
+        &mut self,
+        name: &str,
+        description: &TextureDescription<[u32; 2]>,
+    ) -> Result<TextureHandle>;
+    fn destroy_texture(&mut self, handle: TextureHandle);
 
-    fn create_sampler(&self, name: &str, description: &SamplerDescription)
-        -> Result<SamplerHandle>;
-    fn destroy_sampler(&self, handle: SamplerHandle);
+    fn create_sampler(
+        &mut self,
+        name: &str,
+        description: &SamplerDescription,
+    ) -> Result<SamplerHandle>;
+    fn destroy_sampler(&mut self, handle: SamplerHandle);
 
     fn create_compute_pipeline(
-        &self,
+        &mut self,
         name: &str,
         description: &ComputePipelineDescription,
     ) -> Result<ComputePipelineHandle>;
-    fn destroy_compute_pipeline(&self, handle: ComputePipelineHandle);
+    fn destroy_compute_pipeline(&mut self, handle: ComputePipelineHandle);
 
     fn create_raster_pipeline(
-        &self,
+        &mut self,
         name: &str,
         description: &RasterPipelineDescription,
     ) -> Result<RasterPipelineHandle>;
-    fn destroy_raster_pipeline(&self, handle: RasterPipelineHandle);
+    fn destroy_raster_pipeline(&mut self, handle: RasterPipelineHandle);
 
-    fn configure_swapchain(
-        &self,
+    fn configure_surface(
+        &mut self,
         surface_handle: SurfaceHandle,
         description: &SwapchainDescription,
     ) -> Result<()>;
+    fn release_surface(&mut self, surface_handle: SurfaceHandle);
 
     //Render Graph Function
-    fn create_transient_buffer(
-        &self,
-        name: &str,
-        description: &BufferDescription,
-    ) -> TransientBuffer;
-    fn create_transient_texture(
-        &self,
-        name: &str,
-        description: &TextureDescription,
-    ) -> TransientTexture;
-    fn acquire_swapchain_texture(&self, surface: SurfaceHandle) -> TransientTexture;
-
-    fn add_transfer_pass(&self, name: &str, queue: Queue, transfers: &[Transfer]);
-
-    fn add_compute_pass(
-        &self,
-        name: &str,
-        queue: Queue,
-        pipeline: ComputePipeline,
-        dispatch_size: &ComputeDispatch,
-        resources: &[ShaderResourceAccess],
-    );
-
-    fn add_raster_pass(
-        &self,
-        name: &str,
-        description: &RasterPassDescription,
-        raster_commands: &[RasterCommand],
-    );
-
-    fn submit_frame(&self) -> Result<()>;
+    fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<()>;
 }

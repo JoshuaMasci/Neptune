@@ -1,4 +1,3 @@
-use crate::interfaces::Device;
 use crate::traits::InstanceTrait;
 use crate::vulkan::debug_utils::DebugUtils;
 use crate::vulkan::AshSurfaceHandle;
@@ -7,9 +6,7 @@ use crate::{
     PhysicalDeviceExtensions, PhysicalDeviceFeatures, PhysicalDeviceInfo, PhysicalDeviceMemory,
     PresentMode, SurfaceFormat, SurfaceHandle, SwapchainSupportInfo, TextureFormat, TextureUsage,
 };
-use std::collections::HashMap;
 
-use crate::vulkan::swapchain::AshSwapchain;
 use ash::vk;
 use log::warn;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -60,7 +57,7 @@ fn get_driver_version(v: u32) -> String {
 
 #[derive(Clone)]
 pub(crate) struct AshPhysicalDeviceQueues {
-    pub(crate) primary_queue_family_index: u32,
+    pub(crate) graphics_queue_family_index: u32,
     pub(crate) compute_queue_family_index: Option<u32>,
     pub(crate) transfer_queue_family_index: Option<u32>,
 }
@@ -134,10 +131,6 @@ impl AshPhysicalDevice {
         };
 
         let extensions = PhysicalDeviceExtensions {
-            dynamic_rendering: supports_extension(
-                &supported_extensions,
-                ash::extensions::khr::DynamicRendering::name(),
-            ),
             mesh_shading: supports_extension(
                 &supported_extensions,
                 ash::extensions::ext::MeshShader::name(),
@@ -189,7 +182,7 @@ impl AshPhysicalDevice {
             handle,
             info,
             queues: AshPhysicalDeviceQueues {
-                primary_queue_family_index,
+                graphics_queue_family_index: primary_queue_family_index,
                 compute_queue_family_index,
                 transfer_queue_family_index,
             },
@@ -206,7 +199,7 @@ impl AshPhysicalDevice {
             unsafe {
                 surface_ext.get_physical_device_surface_support(
                     self.handle,
-                    self.queues.primary_queue_family_index,
+                    self.queues.graphics_queue_family_index,
                     surface,
                 )
             }
@@ -219,6 +212,8 @@ impl AshPhysicalDevice {
 
 pub(crate) struct AshSurface {
     surface_ext: Arc<ash::extensions::khr::Surface>,
+
+    name: String,
     handle: vk::SurfaceKHR,
 }
 impl AshSurface {
@@ -226,6 +221,7 @@ impl AshSurface {
         entry: &ash::Entry,
         instance: &ash::Instance,
         surface_ext: Arc<ash::extensions::khr::Surface>,
+        name: String,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
     ) -> ash::prelude::VkResult<Self> {
@@ -234,6 +230,7 @@ impl AshSurface {
                 ash_window::create_surface(entry, instance, display_handle, window_handle, None)
             }?,
             surface_ext,
+            name,
         })
     }
 
@@ -247,20 +244,6 @@ impl Drop for AshSurface {
 
         unsafe {
             self.surface_ext.destroy_surface(self.handle, None);
-        }
-    }
-}
-
-pub(crate) struct AshSurfaceSwapchains {
-    pub(crate) surface: Arc<AshSurface>,
-    pub(crate) swapchains: HashMap<vk::PhysicalDevice, AshSwapchain>,
-}
-
-impl AshSurfaceSwapchains {
-    fn new(surface: Arc<AshSurface>) -> Self {
-        Self {
-            surface,
-            swapchains: HashMap::new(),
         }
     }
 }
@@ -287,10 +270,10 @@ fn get_surface_extensions(extension_names_raw: &mut Vec<*const c_char>) {
 
 pub struct AshInstance {
     pub(crate) entry: ash::Entry,
-    pub(crate) surface_extension: Arc<ash::extensions::khr::Surface>,
+    pub(crate) core: ash::Instance,
+    pub(crate) surface: Arc<ash::extensions::khr::Surface>,
     pub(crate) debug_utils: Option<Arc<DebugUtils>>,
-    pub(crate) handle: ash::Instance,
-    pub(crate) surfaces: Mutex<SlotMap<AshSurfaceHandle, AshSurfaceSwapchains>>,
+    pub(crate) surfaces: Mutex<SlotMap<AshSurfaceHandle, Arc<AshSurface>>>,
 }
 
 impl Drop for AshInstance {
@@ -300,7 +283,7 @@ impl Drop for AshInstance {
         //Drop the debug_utils before instance
         drop(self.debug_utils.take());
         unsafe {
-            self.handle.destroy_instance(None);
+            self.core.destroy_instance(None);
         }
         let _ = self.entry.clone();
     }
@@ -374,15 +357,15 @@ impl Instance {
 
         let ash_instance = Arc::new(AshInstance {
             entry,
-            surface_extension: surface_ext,
+            core: instance,
+            surface: surface_ext,
             debug_utils,
-            handle: instance,
             surfaces: Mutex::new(SlotMap::with_key()),
         });
 
-        let physical_devices = unsafe { ash_instance.handle.enumerate_physical_devices()? }
+        let physical_devices = unsafe { ash_instance.core.enumerate_physical_devices()? }
             .iter()
-            .map(|handle| AshPhysicalDevice::new(&ash_instance.handle, handle.clone()))
+            .map(|handle| AshPhysicalDevice::new(&ash_instance.core, handle.clone()))
             .collect();
 
         Ok(Self {
@@ -405,8 +388,9 @@ impl InstanceTrait for Instance {
     ) -> crate::Result<SurfaceHandle> {
         let surface = match AshSurface::new(
             &self.instance.entry,
-            &self.instance.handle,
-            self.instance.surface_extension.clone(),
+            &self.instance.core,
+            self.instance.surface.clone(),
+            name.to_string(),
             display_handle,
             window_handle,
         ) {
@@ -414,18 +398,12 @@ impl InstanceTrait for Instance {
             Err(_e) => return Err(crate::Error::TempError),
         };
 
-        let _ = name;
-        //TODO: Surface name cannot be set using debug without a device handle
-        // if let Some(debug_utils) = &self.instance.debug_utils {
-        //     let _ = debug_utils.set_object_name(vk::Device::null(), surface.handle, name);
-        // }
-
         Ok(self
             .instance
             .surfaces
             .lock()
             .unwrap()
-            .insert(AshSurfaceSwapchains::new(surface))
+            .insert(surface)
             .0
             .as_ffi())
     }
@@ -450,14 +428,14 @@ impl InstanceTrait for Instance {
                 .lock()
                 .unwrap()
                 .get(AshSurfaceHandle::from(KeyData::from_ffi(handle)))
-                .map(|surface| surface.surface.handle)
+                .map(|surface| surface.handle)
         });
 
         self.physical_devices
             .iter()
             .enumerate()
             .filter(|(_index, physical_device)| {
-                physical_device.get_surface_support(&self.instance.surface_extension, surface)
+                physical_device.get_surface_support(&self.instance.surface, surface)
             })
             .map(|(index, physical_device)| (index, physical_device.info.clone()))
             .collect()
@@ -467,9 +445,11 @@ impl InstanceTrait for Instance {
         &self,
         device_index: usize,
         create_info: &DeviceCreateInfo,
-    ) -> crate::Result<Device> {
+    ) -> crate::Result<crate::Device> {
         Ok(crate::Device {
-            device: Arc::new(crate::vulkan::Device::new(self, device_index, create_info).unwrap()),
+            device: Arc::new(Mutex::new(
+                crate::vulkan::Device::new(self, device_index, create_info).unwrap(),
+            )),
         })
     }
 
@@ -488,7 +468,7 @@ impl InstanceTrait for Instance {
             .lock()
             .unwrap()
             .get(AshSurfaceHandle::from(KeyData::from_ffi(surface_handle)))
-            .map(|surface| surface.surface.handle);
+            .map(|surface| surface.handle);
 
         if physical_device.is_none() || surface.is_none() {
             return None;
@@ -499,17 +479,17 @@ impl InstanceTrait for Instance {
 
         let surface_formats = unsafe {
             self.instance
-                .surface_extension
+                .surface
                 .get_physical_device_surface_formats(physical_device, surface)
         };
         let surface_present_modes = unsafe {
             self.instance
-                .surface_extension
+                .surface
                 .get_physical_device_surface_present_modes(physical_device, surface)
         };
         let surface_capabilities = unsafe {
             self.instance
-                .surface_extension
+                .surface
                 .get_physical_device_surface_capabilities(physical_device, surface)
         };
 
@@ -520,14 +500,19 @@ impl InstanceTrait for Instance {
             return None;
         }
 
+        let surface_formats = surface_formats.unwrap();
+        let surface_present_modes = surface_present_modes.unwrap();
+        let surface_capabilities = surface_capabilities.unwrap();
+
         let mut surface_support = SwapchainSupportInfo {
+            image_count: surface_capabilities.min_image_count..surface_capabilities.max_image_count,
             surface_formats: Vec::new(),
             present_modes: Vec::new(),
             usages: TextureUsage::empty(),
             composite_alpha_modes: Vec::new(),
         };
 
-        for surface_format in surface_formats.unwrap().iter() {
+        for surface_format in surface_formats.iter() {
             let format = TextureFormat::from_vk(surface_format.format);
             let color_space = ColorSpace::from_vk(surface_format.color_space);
 
@@ -539,13 +524,12 @@ impl InstanceTrait for Instance {
             }
         }
 
-        for surface_present_mode in surface_present_modes.unwrap().iter() {
+        for surface_present_mode in surface_present_modes.iter() {
             if let Some(present_mode) = PresentMode::from_vk(surface_present_mode) {
                 surface_support.present_modes.push(present_mode);
             }
         }
 
-        let surface_capabilities = surface_capabilities.unwrap();
         surface_support.composite_alpha_modes =
             CompositeAlphaMode::from_vk(&surface_capabilities.supported_composite_alpha);
         surface_support.usages = TextureUsage::from_vk(surface_capabilities.supported_usage_flags);

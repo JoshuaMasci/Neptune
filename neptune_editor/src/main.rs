@@ -3,8 +3,8 @@ extern crate log;
 
 use neptune_graphics::{
     AddressMode, AppInfo, BufferDescription, BufferUsage, CompositeAlphaMode, FilterMode,
-    PresentMode, SamplerDescription, SwapchainDescription, TextureDescription, TextureFormat,
-    TextureUsage,
+    PresentMode, RenderGraphBuilder, SamplerDescription, SwapchainDescription, TextureDescription,
+    TextureFormat, TextureUsage,
 };
 use std::default::Default;
 use std::time::Instant;
@@ -30,7 +30,7 @@ fn main() {
 
     let (device, surface) = {
         let new_instance = neptune_graphics::create_vulkan_instance(
-            &AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
+            &AppInfo::new(APP_NAME, APP_VERSION),
             &AppInfo::new(APP_NAME, APP_VERSION),
         );
 
@@ -55,9 +55,14 @@ fn main() {
         let surface_support_info = selected_device.get_surface_support(&surface).unwrap();
         println!("Surface Support: {:#?}", surface_support_info);
 
+        let frame_count = 3.clamp(
+            surface_support_info.image_count.start,
+            surface_support_info.image_count.end,
+        );
+
         let device = selected_device
             .create(&neptune_graphics::DeviceCreateInfo {
-                frames_in_flight_count: 3,
+                frames_in_flight_count: frame_count as usize,
                 features: device_info.features,
                 extensions: device_info.extensions,
             })
@@ -68,6 +73,7 @@ fn main() {
             .configure_swapchain(
                 &surface,
                 &SwapchainDescription {
+                    min_image_count: frame_count,
                     surface_format: surface_support_info.surface_formats[0].clone(),
                     present_mode: PresentMode::Fifo,
                     usage: TextureUsage::RENDER_ATTACHMENT | TextureUsage::TRANSFER_DST,
@@ -79,14 +85,12 @@ fn main() {
         (device, surface)
     };
 
-    let surface = Some(surface);
-
     let buffer = device
         .create_buffer(
             "Test Buffer",
             &BufferDescription {
                 size: 4096,
-                usage: BufferUsage::VERTEX,
+                usage: BufferUsage::VERTEX | BufferUsage::UNIFORM,
             },
         )
         .unwrap();
@@ -118,6 +122,9 @@ fn main() {
         )
         .unwrap();
 
+    let mut render_graph = RenderGraphBuilder::default();
+    let _swapchain_texture = render_graph.acquire_swapchain_image(&surface);
+
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
@@ -133,10 +140,7 @@ fn main() {
                 *control_flow = ControlFlow::Exit
             }
             Event::MainEventsCleared => {
-                if let Some(surface) = &surface {
-                    let _surface_texture = device.acquire_swapchain_texture(surface);
-                    device.submit_frame().unwrap();
-                }
+                device.submit_frame(&render_graph).unwrap();
 
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();
@@ -145,7 +149,11 @@ fn main() {
                 frame_count_time.1 += last_frame_time.as_secs_f32();
 
                 if frame_count_time.1 >= 1.0 {
-                    info!("FPS: {}", frame_count_time.0);
+                    info!(
+                        "FPS: {} ms: {}",
+                        frame_count_time.0,
+                        (frame_count_time.1 / frame_count_time.0 as f32) * 1000.0
+                    );
                     frame_count_time = (0, 0.0);
                 }
             }

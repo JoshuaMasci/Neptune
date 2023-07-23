@@ -1,3 +1,4 @@
+use crate::vulkan::device::AshDevice;
 use crate::vulkan::instance::AshSurface;
 use ash::vk;
 use log::warn;
@@ -13,7 +14,7 @@ pub(crate) struct SwapchainConfig {
 }
 
 pub(crate) struct AshSwapchainImage {
-    device: Arc<ash::Device>,
+    device: Arc<AshDevice>,
     #[allow(unused)]
     pub(crate) handle: vk::Image,
     pub(crate) view: vk::ImageView,
@@ -21,12 +22,12 @@ pub(crate) struct AshSwapchainImage {
 
 impl AshSwapchainImage {
     pub(crate) fn new(
-        device: Arc<ash::Device>,
+        device: Arc<AshDevice>,
         handle: vk::Image,
         format: vk::Format,
     ) -> ash::prelude::VkResult<Self> {
         let view = unsafe {
-            device.create_image_view(
+            device.core.create_image_view(
                 &vk::ImageViewCreateInfo::builder()
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(format)
@@ -53,12 +54,12 @@ impl AshSwapchainImage {
 
 impl Drop for AshSwapchainImage {
     fn drop(&mut self) {
-        unsafe { self.device.destroy_image_view(self.view, None) }
+        unsafe { self.device.core.destroy_image_view(self.view, None) }
     }
 }
 
 pub(crate) struct AshSwapchainInstance {
-    swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
+    device: Arc<AshDevice>,
     pub(crate) handle: vk::SwapchainKHR,
     pub(crate) images: Vec<AshSwapchainImage>,
 }
@@ -66,8 +67,7 @@ pub(crate) struct AshSwapchainInstance {
 impl AshSwapchainInstance {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        device: Arc<ash::Device>,
-        swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
+        device: Arc<AshDevice>,
         surface: vk::SurfaceKHR,
         swapchain_config: &SwapchainConfig,
         swapchain_extent: vk::Extent2D,
@@ -76,7 +76,7 @@ impl AshSwapchainInstance {
         old_swapchain: vk::SwapchainKHR,
     ) -> ash::prelude::VkResult<Self> {
         let handle = unsafe {
-            swapchain_extension.create_swapchain(
+            device.swapchain.create_swapchain(
                 &vk::SwapchainCreateInfoKHR::builder()
                     .surface(surface)
                     .min_image_count(image_count)
@@ -96,7 +96,7 @@ impl AshSwapchainInstance {
         };
 
         let images: Vec<AshSwapchainImage> =
-            unsafe { swapchain_extension.get_swapchain_images(handle) }
+            unsafe { device.swapchain.get_swapchain_images(handle) }
                 .unwrap()
                 .drain(..)
                 .map(|image| {
@@ -106,7 +106,7 @@ impl AshSwapchainInstance {
                 .collect();
 
         Ok(Self {
-            swapchain_extension,
+            device,
             handle,
             images,
         })
@@ -119,17 +119,13 @@ impl Drop for AshSwapchainInstance {
 
         self.images.clear();
         unsafe {
-            self.swapchain_extension
-                .destroy_swapchain(self.handle, None);
+            self.device.swapchain.destroy_swapchain(self.handle, None);
         }
     }
 }
 
 pub(crate) struct AshSwapchain {
-    device: Arc<ash::Device>,
-    swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
-    surface_extension: Arc<ash::extensions::khr::Surface>,
-    physical_device: vk::PhysicalDevice,
+    device: Arc<AshDevice>,
 
     current_config: SwapchainConfig,
     current_swapchain: AshSwapchainInstance,
@@ -142,24 +138,20 @@ pub(crate) struct AshSwapchain {
 
 impl AshSwapchain {
     pub(crate) fn new(
-        device: Arc<ash::Device>,
-        swapchain_extension: Arc<ash::extensions::khr::Swapchain>,
-        surface_extension: Arc<ash::extensions::khr::Surface>,
-        physical_device: vk::PhysicalDevice,
+        device: Arc<AshDevice>,
         surface: Arc<AshSurface>,
         swapchain_config: SwapchainConfig,
     ) -> ash::prelude::VkResult<Self> {
         let (current_extent, current_transform, image_count) =
             get_swapchain_extent_transform_count(
-                &surface_extension,
-                physical_device,
+                &device.instance.surface,
+                device.physical_device,
                 surface.get_handle(),
                 swapchain_config.image_count,
             )?;
 
         let current_swapchain = AshSwapchainInstance::new(
             device.clone(),
-            swapchain_extension.clone(),
             surface.get_handle(),
             &swapchain_config,
             current_extent,
@@ -170,9 +162,6 @@ impl AshSwapchain {
 
         Ok(Self {
             device,
-            swapchain_extension,
-            surface_extension,
-            physical_device,
             surface,
             current_config: swapchain_config,
             current_swapchain,
@@ -195,15 +184,14 @@ impl AshSwapchain {
     pub(crate) fn rebuild(&mut self) -> ash::prelude::VkResult<()> {
         let (current_extent, current_transform, image_count) =
             get_swapchain_extent_transform_count(
-                &self.surface_extension,
-                self.physical_device,
+                &self.device.instance.surface,
+                self.device.physical_device,
                 self.surface.get_handle(),
                 self.current_config.image_count,
             )?;
 
         self.current_swapchain = AshSwapchainInstance::new(
             self.device.clone(),
-            self.swapchain_extension.clone(),
             self.surface.get_handle(),
             &self.current_config,
             current_extent,
@@ -224,7 +212,7 @@ impl AshSwapchain {
         image_ready_fence: vk::Fence,
     ) -> ash::prelude::VkResult<u32> {
         let (index, suboptimal) = unsafe {
-            self.swapchain_extension.acquire_next_image(
+            self.device.swapchain.acquire_next_image(
                 self.current_swapchain.handle,
                 timeout,
                 image_ready_semaphore,
@@ -256,8 +244,7 @@ impl AshSwapchain {
                 present_info.wait_semaphore_count = 0;
             }
 
-            self.swapchain_extension
-                .queue_present(queue, &present_info)?
+            self.device.swapchain.queue_present(queue, &present_info)?
         };
 
         if suboptimal {

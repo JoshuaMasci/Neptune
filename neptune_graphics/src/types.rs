@@ -60,14 +60,13 @@ pub struct PhysicalDeviceFeatures {
 
 #[derive(Debug, Clone)]
 pub struct PhysicalDeviceExtensions {
-    pub dynamic_rendering: bool,
     pub mesh_shading: bool,
     pub ray_tracing: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct PhysicalDeviceMemory {
-    /// The amount of local memory in bytes
+    /// The amount of device local memory in bytes
     pub device_local_bytes: usize,
 }
 
@@ -204,11 +203,17 @@ impl TextureFormat {
 }
 
 #[derive(Debug, Clone)]
-pub struct TextureDescription {
-    pub size: [u32; 2],
+pub struct TextureDescription<T> {
+    pub size: T,
     pub format: TextureFormat,
     pub usage: TextureUsage,
     pub sampler: Option<()>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TransientImageSize {
+    Exact([u32; 2]),
+    Relative([f32; 2], TextureHandle),
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -426,6 +431,7 @@ pub enum CompositeAlphaMode {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct SwapchainDescription {
+    pub min_image_count: u32,
     pub surface_format: SurfaceFormat,
     pub present_mode: PresentMode,
     pub usage: TextureUsage,
@@ -440,6 +446,7 @@ pub struct SurfaceFormat {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct SwapchainSupportInfo {
+    pub image_count: std::ops::Range<u32>,
     pub surface_formats: Vec<SurfaceFormat>,
     pub present_modes: Vec<PresentMode>,
     pub usages: TextureUsage,
