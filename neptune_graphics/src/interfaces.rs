@@ -24,7 +24,10 @@ impl Instance {
                 window.raw_display_handle(),
                 window.raw_window_handle(),
             )
-            .map(|handle| Surface(handle, self.instance.clone()))
+            .map(|handle| Surface {
+                instance: self.instance.clone(),
+                handle,
+            })
     }
 
     pub fn select_and_create_device(
@@ -34,7 +37,7 @@ impl Instance {
     ) -> Option<PhysicalDevice> {
         let supported_devices = self
             .instance
-            .get_supported_devices(surface.map(|surface| surface.0));
+            .get_supported_devices(surface.map(|surface| surface.handle));
 
         let highest_scored_device: Option<usize> = supported_devices
             .iter()
@@ -75,7 +78,7 @@ impl PhysicalDevice {
 
     pub fn get_surface_support(&self, surface: &Surface) -> Option<SwapchainSupportInfo> {
         self.instance
-            .get_surface_support(self.device_index, surface.0)
+            .get_surface_support(self.device_index, surface.handle)
     }
 
     pub fn create(self, create_info: &DeviceCreateInfo) -> Result<Device> {
@@ -83,10 +86,13 @@ impl PhysicalDevice {
     }
 }
 
-pub struct Surface(SurfaceHandle, Arc<InstanceType>);
+pub struct Surface {
+    instance: Arc<InstanceType>,
+    handle: SurfaceHandle,
+}
 impl Drop for Surface {
     fn drop(&mut self) {
-        self.1.destroy_surface(self.0);
+        self.instance.destroy_surface(self.handle);
     }
 }
 
@@ -100,7 +106,10 @@ impl Device {
             .lock()
             .unwrap()
             .create_buffer(name, description)
-            .map(|handle| Buffer::Persistent(PersistentBuffer(handle, self.device.clone())))
+            .map(|handle| Buffer::Persistent {
+                device: self.device.clone(),
+                handle,
+            })
     }
 
     pub fn create_texture(
@@ -112,7 +121,10 @@ impl Device {
             .lock()
             .unwrap()
             .create_texture(name, description)
-            .map(|handle| Texture::Persistent(PersistentTexture(handle, self.device.clone())))
+            .map(|handle| Texture::Persistent {
+                device: self.device.clone(),
+                handle,
+            })
     }
 
     pub fn create_sampler(&self, name: &str, description: &SamplerDescription) -> Result<Sampler> {
@@ -120,7 +132,10 @@ impl Device {
             .lock()
             .unwrap()
             .create_sampler(name, description)
-            .map(|handle| Sampler(handle, self.device.clone()))
+            .map(|handle| Sampler {
+                device: self.device.clone(),
+                handle,
+            })
     }
 
     pub fn create_compute_pipeline(
@@ -132,7 +147,10 @@ impl Device {
             .lock()
             .unwrap()
             .create_compute_pipeline(name, description)
-            .map(|handle| ComputePipeline(handle, self.device.clone()))
+            .map(|handle| ComputePipeline {
+                device: self.device.clone(),
+                handle,
+            })
     }
 
     pub fn create_raster_pipeline(
@@ -144,7 +162,10 @@ impl Device {
             .lock()
             .unwrap()
             .create_raster_pipeline(name, description)
-            .map(|handle| RasterPipeline(handle, self.device.clone()))
+            .map(|handle| RasterPipeline {
+                device: self.device.clone(),
+                handle,
+            })
     }
 
     pub fn configure_swapchain(
@@ -155,7 +176,7 @@ impl Device {
         self.device
             .lock()
             .unwrap()
-            .configure_surface(surface.0, description)
+            .configure_surface(surface.handle, description)
     }
 
     pub fn submit_frame(&self, render_graph: &RenderGraphBuilder) -> Result<()> {
@@ -166,69 +187,72 @@ impl Device {
     }
 }
 
-pub struct PersistentBuffer(pub(crate) BufferHandle, Arc<Mutex<DeviceType>>);
-impl Drop for PersistentBuffer {
-    fn drop(&mut self) {
-        self.1.lock().unwrap().destroy_buffer(self.0);
-    }
-}
-
-pub struct TransientBuffer(pub(crate) usize);
-
-pub struct PersistentTexture(pub(crate) TextureHandle, Arc<Mutex<DeviceType>>);
-impl Drop for PersistentTexture {
-    fn drop(&mut self) {
-        self.1.lock().unwrap().destroy_texture(self.0);
-    }
-}
-
-pub struct TransientTexture(pub(crate) usize);
-
 pub enum Buffer {
-    Persistent(PersistentBuffer),
+    Persistent {
+        device: Arc<Mutex<DeviceType>>,
+        handle: BufferHandle,
+    },
     Transient(TransientBuffer),
 }
 
-impl Buffer {
-    pub fn is_persistent(&self) -> bool {
-        match self {
-            Buffer::Persistent(_) => true,
-            Buffer::Transient(_) => false,
-        }
-    }
-
-    pub fn is_transient(&self) -> bool {
-        match self {
-            Buffer::Persistent(_) => false,
-            Buffer::Transient(_) => true,
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        if let Self::Persistent { device, handle } = self {
+            device.lock().unwrap().destroy_buffer(*handle);
         }
     }
 }
 
 pub enum Texture {
-    Persistent(PersistentTexture),
+    Persistent {
+        device: Arc<Mutex<DeviceType>>,
+        handle: TextureHandle,
+    },
     Transient(TransientTexture),
     Swapchain(usize),
 }
 
-pub struct Sampler(SamplerHandle, Arc<Mutex<DeviceType>>);
+impl Drop for Texture {
+    fn drop(&mut self) {
+        if let Self::Persistent { device, handle } = self {
+            device.lock().unwrap().destroy_texture(*handle);
+        }
+    }
+}
+
+pub struct Sampler {
+    device: Arc<Mutex<DeviceType>>,
+    handle: SamplerHandle,
+}
 impl Drop for Sampler {
     fn drop(&mut self) {
-        self.1.lock().unwrap().destroy_sampler(self.0);
+        self.device.lock().unwrap().destroy_sampler(self.handle);
     }
 }
 
-pub struct ComputePipeline(ComputePipelineHandle, Arc<Mutex<DeviceType>>);
+pub struct ComputePipeline {
+    device: Arc<Mutex<DeviceType>>,
+    handle: ComputePipelineHandle,
+}
 impl Drop for ComputePipeline {
     fn drop(&mut self) {
-        self.1.lock().unwrap().destroy_compute_pipeline(self.0);
+        self.device
+            .lock()
+            .unwrap()
+            .destroy_compute_pipeline(self.handle);
     }
 }
 
-pub struct RasterPipeline(RasterPipelineHandle, Arc<Mutex<DeviceType>>);
+pub struct RasterPipeline {
+    device: Arc<Mutex<DeviceType>>,
+    handle: RasterPipelineHandle,
+}
 impl Drop for RasterPipeline {
     fn drop(&mut self) {
-        self.1.lock().unwrap().destroy_raster_pipeline(self.0);
+        self.device
+            .lock()
+            .unwrap()
+            .destroy_raster_pipeline(self.handle);
     }
 }
 
@@ -239,6 +263,6 @@ pub struct RenderGraphBuilder {
 
 impl RenderGraphBuilder {
     pub fn acquire_swapchain_image(&mut self, surface: &Surface) -> Texture {
-        Texture::Swapchain(self.render_graph.acquire_swapchain_image(surface.0))
+        Texture::Swapchain(self.render_graph.acquire_swapchain_image(surface.handle))
     }
 }

@@ -98,6 +98,18 @@ pub type ComputePipelineHandle = HandleType;
 pub type RasterPipelineHandle = HandleType;
 pub type SwapchainHandle = HandleType;
 
+#[derive(Debug, Clone, Copy)]
+pub struct TransientBuffer {
+    pub index: usize,
+    pub frame_index: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TransientTexture {
+    pub index: usize,
+    pub frame_index: usize,
+}
+
 bitflags! {
     pub struct BufferUsage: u32 {
         const VERTEX = 1 << 0;
@@ -460,154 +472,154 @@ pub enum Queue {
     PreferAsyncTransfer,
 }
 
-pub enum ShaderResourceAccess<'a> {
-    BufferUniformRead(&'a Buffer),
-    BufferStorageRead(&'a Buffer),
-    BufferStorageWrite(&'a Buffer),
-    TextureSampleRead(&'a Texture),
-    TextureStorageRead(&'a Texture),
-    TextureStorageWrite(&'a Texture),
-}
-
-pub struct TextureCopyBuffer<'a> {
-    pub buffer: &'a Buffer,
-    pub offset: u64,
-    pub row_length: Option<u32>,
-    pub row_height: Option<u32>,
-}
-
-pub struct TextureCopyTexture<'a> {
-    pub texture: &'a Texture,
-    pub offset: [u32; 2],
-}
-
-pub enum Transfer<'a> {
-    CopyCpuToBuffer {
-        src: &'a [u8],
-        dst: &'a Buffer,
-        dst_offset: u64,
-        copy_size: u64,
-    },
-    CopyCpuToTexture {
-        src: &'a [u8],
-        row_length: Option<u32>,
-        row_height: Option<u32>,
-        dst: TextureCopyTexture<'a>,
-        copy_size: [u32; 2],
-    },
-    CopyBufferToBuffer {
-        src: &'a Buffer,
-        src_offset: u64,
-        dst: &'a Buffer,
-        dst_offset: u64,
-        copy_size: u64,
-    },
-    CopyBufferToTexture {
-        src: TextureCopyBuffer<'a>,
-        dst: TextureCopyTexture<'a>,
-        copy_size: [u32; 2],
-    },
-    CopyTextureToBuffer {
-        src: TextureCopyTexture<'a>,
-        dst: TextureCopyBuffer<'a>,
-        copy_size: [u32; 2],
-    },
-    CopyTextureToTexture {
-        src: TextureCopyTexture<'a>,
-        dst: TextureCopyTexture<'a>,
-        copy_size: [u32; 2],
-    },
-}
-
-pub enum ComputeDispatch<'a> {
-    Size([u32; 3]),
-    Indirect { buffer: &'a Buffer, offset: u64 },
-}
-
-pub struct ColorAttachment<'a> {
-    pub texture: &'a Texture,
-    pub clear: Option<[f32; 4]>,
-}
-
-impl<'a> ColorAttachment<'a> {
-    pub fn new(texture: &'a Texture) -> Self {
-        Self {
-            texture,
-            clear: None,
-        }
-    }
-
-    pub fn new_clear(texture: &'a Texture, clear: [f32; 4]) -> Self {
-        Self {
-            texture,
-            clear: Some(clear),
-        }
-    }
-}
-
-pub struct DepthStencilAttachment<'a> {
-    pub texture: &'a Texture,
-    pub clear: Option<(f32, u32)>,
-}
-
-impl<'a> DepthStencilAttachment<'a> {
-    pub fn new(texture: &'a Texture) -> Self {
-        Self {
-            texture,
-            clear: None,
-        }
-    }
-
-    pub fn new_clear(texture: &'a Texture, clear: (f32, u32)) -> Self {
-        Self {
-            texture,
-            clear: Some(clear),
-        }
-    }
-}
-
-pub struct RasterPassDescription<'a> {
-    pub color_attachments: &'a [ColorAttachment<'a>],
-    pub depth_stencil_attachment: Option<DepthStencilAttachment<'a>>,
-    pub input_attachments: &'a [&'a Texture],
-}
-
-//TODO: Indirect draw calls
-pub enum RasterCommand<'a> {
-    BindVertexBuffers {
-        buffers: &'a [&'a Buffer],
-    },
-    BindIndexBuffer {
-        buffer: &'a Buffer,
-        format: IndexFormat,
-    },
-    BindShaderResource {
-        resources: &'a [ShaderResourceAccess<'a>],
-    },
-    BindRasterPipeline {
-        pipeline: &'a RasterPipeline,
-    },
-    SetScissor {
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-    },
-    SetViewport {
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        min_depth: f32,
-        max_depth: f32,
-    },
-    Draw {
-        vertex_range: std::ops::Range<u32>,
-        instance_range: std::ops::Range<u32>,
-    },
-    DrawIndexed {
-        index_range: std::ops::Range<u32>,
-        base_vertex: i32,
-        instance_range: std::ops::Range<u32>,
-    },
-}
+// pub enum ShaderResourceAccess<'a> {
+//     BufferUniformRead(&'a Buffer),
+//     BufferStorageRead(&'a Buffer),
+//     BufferStorageWrite(&'a Buffer),
+//     TextureSampleRead(&'a Texture),
+//     TextureStorageRead(&'a Texture),
+//     TextureStorageWrite(&'a Texture),
+// }
+//
+// pub struct TextureCopyBuffer<'a> {
+//     pub buffer: &'a Buffer,
+//     pub offset: u64,
+//     pub row_length: Option<u32>,
+//     pub row_height: Option<u32>,
+// }
+//
+// pub struct TextureCopyTexture<'a> {
+//     pub texture: &'a Texture,
+//     pub offset: [u32; 2],
+// }
+//
+// pub enum Transfer<'a> {
+//     CopyCpuToBuffer {
+//         src: &'a [u8],
+//         dst: &'a Buffer,
+//         dst_offset: u64,
+//         copy_size: u64,
+//     },
+//     CopyCpuToTexture {
+//         src: &'a [u8],
+//         row_length: Option<u32>,
+//         row_height: Option<u32>,
+//         dst: TextureCopyTexture<'a>,
+//         copy_size: [u32; 2],
+//     },
+//     CopyBufferToBuffer {
+//         src: &'a Buffer,
+//         src_offset: u64,
+//         dst: &'a Buffer,
+//         dst_offset: u64,
+//         copy_size: u64,
+//     },
+//     CopyBufferToTexture {
+//         src: TextureCopyBuffer<'a>,
+//         dst: TextureCopyTexture<'a>,
+//         copy_size: [u32; 2],
+//     },
+//     CopyTextureToBuffer {
+//         src: TextureCopyTexture<'a>,
+//         dst: TextureCopyBuffer<'a>,
+//         copy_size: [u32; 2],
+//     },
+//     CopyTextureToTexture {
+//         src: TextureCopyTexture<'a>,
+//         dst: TextureCopyTexture<'a>,
+//         copy_size: [u32; 2],
+//     },
+// }
+//
+// pub enum ComputeDispatch<'a> {
+//     Size([u32; 3]),
+//     Indirect { buffer: &'a Buffer, offset: u64 },
+// }
+//
+// pub struct ColorAttachment<'a> {
+//     pub texture: &'a Texture,
+//     pub clear: Option<[f32; 4]>,
+// }
+//
+// impl<'a> ColorAttachment<'a> {
+//     pub fn new(texture: &'a Texture) -> Self {
+//         Self {
+//             texture,
+//             clear: None,
+//         }
+//     }
+//
+//     pub fn new_clear(texture: &'a Texture, clear: [f32; 4]) -> Self {
+//         Self {
+//             texture,
+//             clear: Some(clear),
+//         }
+//     }
+// }
+//
+// pub struct DepthStencilAttachment<'a> {
+//     pub texture: &'a Texture,
+//     pub clear: Option<(f32, u32)>,
+// }
+//
+// impl<'a> DepthStencilAttachment<'a> {
+//     pub fn new(texture: &'a Texture) -> Self {
+//         Self {
+//             texture,
+//             clear: None,
+//         }
+//     }
+//
+//     pub fn new_clear(texture: &'a Texture, clear: (f32, u32)) -> Self {
+//         Self {
+//             texture,
+//             clear: Some(clear),
+//         }
+//     }
+// }
+//
+// pub struct RasterPassDescription<'a> {
+//     pub color_attachments: &'a [ColorAttachment<'a>],
+//     pub depth_stencil_attachment: Option<DepthStencilAttachment<'a>>,
+//     pub input_attachments: &'a [&'a Texture],
+// }
+//
+// //TODO: Indirect draw calls
+// pub enum RasterCommand<'a> {
+//     BindVertexBuffers {
+//         buffers: &'a [&'a Buffer],
+//     },
+//     BindIndexBuffer {
+//         buffer: &'a Buffer,
+//         format: IndexFormat,
+//     },
+//     BindShaderResource {
+//         resources: &'a [ShaderResourceAccess<'a>],
+//     },
+//     BindRasterPipeline {
+//         pipeline: &'a RasterPipeline,
+//     },
+//     SetScissor {
+//         x: u32,
+//         y: u32,
+//         width: u32,
+//         height: u32,
+//     },
+//     SetViewport {
+//         x: f32,
+//         y: f32,
+//         width: f32,
+//         height: f32,
+//         min_depth: f32,
+//         max_depth: f32,
+//     },
+//     Draw {
+//         vertex_range: std::ops::Range<u32>,
+//         instance_range: std::ops::Range<u32>,
+//     },
+//     DrawIndexed {
+//         index_range: std::ops::Range<u32>,
+//         base_vertex: i32,
+//         instance_range: std::ops::Range<u32>,
+//     },
+// }
