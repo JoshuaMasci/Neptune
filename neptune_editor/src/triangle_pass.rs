@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct TrianglePass {
+    device: Arc<AshDevice>,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
 
@@ -27,11 +28,11 @@ impl TrianglePass {
         depth_stencil_format: vk::Format,
     ) -> Self {
         let vertex_data = [
-            Vec3::new(0.25, 0.25, 0.5),
+            Vec3::new(-0.75, 0.75, 0.5),
             Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(0.5, 0.75, 0.5),
+            Vec3::new(0.0, -0.75, 0.5),
             Vec3::new(0.0, 1.0, 0.0),
-            Vec3::new(0.75, 0.25, 0.5),
+            Vec3::new(0.75, 0.75, 0.5),
             Vec3::new(0.0, 0.0, 1.0),
         ];
         let index_data = [0, 1, 2];
@@ -73,9 +74,13 @@ impl TrianglePass {
                 .expect("Failed to create pipeline layout")
         };
 
+        let pipeline =
+            create_pipeline(&device, color_format, depth_stencil_format, pipeline_layout);
+
         Self {
+            device,
             pipeline_layout,
-            pipeline: create_pipeline(&device, color_format, depth_stencil_format, pipeline_layout),
+            pipeline,
             vertex_buffer,
             index_buffer,
         }
@@ -86,12 +91,12 @@ impl TrianglePass {
         render_graph: &mut neptune_vulkan::RenderGraph,
         render_target: neptune_vulkan::ImageResource,
     ) {
-        // let depth_image = render_graph.create_transient_image(neptune_vulkan::TransientImageDesc {
-        //     size: neptune_vulkan::TransientImageSize::Relative([1.0; 2], render_target),
-        //     format: vk::Format::D32_SFLOAT,
-        //     mip_levels: 1,
-        //     memory_location: MemoryLocation::GpuOnly,
-        // });
+        let depth_image = render_graph.create_transient_image(neptune_vulkan::TransientImageDesc {
+            size: neptune_vulkan::TransientImageSize::Relative([1.0; 2], render_target),
+            format: vk::Format::D32_SFLOAT,
+            mip_levels: 1,
+            memory_location: MemoryLocation::GpuOnly,
+        });
 
         let mut image_usages = HashMap::new();
         image_usages.insert(
@@ -103,15 +108,15 @@ impl TrianglePass {
                 layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
             },
         );
-        // image_usages.insert(
-        //     depth_image,
-        //     neptune_vulkan::ImageAccess {
-        //         write: true,
-        //         stage: vk::PipelineStageFlags2::PRE_RASTERIZATION_SHADERS,
-        //         access: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-        //         layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-        //     },
-        //);
+        image_usages.insert(
+            depth_image,
+            neptune_vulkan::ImageAccess {
+                write: true,
+                stage: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
+                access: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+            },
+        );
 
         let pipeline = self.pipeline;
         let vertex_buffer_handle = self.vertex_buffer;
@@ -154,12 +159,26 @@ impl TrianglePass {
                     render_target,
                     [0.29, 0.0, 0.5, 0.0],
                 )],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
+                    depth_image,
+                    (1.0, 0),
+                )),
                 input_attachments: vec![],
             }),
             build_cmd_fn: Some(build_cmd_fn),
         };
         render_graph.add_pass(basic_render_pass);
+    }
+}
+
+impl Drop for TrianglePass {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.core.destroy_pipeline(self.pipeline, None);
+            self.device
+                .core
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
     }
 }
 
@@ -250,6 +269,13 @@ fn create_pipeline(
         .depth_bias_clamp(0.0)
         .depth_bias_slope_factor(0.0);
 
+    let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_bounds_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .min_depth_bounds(0.0)
+        .max_depth_bounds(1.0);
+
     let viewports = [Default::default()];
     let scissors = [Default::default()];
     let viewport_info = vk::PipelineViewportStateCreateInfo::builder()
@@ -286,15 +312,17 @@ fn create_pipeline(
     let color_attachment_formats = [color_format];
     let mut dynamic_rendering_info = vk::PipelineRenderingCreateInfoKHR::builder()
         .view_mask(0)
-        .color_attachment_formats(&color_attachment_formats);
+        .color_attachment_formats(&color_attachment_formats)
+        .depth_attachment_format(depth_stencil_format);
 
     let pipeline_info = &[vk::GraphicsPipelineCreateInfo::builder()
         .stages(&shader_states_infos)
         .vertex_input_state(&vertex_input_info)
         .input_assembly_state(&input_assembly_info)
-        .rasterization_state(&rasterizer_info)
         .viewport_state(&viewport_info)
+        .rasterization_state(&rasterizer_info)
         .multisample_state(&multisampling_info)
+        .depth_stencil_state(&depth_stencil_info)
         .color_blend_state(&color_blending_info)
         .dynamic_state(&dynamic_states_info)
         .layout(pipeline_layout)

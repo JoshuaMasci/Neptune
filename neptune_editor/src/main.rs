@@ -130,43 +130,6 @@ fn main() {
 
     triangle_pass.build_render_graph(&mut render_graph, swapchain_image);
 
-    let depth_image = render_graph.create_transient_image(neptune_vulkan::TransientImageDesc {
-        size: neptune_vulkan::TransientImageSize::Relative([1.0; 2], swapchain_image),
-        format: vk::Format::D32_SFLOAT,
-        mip_levels: 1,
-        memory_location: neptune_vulkan::gpu_allocator::MemoryLocation::GpuOnly,
-    });
-
-    // let mut image_usages = HashMap::new();
-    // image_usages.insert(
-    //     swapchain_image,
-    //     neptune_vulkan::ImageAccess {
-    //         write: true,
-    //         stage: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-    //         access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-    //         layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-    //     },
-    // );
-    // let basic_render_pass = neptune_vulkan::RenderPass {
-    //     name: String::from("Basic Render Pass"),
-    //     queue: vk::Queue::null(), //TODO: this
-    //     buffer_usages: Default::default(),
-    //     image_usages,
-    //     framebuffer: Some(neptune_vulkan::Framebuffer {
-    //         color_attachments: vec![neptune_vulkan::ColorAttachment::new_clear(
-    //             swapchain_image,
-    //             [0.29, 0.0, 0.5, 0.0],
-    //         )],
-    //         depth_stencil_attachment: Some(neptune_vulkan::DepthStencilAttachment::new_clear(
-    //             depth_image,
-    //             (1.0, 0),
-    //         )),
-    //         input_attachments: vec![],
-    //     }),
-    //     build_cmd_fn: None,
-    // };
-    // render_graph.add_pass(basic_render_pass);
-
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
