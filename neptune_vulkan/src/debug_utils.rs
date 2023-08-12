@@ -6,7 +6,7 @@ use log::{error, info, trace, warn};
 
 #[allow(dead_code)]
 pub struct DebugUtils {
-    debug_utils_loader: ash::extensions::ext::DebugUtils,
+    debug_utils: ash::extensions::ext::DebugUtils,
     debug_call_back: vk::DebugUtilsMessengerEXT,
 }
 
@@ -36,7 +36,7 @@ impl DebugUtils {
         };
 
         Ok(Self {
-            debug_utils_loader,
+            debug_utils: debug_utils_loader,
             debug_call_back,
         })
     }
@@ -49,7 +49,7 @@ impl DebugUtils {
     ) {
         let object_name = CString::new(object_name).expect("Failed to create CString");
         unsafe {
-            self.debug_utils_loader
+            self.debug_utils
                 .set_debug_utils_object_name(
                     device,
                     &DebugUtilsObjectNameInfoEXT::builder()
@@ -61,12 +61,36 @@ impl DebugUtils {
                 .expect("Failed to set object name");
         }
     }
+
+    pub(crate) fn cmd_begin_label(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        label_name: &str,
+        label_color: [f32; 4],
+    ) {
+        let label_name = CString::new(label_name).expect("Failed to create CString");
+
+        unsafe {
+            self.debug_utils.cmd_begin_debug_utils_label(
+                command_buffer,
+                &vk::DebugUtilsLabelEXT::builder()
+                    .label_name(label_name.as_c_str())
+                    .color(label_color),
+            );
+        }
+    }
+
+    pub(crate) fn cmd_end_label(&self, command_buffer: vk::CommandBuffer) {
+        unsafe {
+            self.debug_utils.cmd_end_debug_utils_label(command_buffer);
+        }
+    }
 }
 
 impl Drop for DebugUtils {
     fn drop(&mut self) {
         unsafe {
-            self.debug_utils_loader
+            self.debug_utils
                 .destroy_debug_utils_messenger(self.debug_call_back, None);
         }
     }

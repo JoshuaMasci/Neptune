@@ -1,10 +1,10 @@
-use crate::AshDevice;
+use crate::device::AshDevice;
 use ash::vk;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct AshSwapchainImage {
+pub struct SwapchainImage {
     pub index: u32,
     pub handle: vk::Image,
     pub view: vk::ImageView,
@@ -18,7 +18,7 @@ struct SwapchainInstance {
     device: Arc<AshDevice>,
     handle: vk::SwapchainKHR,
 
-    images: Vec<AshSwapchainImage>,
+    images: Vec<SwapchainImage>,
 
     pub image_format: vk::Format,
     pub image_color_space: vk::ColorSpaceKHR,
@@ -65,7 +65,7 @@ impl SwapchainInstance {
                 )?
             };
 
-            images.push(AshSwapchainImage {
+            images.push(SwapchainImage {
                 index: index as u32,
                 handle,
                 view,
@@ -102,44 +102,41 @@ impl Drop for SwapchainInstance {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct AshSwapchainSettings {
+pub struct SurfaceSettings {
     /// Preferred number of swapchain images, actual number will vary
     pub image_count: u32,
-
     pub format: vk::SurfaceFormatKHR,
+    pub size: [u32; 2],
     pub usage: vk::ImageUsageFlags,
     pub present_mode: vk::PresentModeKHR,
 }
 
-pub struct AshSwapchain {
+pub struct Swapchain {
     device: Arc<AshDevice>,
     surface: vk::SurfaceKHR,
-    settings: AshSwapchainSettings,
+    settings: SurfaceSettings,
 
     current_swapchain: Option<SwapchainInstance>,
 }
 
-impl AshSwapchain {
+impl Swapchain {
     pub fn new(
         device: Arc<AshDevice>,
         surface: vk::SurfaceKHR,
-        settings: AshSwapchainSettings,
+        settings: &SurfaceSettings,
     ) -> ash::prelude::VkResult<Self> {
         let mut new_self = Self {
             device,
             surface,
-            settings,
+            settings: settings.clone(),
             current_swapchain: None,
         };
         new_self.rebuild()?;
         Ok(new_self)
     }
 
-    pub fn update_settings(
-        &mut self,
-        settings: AshSwapchainSettings,
-    ) -> ash::prelude::VkResult<()> {
-        self.settings = settings;
+    pub fn update_settings(&mut self, settings: &SurfaceSettings) -> ash::prelude::VkResult<()> {
+        self.settings = settings.clone();
         self.rebuild()
     }
 
@@ -148,7 +145,7 @@ impl AshSwapchain {
             &self.device.instance.surface,
             self.device.physical,
             self.surface,
-            self.settings.image_count,
+            &self.settings,
         )?;
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
@@ -183,7 +180,7 @@ impl AshSwapchain {
         self.current_swapchain.as_ref().unwrap().handle
     }
 
-    pub(crate) fn get_image(&self, index: u32) -> AshSwapchainImage {
+    pub(crate) fn get_image(&self, index: u32) -> SwapchainImage {
         self.current_swapchain.as_ref().unwrap().images[index as usize].clone()
     }
 
@@ -206,7 +203,7 @@ fn get_swapchain_extent_transform_count(
     surface_extension: &ash::extensions::khr::Surface,
     physical_device: vk::PhysicalDevice,
     surface: vk::SurfaceKHR,
-    image_count: u32,
+    settings: &SurfaceSettings,
 ) -> ash::prelude::VkResult<(vk::Extent2D, vk::SurfaceTransformFlagsKHR, u32)> {
     unsafe {
         let capabilities =
@@ -214,33 +211,39 @@ fn get_swapchain_extent_transform_count(
 
         Ok((
             vk::Extent2D {
-                width: capabilities.current_extent.width.clamp(
+                width: settings.size[0].clamp(
                     capabilities.min_image_extent.width,
                     capabilities.max_image_extent.width,
                 ),
-                height: capabilities.current_extent.height.clamp(
+                height: settings.size[1].clamp(
                     capabilities.min_image_extent.height,
                     capabilities.max_image_extent.height,
                 ),
             },
             capabilities.current_transform,
-            image_count.clamp(capabilities.min_image_count, capabilities.max_image_count),
+            settings
+                .image_count
+                .clamp(capabilities.min_image_count, capabilities.max_image_count),
         ))
     }
 }
 
 #[derive(Default)]
 pub struct SwapchainManager {
-    pub swapchains: HashMap<vk::SurfaceKHR, AshSwapchain>,
+    pub swapchains: HashMap<vk::SurfaceKHR, Swapchain>,
 }
 
 impl SwapchainManager {
-    pub fn add_swapchain(&mut self, swapchain: AshSwapchain) {
+    pub fn add(&mut self, swapchain: Swapchain) {
         let surface = swapchain.surface;
         assert!(
             self.swapchains.insert(surface, swapchain).is_none(),
             "Swapchain for surface {:?} already exists, this shouldn't happen",
             surface
         );
+    }
+
+    pub fn get(&mut self, surface: vk::SurfaceKHR) -> Option<&mut Swapchain> {
+        self.swapchains.get_mut(&surface)
     }
 }

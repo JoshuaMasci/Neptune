@@ -1,15 +1,12 @@
-use crate::{
-    AshBuffer, AshDevice, BufferKey, ImageKey, PersistentResourceManager, SwapchainManager,
-    TransientResourceManager,
-};
+use crate::{BufferHandle, BufferKey, ImageHandle, ImageKey, SurfaceHandle};
 use ash::vk;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct BufferAccess {
-    write: bool, //TODO: calculate this from stage+access?
-    stage: vk::PipelineStageFlags2,
-    access: vk::AccessFlags2,
+    pub write: bool, //TODO: calculate this from stage+access?
+    pub stage: vk::PipelineStageFlags2,
+    pub access: vk::AccessFlags2,
 }
 
 #[derive(Clone, Debug)]
@@ -20,32 +17,32 @@ pub struct ImageAccess {
     pub layout: vk::ImageLayout,
 }
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum BufferResource {
-    Persistent(BufferKey),
-    Transient(usize),
-}
+// #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+// pub enum BufferResource {
+//     Persistent(BufferKey),
+//     Transient(usize),
+// }
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub enum ImageResource {
-    Persistent(ImageKey),
-    Transient(usize),
-    Swapchain(usize),
-}
+// #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+// pub enum ImageResource {
+//     Persistent(ImageKey),
+//     Transient(usize),
+//     Swapchain(usize),
+// }
 
 pub type BuildCommandFn = dyn Fn(&AshDevice, vk::CommandBuffer, &mut RenderGraphResources);
 
 pub struct ColorAttachment {
-    pub image: ImageResource,
+    pub image: ImageHandle,
     pub clear: Option<[f32; 4]>,
 }
 
 impl ColorAttachment {
-    pub fn new(image: ImageResource) -> Self {
+    pub fn new(image: ImageHandle) -> Self {
         Self { image, clear: None }
     }
 
-    pub fn new_clear(image: ImageResource, clear: [f32; 4]) -> Self {
+    pub fn new_clear(image: ImageHandle, clear: [f32; 4]) -> Self {
         Self {
             image,
             clear: Some(clear),
@@ -54,16 +51,16 @@ impl ColorAttachment {
 }
 
 pub struct DepthStencilAttachment {
-    pub image: ImageResource,
+    pub image: ImageHandle,
     pub clear: Option<(f32, u32)>,
 }
 
 impl DepthStencilAttachment {
-    pub fn new(image: ImageResource) -> Self {
+    pub fn new(image: ImageHandle) -> Self {
         Self { image, clear: None }
     }
 
-    pub fn new_clear(image: ImageResource, clear: (f32, u32)) -> Self {
+    pub fn new_clear(image: ImageHandle, clear: (f32, u32)) -> Self {
         Self {
             image,
             clear: Some(clear),
@@ -75,64 +72,59 @@ impl DepthStencilAttachment {
 pub struct Framebuffer {
     pub color_attachments: Vec<ColorAttachment>,
     pub depth_stencil_attachment: Option<DepthStencilAttachment>,
-    pub input_attachments: Vec<ImageResource>,
+    pub input_attachments: Vec<ImageHandle>,
 }
 
 #[derive(Default)]
 pub struct RenderPass {
     pub name: String,
     pub queue: vk::Queue,
-    pub buffer_usages: HashMap<BufferResource, BufferAccess>,
-    pub image_usages: HashMap<ImageResource, ImageAccess>,
+    pub buffer_usages: HashMap<BufferHandle, BufferAccess>,
+    pub image_usages: HashMap<ImageHandle, ImageAccess>,
     pub framebuffer: Option<Framebuffer>,
     pub build_cmd_fn: Option<Box<BuildCommandFn>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TransientBufferDesc {
-    size: vk::DeviceSize,
-    memory_location: gpu_allocator::MemoryLocation,
-}
-
-#[derive(Debug, Clone)]
 pub enum TransientImageSize {
     Exact(vk::Extent2D),
-    Relative([f32; 2], ImageResource),
+    Relative([f32; 2], ImageHandle),
 }
 
 #[derive(Debug, Clone)]
 pub struct TransientImageDesc {
     pub size: TransientImageSize,
     pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
     pub memory_location: gpu_allocator::MemoryLocation,
 }
 
 #[derive(Default)]
 pub struct RenderGraph {
-    pub transient_buffers: Vec<TransientBufferDesc>,
-    pub transient_images: Vec<TransientImageDesc>,
-    pub swapchain_images: Vec<vk::SurfaceKHR>,
-    pub passes: Vec<RenderPass>,
+    pub(crate) transient_buffers: Vec<BufferDesc>,
+    pub(crate) transient_images: Vec<TransientImageDesc>,
+    pub(crate) swapchain_images: Vec<SurfaceHandle>,
+    pub(crate) passes: Vec<RenderPass>,
 }
 
 impl RenderGraph {
-    pub fn create_transient_buffer(&mut self, desc: TransientBufferDesc) -> BufferResource {
+    pub fn create_transient_buffer(&mut self, desc: BufferDesc) -> BufferHandle {
         let index = self.transient_buffers.len();
         self.transient_buffers.push(desc);
-        BufferResource::Transient(index)
+        BufferHandle::Transient(index)
     }
 
-    pub fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageResource {
+    pub fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle {
         let index = self.transient_images.len();
         self.transient_images.push(desc);
-        ImageResource::Transient(index)
+        ImageHandle::Transient(index)
     }
 
-    pub fn acquire_swapchain_image(&mut self, surface: vk::SurfaceKHR) -> ImageResource {
+    pub fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle {
         let index = self.swapchain_images.len();
-        self.swapchain_images.push(surface);
-        ImageResource::Swapchain(index)
+        self.swapchain_images.push(surface_handle);
+        ImageHandle::Swapchain(index)
     }
 
     pub fn add_pass(&mut self, pass: RenderPass) {
@@ -150,14 +142,15 @@ pub struct VkImage {
 
 pub struct RenderGraphResources<'a> {
     persistent: &'a mut PersistentResourceManager,
-    swapchain_images: &'a [(vk::SwapchainKHR, AshSwapchainImage)],
+    swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
     transient_images: &'a [VkImage],
+    transient_buffers: &'a [Buffer],
 }
 
 impl<'a> RenderGraphResources<'a> {
-    pub fn get_image(&self, resource: ImageResource) -> VkImage {
+    pub fn get_image(&self, resource: ImageHandle) -> VkImage {
         match resource {
-            ImageResource::Persistent(image_key) => {
+            ImageHandle::Persistent(image_key) => {
                 let image = self
                     .persistent
                     .get_image(image_key)
@@ -169,8 +162,8 @@ impl<'a> RenderGraphResources<'a> {
                     format: image.format,
                 }
             }
-            ImageResource::Transient(index) => self.transient_images[index].clone(),
-            ImageResource::Swapchain(index) => {
+            ImageHandle::Transient(index) => self.transient_images[index],
+            ImageHandle::Swapchain(index) => {
                 let swapchain_image = self.swapchain_images[index].clone();
                 VkImage {
                     handle: swapchain_image.1.handle,
@@ -182,19 +175,21 @@ impl<'a> RenderGraphResources<'a> {
         }
     }
 
-    pub fn get_buffer(&self, resource: BufferResource) -> &AshBuffer {
+    pub fn get_buffer(&self, resource: BufferHandle) -> &Buffer {
         match resource {
-            BufferResource::Persistent(buffer_key) => self
+            BufferHandle::Persistent(buffer_key) => self
                 .persistent
                 .get_buffer(buffer_key)
                 .expect("render pass tried to access invalid persistent buffer"),
-            BufferResource::Transient(_) => todo!("Impliment transient buffers"),
+            BufferHandle::Transient(index) => &self.transient_buffers[index],
         }
     }
 }
 
-use crate::device::AshQueue;
-use crate::swapchain::AshSwapchainImage;
+use crate::buffer::{Buffer, BufferDesc};
+use crate::device::{AshDevice, AshQueue};
+use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
+use crate::swapchain::{SwapchainImage, SwapchainManager};
 use log::info;
 use std::sync::Arc;
 
@@ -210,8 +205,8 @@ pub struct BasicRenderGraphExecutor {
 }
 
 impl BasicRenderGraphExecutor {
-    pub fn new(device: Arc<AshDevice>, device_queue_index: usize) -> ash::prelude::VkResult<Self> {
-        let queue = device.queues[device_queue_index].clone();
+    pub fn new(device: Arc<AshDevice>, device_queue_index: u32) -> ash::prelude::VkResult<Self> {
+        let queue = device.queues[device_queue_index as usize].clone();
 
         let command_pool = unsafe {
             device.core.create_command_pool(
@@ -300,16 +295,23 @@ impl BasicRenderGraphExecutor {
             }
         }
 
-        let mut swapchain_image: Vec<(vk::SwapchainKHR, AshSwapchainImage)> =
+        let mut swapchain_image: Vec<(vk::SwapchainKHR, SwapchainImage)> =
             Vec::with_capacity(render_graph.swapchain_images.len());
         for (surface_handle, swapchain_semaphores) in render_graph
             .swapchain_images
             .iter()
+            .map(|surface_handle| {
+                self.device
+                    .instance
+                    .surface_list
+                    .get(surface_handle.0)
+                    .expect("Failed to find surface")
+            })
             .zip(self.swapchain_semaphores.iter())
         {
             let swapchain = swapchain_manager
                 .swapchains
-                .get_mut(surface_handle)
+                .get_mut(&surface_handle)
                 .expect("Failed to find swapchain");
 
             let mut swapchain_result: ash::prelude::VkResult<(u32, bool)> =
@@ -332,7 +334,7 @@ impl BasicRenderGraphExecutor {
                 .unwrap();
 
             // Transition Swapchain to General
-            {
+            if !swapchain_image.is_empty() {
                 let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
@@ -371,10 +373,14 @@ impl BasicRenderGraphExecutor {
                 &render_graph.transient_images,
             );
 
+            let transient_buffers =
+                transient_resource_manager.resolve_buffers(&render_graph.transient_buffers);
+
             let mut resources = RenderGraphResources {
                 persistent: persistent_resource_manager,
                 swapchain_images: &swapchain_image,
                 transient_images: &transient_images,
+                transient_buffers,
             };
 
             record_single_queue_render_graph_bad_sync(
@@ -385,7 +391,7 @@ impl BasicRenderGraphExecutor {
             );
 
             // Transition Swapchain to Present
-            {
+            if !swapchain_image.is_empty() {
                 let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
@@ -426,8 +432,8 @@ impl BasicRenderGraphExecutor {
             let command_buffer_info = &[vk::CommandBufferSubmitInfo::builder()
                 .command_buffer(self.command_buffer)
                 .build()];
-            let wait_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self
-                .swapchain_semaphores
+            let wait_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
+                [0..swapchain_image.len()]
                 .iter()
                 .map(|(semaphore, _)| {
                     vk::SemaphoreSubmitInfo::builder()
@@ -437,8 +443,8 @@ impl BasicRenderGraphExecutor {
                 })
                 .collect();
 
-            let signal_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self
-                .swapchain_semaphores
+            let signal_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
+                [0..swapchain_image.len()]
                 .iter()
                 .map(|(_, semaphore)| {
                     vk::SemaphoreSubmitInfo::builder()
@@ -474,13 +480,15 @@ impl BasicRenderGraphExecutor {
                 wait_semaphores.push(swapchain_semaphores.1);
             }
 
-            let _ = self.device.swapchain.queue_present(
-                self.queue.handle,
-                &vk::PresentInfoKHR::builder()
-                    .swapchains(&swapchains)
-                    .image_indices(&swapchain_indies)
-                    .wait_semaphores(&wait_semaphores),
-            );
+            if !swapchains.is_empty() {
+                let _ = self.device.swapchain.queue_present(
+                    self.queue.handle,
+                    &vk::PresentInfoKHR::builder()
+                        .swapchains(&swapchains)
+                        .image_indices(&swapchain_indies)
+                        .wait_semaphores(&wait_semaphores),
+                );
+            }
         }
 
         Ok(())
@@ -523,6 +531,10 @@ fn record_single_queue_render_graph_bad_sync(
                     .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                     .build()]),
             );
+
+            if let Some(debug_util) = &device.instance.debug_utils {
+                debug_util.cmd_begin_label(command_buffer, &pass.name, [0.0, 1.0, 0.0, 1.0]);
+            }
 
             if let Some(framebuffer) = &pass.framebuffer {
                 let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
@@ -642,6 +654,10 @@ fn record_single_queue_render_graph_bad_sync(
 
             if pass.framebuffer.is_some() {
                 device.core.cmd_end_rendering(command_buffer);
+            }
+
+            if let Some(debug_util) = &device.instance.debug_utils {
+                debug_util.cmd_end_label(command_buffer);
             }
         }
     }

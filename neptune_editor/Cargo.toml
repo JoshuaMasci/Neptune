@@ -12,8 +12,9 @@ neptune_core = { path = "../neptune_core"}
 neptune_vulkan = { path = "../neptune_vulkan" }
 
 log = "0.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5.0"
 raw-window-handle = "0.5.0"
 winit = "0.28.3"
 image = "0.24.2"
 glam = "0.24.0"
+anyhow = "1.0.72"

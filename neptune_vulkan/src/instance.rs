@@ -1,7 +1,12 @@
 use crate::debug_utils::DebugUtils;
+use crate::interface::PhysicalDevice;
+use crate::{SurfaceHandle, SurfaceKey, VulkanError};
+use ash::prelude::VkResult;
 use ash::vk;
 use log::trace;
+use slotmap::SlotMap;
 use std::ffi::CString;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub struct AppInfo<'a> {
@@ -24,11 +29,33 @@ impl<'a> AppInfo<'a> {
     }
 }
 
+pub struct SurfaceList(Mutex<SlotMap<SurfaceKey, vk::SurfaceKHR>>);
+
+impl SurfaceList {
+    pub fn new() -> Self {
+        Self(Mutex::new(SlotMap::with_key()))
+    }
+
+    pub fn insert(&self, surface: vk::SurfaceKHR) -> SurfaceKey {
+        self.0.lock().unwrap().insert(surface)
+    }
+
+    pub fn remove(&self, surface_key: SurfaceKey) -> Option<vk::SurfaceKHR> {
+        self.0.lock().unwrap().remove(surface_key)
+    }
+
+    pub fn get(&self, surface_key: SurfaceKey) -> Option<vk::SurfaceKHR> {
+        self.0.lock().unwrap().get(surface_key).cloned()
+    }
+}
+
 pub struct AshInstance {
     pub entry: ash::Entry,
     pub core: ash::Instance,
     pub surface: ash::extensions::khr::Surface,
     pub debug_utils: Option<DebugUtils>,
+
+    pub(crate) surface_list: SurfaceList,
 }
 
 impl AshInstance {
@@ -111,6 +138,7 @@ impl AshInstance {
             core: instance,
             surface,
             debug_utils,
+            surface_list: SurfaceList::new(),
         })
     }
 
@@ -118,9 +146,20 @@ impl AshInstance {
         &self,
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
-    ) -> ash::prelude::VkResult<vk::SurfaceKHR> {
-        unsafe {
+    ) -> VkResult<crate::SurfaceKey> {
+        match unsafe {
             ash_window::create_surface(&self.entry, &self.core, display_handle, window_handle, None)
+        } {
+            Ok(surface) => Ok(self.surface_list.insert(surface)),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn destroy_surface(&self, surface_key: crate::SurfaceKey) {
+        if let Some(surface) = self.surface_list.remove(surface_key) {
+            unsafe {
+                self.surface.destroy_surface(surface, None);
+            }
         }
     }
 }
@@ -131,5 +170,70 @@ impl Drop for AshInstance {
         unsafe {
             self.core.destroy_instance(None);
         }
+    }
+}
+
+pub struct Instance {
+    pub(crate) instance: Arc<AshInstance>,
+    pub(crate) physical_devices: Vec<PhysicalDevice>,
+}
+
+impl Instance {
+    pub fn new(
+        engine_info: &AppInfo,
+        app_info: &AppInfo,
+        display_handle: Option<raw_window_handle::RawDisplayHandle>,
+    ) -> Result<Self, VulkanError> {
+        let instance =
+            AshInstance::new(engine_info, app_info, true, display_handle).map(Arc::new)?;
+
+        let physical_devices = unsafe { instance.core.enumerate_physical_devices() }
+            .expect("Failed to enumerate physical devices")
+            .iter()
+            .enumerate()
+            .map(|(index, &physical_device)| {
+                PhysicalDevice::new(instance.clone(), index, physical_device)
+            })
+            .collect();
+
+        Ok(Self {
+            instance,
+            physical_devices,
+        })
+    }
+
+    pub fn create_surface(
+        &mut self,
+        raw_display_handle: raw_window_handle::RawDisplayHandle,
+        raw_window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Result<SurfaceHandle, VulkanError> {
+        let surface_key = self
+            .instance
+            .crate_surface(raw_display_handle, raw_window_handle)?;
+        Ok(SurfaceHandle(surface_key))
+    }
+
+    pub fn destroy_surface(&mut self, surface_handle: SurfaceHandle) {
+        self.instance.destroy_surface(surface_handle.0)
+    }
+
+    pub fn get_physical_device(&self, index: usize) -> Option<PhysicalDevice> {
+        todo!()
+    }
+
+    pub fn select_physical_device(
+        &self,
+        score_function: impl Fn(&PhysicalDevice) -> Option<usize>,
+    ) -> Option<PhysicalDevice> {
+        let highest_scored_device_index: Option<usize> = self
+            .physical_devices
+            .iter()
+            .map(|physical_device| (physical_device.get_index(), score_function(physical_device)))
+            .filter(|(_index, score)| score.is_some())
+            .max_by_key(|(_index, score)| score.unwrap())
+            .map(|(index, _score)| index);
+        highest_scored_device_index
+            .and_then(|device_index| self.physical_devices.get(device_index))
+            .cloned()
     }
 }
