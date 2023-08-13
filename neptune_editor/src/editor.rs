@@ -1,5 +1,6 @@
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::{vk, DeviceSettings};
+use neptune_vulkan::{vk, ColorAttachment, DeviceSettings, Framebuffer, ImageAccess, RenderPass};
+use std::collections::HashMap;
 
 pub struct Editor {
     instance: neptune_vulkan::Instance,
@@ -111,7 +112,34 @@ impl Editor {
         let mut render_graph = neptune_vulkan::RenderGraph::default();
         let swapchain_image = render_graph.acquire_swapchain_image(self.surface_handle);
 
-        self.device.submit_frame(Some(self.surface_handle))?;
+        let mut image_usages = HashMap::new();
+        image_usages.insert(
+            swapchain_image,
+            ImageAccess {
+                write: true,
+                stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+            },
+        );
+
+        render_graph.add_pass(RenderPass {
+            name: "Raster Pass".to_string(),
+            queue: Default::default(),
+            buffer_usages: Default::default(),
+            image_usages,
+            framebuffer: Some(Framebuffer {
+                color_attachments: vec![ColorAttachment::new_clear(
+                    swapchain_image,
+                    [0.25, 0.25, 0.25, 1.0],
+                )],
+                depth_stencil_attachment: None,
+                input_attachments: vec![],
+            }),
+            build_cmd_fn: None,
+        });
+
+        self.device.submit_frame(&render_graph)?;
         Ok(())
     }
 }

@@ -1,9 +1,6 @@
 use crate::buffer::{Buffer, BufferDesc};
 use crate::instance::AshInstance;
-use crate::render_graph::{
-    BasicRenderGraphExecutor, BufferAccess, ColorAttachment, Framebuffer, ImageAccess, RenderGraph,
-    RenderPass,
-};
+use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
 use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
@@ -274,10 +271,10 @@ impl Device {
         let _ = self.swapchain_manager.swapchains.remove(&surface);
     }
 
-    pub fn submit_frame(&mut self, surface: Option<SurfaceHandle>) -> Result<(), VulkanError> {
-        let mut render_graph = RenderGraph::default();
+    pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
+        // let mut render_graph = RenderGraph::default();
 
-        if !self.transfer_list.is_empty() {
+        let transfer_pass = (!self.transfer_list.is_empty()).then(|| {
             let mut buffer_usages = HashMap::new();
 
             for &(staging_handle, target_handle) in self.transfer_list.iter() {
@@ -298,10 +295,8 @@ impl Device {
                     },
                 );
             }
-
             let transfer_list = std::mem::take(&mut self.transfer_list);
-
-            render_graph.add_pass(RenderPass {
+            RenderPass {
                 name: "Transfer Pass".to_string(),
                 queue: Default::default(),
                 buffer_usages,
@@ -326,42 +321,12 @@ impl Device {
                         }
                     }
                 })),
-            });
-        }
-
-        if let Some(surface_handle) = surface {
-            let image_resource = render_graph.acquire_swapchain_image(surface_handle);
-
-            let mut image_usages = HashMap::new();
-            image_usages.insert(
-                image_resource,
-                ImageAccess {
-                    write: true,
-                    stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                    access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-                    layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-                },
-            );
-
-            render_graph.add_pass(RenderPass {
-                name: "Clear Pass".to_string(),
-                queue: Default::default(),
-                buffer_usages: Default::default(),
-                image_usages,
-                framebuffer: Some(Framebuffer {
-                    color_attachments: vec![ColorAttachment::new_clear(
-                        image_resource,
-                        [0.0, 0.0, 0.0, 1.0],
-                    )],
-                    depth_stencil_attachment: None,
-                    input_attachments: vec![],
-                }),
-                build_cmd_fn: None,
-            });
-        }
+            }
+        });
 
         self.graph_executor.execute_graph(
-            &render_graph,
+            transfer_pass,
+            render_graph,
             &mut self.persistent_resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,

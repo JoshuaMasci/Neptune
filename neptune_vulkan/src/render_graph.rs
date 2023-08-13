@@ -17,19 +17,6 @@ pub struct ImageAccess {
     pub layout: vk::ImageLayout,
 }
 
-// #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-// pub enum BufferResource {
-//     Persistent(BufferKey),
-//     Transient(usize),
-// }
-
-// #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-// pub enum ImageResource {
-//     Persistent(ImageKey),
-//     Transient(usize),
-//     Swapchain(usize),
-// }
-
 pub type BuildCommandFn = dyn Fn(&AshDevice, vk::CommandBuffer, &mut RenderGraphResources);
 
 pub struct ColorAttachment {
@@ -256,6 +243,7 @@ impl BasicRenderGraphExecutor {
 
     pub fn execute_graph(
         &mut self,
+        transfer_pass: Option<RenderPass>,
         render_graph: &RenderGraph,
         persistent_resource_manager: &mut PersistentResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
@@ -383,12 +371,23 @@ impl BasicRenderGraphExecutor {
                 transient_buffers,
             };
 
-            record_single_queue_render_graph_bad_sync(
-                render_graph,
-                &self.device,
-                self.command_buffer,
-                &mut resources,
-            );
+            if let Some(transfer_pass) = transfer_pass {
+                record_single_queue_render_pass_bad_sync(
+                    &transfer_pass,
+                    &self.device,
+                    self.command_buffer,
+                    &mut resources,
+                );
+            }
+
+            for render_pass in render_graph.passes.iter() {
+                record_single_queue_render_pass_bad_sync(
+                    render_pass,
+                    &self.device,
+                    self.command_buffer,
+                    &mut resources,
+                );
+            }
 
             // Transition Swapchain to Present
             if !swapchain_image.is_empty() {
@@ -513,92 +512,51 @@ impl Drop for BasicRenderGraphExecutor {
     }
 }
 
-fn record_single_queue_render_graph_bad_sync(
-    render_graph: &RenderGraph,
+fn record_single_queue_render_pass_bad_sync(
+    render_pass: &RenderPass,
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     resources: &mut RenderGraphResources,
 ) {
-    for pass in render_graph.passes.iter() {
-        //Bad Barrier
-        unsafe {
-            device.core.cmd_pipeline_barrier2(
-                command_buffer,
-                &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .build()]),
-            );
+    //Bad Barrier
+    unsafe {
+        device.core.cmd_pipeline_barrier2(
+            command_buffer,
+            &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .build()]),
+        );
 
-            if let Some(debug_util) = &device.instance.debug_utils {
-                debug_util.cmd_begin_label(command_buffer, &pass.name, [0.0, 1.0, 0.0, 1.0]);
-            }
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.cmd_begin_label(command_buffer, &render_pass.name, [0.0, 1.0, 0.0, 1.0]);
+        }
 
-            if let Some(framebuffer) = &pass.framebuffer {
-                let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
+        if let Some(framebuffer) = &render_pass.framebuffer {
+            let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
 
-                let mut extent = None;
-                let mut color_attachments = Vec::new();
+            let mut extent = None;
+            let mut color_attachments = Vec::new();
 
-                for color_attachment in framebuffer.color_attachments.iter() {
-                    let image = resources.get_image(color_attachment.image);
+            for color_attachment in framebuffer.color_attachments.iter() {
+                let image = resources.get_image(color_attachment.image);
 
-                    if let Some(extent) = extent {
-                        if extent != image.size {
-                            panic!("Framebuffer color attachment extent does not match");
-                        }
-                    } else {
-                        extent = Some(image.size);
+                if let Some(extent) = extent {
+                    if extent != image.size {
+                        panic!("Framebuffer color attachment extent does not match");
                     }
-
-                    let color_clear = color_attachment.clear.map(|color| vk::ClearValue {
-                        color: vk::ClearColorValue { float32: color },
-                    });
-
-                    color_attachments.push(
-                        vk::RenderingAttachmentInfo::builder()
-                            .image_view(image.view)
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .load_op(if color_clear.is_some() {
-                                vk::AttachmentLoadOp::CLEAR
-                            } else {
-                                vk::AttachmentLoadOp::LOAD
-                            })
-                            .store_op(vk::AttachmentStoreOp::STORE)
-                            .clear_value(color_clear.unwrap_or_default())
-                            .build(),
-                    );
+                } else {
+                    extent = Some(image.size);
                 }
 
-                rendering_info_builder =
-                    rendering_info_builder.color_attachments(&color_attachments);
+                let color_clear = color_attachment.clear.map(|color| vk::ClearValue {
+                    color: vk::ClearColorValue { float32: color },
+                });
 
-                let mut depth_stencil_attachment_info = vk::RenderingAttachmentInfo::default();
-
-                if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
-                    let image = resources.get_image(depth_stencil_image.image);
-
-                    if let Some(extent) = extent {
-                        if extent != image.size {
-                            panic!("Framebuffer depth stencil attachment extent does not match");
-                        }
-                    } else {
-                        extent = Some(image.size);
-                    }
-
-                    let color_clear =
-                        depth_stencil_image
-                            .clear
-                            .map(|depth_stencil| vk::ClearValue {
-                                depth_stencil: vk::ClearDepthStencilValue {
-                                    depth: depth_stencil.0,
-                                    stencil: depth_stencil.1,
-                                },
-                            });
-
-                    depth_stencil_attachment_info = vk::RenderingAttachmentInfo::builder()
+                color_attachments.push(
+                    vk::RenderingAttachmentInfo::builder()
                         .image_view(image.view)
                         .image_layout(vk::ImageLayout::GENERAL)
                         .load_op(if color_clear.is_some() {
@@ -608,57 +566,94 @@ fn record_single_queue_render_graph_bad_sync(
                         })
                         .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(color_clear.unwrap_or_default())
-                        .build();
+                        .build(),
+                );
+            }
 
-                    rendering_info_builder =
-                        rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
+            rendering_info_builder = rendering_info_builder.color_attachments(&color_attachments);
+
+            let mut depth_stencil_attachment_info = vk::RenderingAttachmentInfo::default();
+
+            if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
+                let image = resources.get_image(depth_stencil_image.image);
+
+                if let Some(extent) = extent {
+                    if extent != image.size {
+                        panic!("Framebuffer depth stencil attachment extent does not match");
+                    }
+                } else {
+                    extent = Some(image.size);
                 }
 
-                let extent = extent.expect("Framebuffer has no attachments");
+                let color_clear = depth_stencil_image
+                    .clear
+                    .map(|depth_stencil| vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: depth_stencil.0,
+                            stencil: depth_stencil.1,
+                        },
+                    });
 
-                let render_area = vk::Rect2D {
-                    offset: vk::Offset2D::default(),
-                    extent,
-                };
+                depth_stencil_attachment_info = vk::RenderingAttachmentInfo::builder()
+                    .image_view(image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(if color_clear.is_some() {
+                        vk::AttachmentLoadOp::CLEAR
+                    } else {
+                        vk::AttachmentLoadOp::LOAD
+                    })
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(color_clear.unwrap_or_default())
+                    .build();
 
-                rendering_info_builder = rendering_info_builder
-                    .color_attachments(&color_attachments)
-                    .render_area(render_area);
-
-                device
-                    .core
-                    .cmd_begin_rendering(command_buffer, &rendering_info_builder);
-                _ = depth_stencil_attachment_info;
-
-                device.core.cmd_set_viewport(
-                    command_buffer,
-                    0,
-                    &[vk::Viewport {
-                        x: 0.0,
-                        y: 0.0,
-                        width: extent.width as f32,
-                        height: extent.height as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0,
-                    }],
-                );
-
-                device
-                    .core
-                    .cmd_set_scissor(command_buffer, 0, &[render_area])
+                rendering_info_builder =
+                    rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
             }
 
-            if let Some(build_cmd_fn) = &pass.build_cmd_fn {
-                build_cmd_fn(device, command_buffer, resources);
-            }
+            let extent = extent.expect("Framebuffer has no attachments");
 
-            if pass.framebuffer.is_some() {
-                device.core.cmd_end_rendering(command_buffer);
-            }
+            let render_area = vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent,
+            };
 
-            if let Some(debug_util) = &device.instance.debug_utils {
-                debug_util.cmd_end_label(command_buffer);
-            }
+            rendering_info_builder = rendering_info_builder
+                .color_attachments(&color_attachments)
+                .render_area(render_area);
+
+            device
+                .core
+                .cmd_begin_rendering(command_buffer, &rendering_info_builder);
+            _ = depth_stencil_attachment_info;
+
+            device.core.cmd_set_viewport(
+                command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: extent.width as f32,
+                    height: extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+
+            device
+                .core
+                .cmd_set_scissor(command_buffer, 0, &[render_area])
+        }
+
+        if let Some(build_cmd_fn) = &render_pass.build_cmd_fn {
+            build_cmd_fn(device, command_buffer, resources);
+        }
+
+        if render_pass.framebuffer.is_some() {
+            device.core.cmd_end_rendering(command_buffer);
+        }
+
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.cmd_end_label(command_buffer);
         }
     }
 }

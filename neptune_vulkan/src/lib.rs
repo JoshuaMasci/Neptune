@@ -16,7 +16,7 @@ pub use buffer::BufferDesc;
 pub use device::{Device, DeviceSettings};
 pub use instance::AppInfo;
 pub use instance::Instance;
-pub use render_graph::RenderGraph;
+pub use render_graph::*;
 pub use swapchain::SurfaceSettings;
 
 slotmap::new_key_type! {
