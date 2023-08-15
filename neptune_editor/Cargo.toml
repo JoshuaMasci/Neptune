@@ -18,3 +18,4 @@ winit = "0.28.3"
 image = "0.24.2"
 glam = "0.24.0"
 anyhow = "1.0.72"
+gltf = {version =  "1.2.0", features = ["utils"] }

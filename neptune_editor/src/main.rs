@@ -1,4 +1,6 @@
 mod editor;
+mod gltf_loader;
+mod mesh;
 
 #[macro_use]
 extern crate log;

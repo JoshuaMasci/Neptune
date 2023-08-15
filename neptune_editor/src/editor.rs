@@ -1,5 +1,9 @@
+use crate::gltf_loader;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::{vk, ColorAttachment, DeviceSettings, Framebuffer, ImageAccess, RenderPass};
+use neptune_vulkan::{
+    vk, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer, ImageAccess,
+    RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
+};
 use std::collections::HashMap;
 
 pub struct Editor {
@@ -84,6 +88,20 @@ impl Editor {
         )?;
         device.update_data_to_buffer(buffer, &vec![255; 1024])?;
 
+        let (gltf_doc, buffers, image_buffers) =
+            gltf::import("neptune_editor/resource/WaterBottle.glb")?;
+
+        let meshes = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
+
+        for mesh in meshes.iter().enumerate() {
+            info!(
+                "Mesh({}): {} Primitives: {}",
+                mesh.0,
+                mesh.1.name,
+                mesh.1.primitives.len()
+            );
+        }
+
         Ok(Self {
             instance,
             surface_handle,
@@ -109,8 +127,15 @@ impl Editor {
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
-        let mut render_graph = neptune_vulkan::RenderGraph::default();
+        let mut render_graph = RenderGraph::default();
         let swapchain_image = render_graph.acquire_swapchain_image(self.surface_handle);
+        let depth_image = render_graph.create_transient_image(TransientImageDesc {
+            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
+            format: vk::Format::D16_UNORM,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            mip_levels: 1,
+            memory_location: MemoryLocation::GpuOnly,
+        });
 
         let mut image_usages = HashMap::new();
         image_usages.insert(
@@ -119,6 +144,16 @@ impl Editor {
                 write: true,
                 stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
                 access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+            },
+        );
+        image_usages.insert(
+            depth_image,
+            ImageAccess {
+                write: true,
+                stage: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                access: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
                 layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
             },
         );
@@ -133,7 +168,10 @@ impl Editor {
                     swapchain_image,
                     [0.25, 0.25, 0.25, 1.0],
                 )],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(DepthStencilAttachment::new_clear(
+                    depth_image,
+                    (1.0, 0),
+                )),
                 input_attachments: vec![],
             }),
             build_cmd_fn: None,
