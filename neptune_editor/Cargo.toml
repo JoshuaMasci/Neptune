@@ -19,3 +19,6 @@ image = "0.24.2"
 glam = "0.24.0"
 anyhow = "1.0.72"
 gltf = {version =  "1.2.0", features = ["utils"] }
+rfd = "0.11.4"
+
+serde = "1.0.183"

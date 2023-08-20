@@ -1,3 +1,19 @@
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct VertexAttributes {
+    pub normal: glam::Vec3,
+    pub tangent: glam::Vec4,
+    pub tex_coords: glam::Vec4,
+    pub color: glam::Vec4,
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct VertexSkinningAttributes {
+    pub joint: glam::UVec4,
+    pub weight: glam::Vec4,
+}
+
 pub struct BoundingBox {
     pub min: glam::Vec3,
     pub max: glam::Vec3,
@@ -8,23 +24,13 @@ pub struct IndexBuffer {
     pub count: u32,
 }
 
-pub struct SkinningBuffers {
-    pub joint_buffer: neptune_vulkan::BufferHandle,
-    pub weight_buffer: neptune_vulkan::BufferHandle,
-}
-
 pub struct Primitive {
     pub bounding_box: BoundingBox,
 
     pub vertex_count: usize,
     pub position_buffer: neptune_vulkan::BufferHandle,
-
-    pub normal_buffer: Option<neptune_vulkan::BufferHandle>,
-    pub tangent_buffer: Option<neptune_vulkan::BufferHandle>,
-
-    pub tex_coord_buffers: Vec<neptune_vulkan::BufferHandle>,
-    pub color_buffers: Vec<neptune_vulkan::BufferHandle>,
-    pub skinning_buffers: Vec<SkinningBuffers>,
+    pub attributes_buffer: neptune_vulkan::BufferHandle,
+    pub skinning_buffer: Option<neptune_vulkan::BufferHandle>,
     pub index_buffer: Option<IndexBuffer>,
 }
 

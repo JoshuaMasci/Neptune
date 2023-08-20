@@ -4,6 +4,7 @@ mod device;
 mod image;
 mod instance;
 mod interface;
+mod pipeline;
 mod render_graph;
 mod resource_managers;
 mod swapchain;
@@ -58,21 +59,9 @@ pub struct RasterPipelineHandle(RasterPipleineKey);
 #[derive(thiserror::Error, Debug)]
 pub enum VulkanError {
     #[error("Vulkan Error: {0}")]
-    Vk(vk::Result),
+    Vk(#[from] vk::Result),
     #[error("GpuAllocator Error: {0}")]
-    GpuAllocator(gpu_allocator::AllocationError),
-}
-
-impl From<vk::Result> for VulkanError {
-    fn from(value: vk::Result) -> Self {
-        Self::Vk(value)
-    }
-}
-
-impl From<gpu_allocator::AllocationError> for VulkanError {
-    fn from(value: gpu_allocator::AllocationError) -> Self {
-        Self::GpuAllocator(value)
-    }
+    GpuAllocator(#[from] gpu_allocator::AllocationError),
 }
 
 /// Similar to promise/future in c++ and rust async. The contained type will be available sometime later

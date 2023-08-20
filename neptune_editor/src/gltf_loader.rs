@@ -1,9 +1,10 @@
-use crate::mesh::{BoundingBox, IndexBuffer, Mesh, Primitive, SkinningBuffers};
+use crate::mesh::{
+    BoundingBox, IndexBuffer, Mesh, Primitive, VertexAttributes, VertexSkinningAttributes,
+};
 use anyhow::anyhow;
+use glam::{Vec3, Vec4};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::vk;
-
-const MAX_BUFFER_ARRAYS: u32 = 8;
 
 pub fn load_meshes(
     device: &mut neptune_vulkan::Device,
@@ -39,105 +40,83 @@ pub fn load_primitive(
     let reader = gltf_primitive.reader(|buffer| Some(&gltf_buffers[buffer.index()]));
 
     let bounding_box = BoundingBox {
-        min: glam::Vec3::from_array(gltf_primitive.bounding_box().min),
+        min: Vec3::from_array(gltf_primitive.bounding_box().min),
         max: glam::Vec3::from_array(gltf_primitive.bounding_box().max),
     };
 
-    let (position_buffer, vertex_count) = match reader.read_positions() {
-        None => return Err(anyhow!("Mesh contains no vertex positions")),
-        Some(positions) => {
-            let vertex_count = positions.len();
-            (create_gltf_vertex_buffer(device, positions)?, vertex_count)
+    let (position_buffer, vertex_count) = {
+        let positions: Vec<Vec3> = match reader.read_positions() {
+            None => return Err(anyhow!("Mesh contains no vertex positions")),
+            Some(positions) => positions,
         }
+        .map(|position| Vec3::from_array(position))
+        .collect();
+        (create_vertex_buffer(device, &positions)?, positions.len())
     };
 
-    let normal_buffer = match reader.read_normals() {
-        None => None,
-        Some(normals) => {
-            assert_eq!(
-                vertex_count,
-                normals.len(),
-                "All buffers must have the same vertex count"
-            );
-            Some(create_gltf_vertex_buffer(device, normals)?)
+    let attributes_buffer = {
+        let mut attributes: Vec<VertexAttributes> = if let Some(normals) = reader.read_normals() {
+            if let Some(tangents) = reader.read_tangents() {
+                if let Some(tex_coords) = reader.read_tex_coords(0) {
+                    normals
+                        .zip(tangents)
+                        .zip(tex_coords.into_f32())
+                        .map(|((normal, tangent), tex_coord)| VertexAttributes {
+                            normal: Vec3::from_array(normal),
+                            tangent: Vec4::from_array(tangent),
+                            tex_coords: Vec4::new(tex_coord[0], tex_coord[1], 0.0, 0.0),
+                            color: Vec4::splat(1.0),
+                        })
+                        .collect()
+                } else {
+                    return Err(anyhow!("Mesh primitive doesn't contain uv0"));
+                }
+            } else {
+                return Err(anyhow!("Mesh primitive doesn't contain tangents"));
+            }
+        } else {
+            return Err(anyhow!("Mesh primitive doesn't contain normals"));
+        };
+
+        //Uv1
+        if let Some(tex_coords) = reader.read_tex_coords(1) {
+            for (attribute, tex_coord) in attributes.iter_mut().zip(tex_coords.into_f32()) {
+                attribute.tex_coords[2] = tex_coord[0];
+                attribute.tex_coords[3] = tex_coord[1];
+            }
         }
+
+        //Color
+        if let Some(colors) = reader.read_colors(1) {
+            for (attribute, color) in attributes.iter_mut().zip(colors.into_rgba_f32()) {
+                attribute.color = Vec4::from_array(color);
+            }
+        }
+        create_vertex_buffer(device, &attributes)?
     };
 
-    let tangent_buffer = match reader.read_tangents() {
-        None => None,
-        Some(tangents) => {
-            assert_eq!(
-                vertex_count,
-                tangents.len(),
-                "All buffers must have the same vertex count"
-            );
-            Some(create_gltf_vertex_buffer(device, tangents)?)
+    let skinning_buffer = if let Some(joints) = reader.read_joints(0) {
+        if let Some(weights) = reader.read_weights(0) {
+            let array: Vec<VertexSkinningAttributes> = joints
+                .into_u16()
+                .zip(weights.into_f32())
+                .map(|(joint, weights)| VertexSkinningAttributes {
+                    joint: glam::UVec4::new(
+                        joint[0] as u32,
+                        joint[1] as u32,
+                        joint[2] as u32,
+                        joint[3] as u32,
+                    ),
+                    weight: glam::Vec4::from_array(weights),
+                })
+                .collect();
+            Some(create_vertex_buffer(device, &array)?)
+        } else {
+            None
         }
+    } else {
+        None
     };
-
-    let mut tex_coord_buffers = Vec::new();
-    for i in 0..MAX_BUFFER_ARRAYS {
-        if let Some(tex_coords) = reader.read_tex_coords(i) {
-            let tex_coord_vec: Vec<[f32; 2]> = tex_coords.into_f32().collect();
-            assert_eq!(
-                vertex_count,
-                tex_coord_vec.len(),
-                "All buffers must have the same vertex count"
-            );
-            tex_coord_buffers.push(create_vertex_buffer(device, &tex_coord_vec)?);
-        } else {
-            break;
-        }
-    }
-
-    let mut color_buffers = Vec::new();
-    for i in 0..MAX_BUFFER_ARRAYS {
-        if let Some(colors) = reader.read_colors(i) {
-            let color_vec: Vec<[f32; 4]> = colors.into_rgba_f32().collect();
-            assert_eq!(
-                vertex_count,
-                color_vec.len(),
-                "All buffers must have the same vertex count"
-            );
-            color_buffers.push(create_vertex_buffer(device, &color_vec)?);
-        } else {
-            break;
-        }
-    }
-
-    let mut skinning_buffers = Vec::new();
-    for i in 0..MAX_BUFFER_ARRAYS {
-        let joint_accessor = reader.read_joints(i);
-        let weight_accessor = reader.read_weights(i);
-
-        if joint_accessor.is_some() && weight_accessor.is_some() {
-            let joints = joint_accessor.unwrap().into_u16();
-            let weights = weight_accessor.unwrap().into_f32();
-
-            assert_eq!(
-                vertex_count,
-                joints.len(),
-                "All buffers must have the same vertex count"
-            );
-            assert_eq!(
-                vertex_count,
-                weights.len(),
-                "All buffers must have the same vertex count"
-            );
-
-            let joint_vec: Vec<[u16; 4]> = joints.collect();
-            let weight_vec: Vec<[f32; 4]> = weights.collect();
-
-            skinning_buffers.push(SkinningBuffers {
-                joint_buffer: create_vertex_buffer(device, &joint_vec)?,
-                weight_buffer: create_vertex_buffer(device, &weight_vec)?,
-            });
-        } else if joint_accessor.is_none() && weight_accessor.is_none() {
-            break;
-        } else {
-            return Err(anyhow!("Mismatched Skinning Buffers"));
-        }
-    }
 
     let index_buffer = match reader.read_indices() {
         None => None,
@@ -154,11 +133,8 @@ pub fn load_primitive(
         bounding_box,
         vertex_count,
         position_buffer,
-        normal_buffer,
-        tangent_buffer,
-        tex_coord_buffers,
-        color_buffers,
-        skinning_buffers,
+        attributes_buffer,
+        skinning_buffer,
         index_buffer,
     })
 }

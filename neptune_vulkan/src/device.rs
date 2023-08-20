@@ -1,13 +1,15 @@
 use crate::buffer::{Buffer, BufferDesc};
 use crate::instance::AshInstance;
+use crate::pipeline::RasterPipelineDesc;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
 use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, SurfaceHandle,
-    VulkanError, VulkanFuture,
+    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
+    SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
+use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
@@ -129,6 +131,9 @@ pub struct DeviceSettings {
 pub struct Device {
     device: Arc<AshDevice>,
 
+    pipeline_layout: vk::PipelineLayout,
+    raster_pipelines: SlotMap<RasterPipleineKey, vk::Pipeline>,
+
     persistent_resource_manager: PersistentResourceManager,
     transient_resource_manager: TransientResourceManager,
     swapchain_manager: SwapchainManager,
@@ -154,8 +159,24 @@ impl Device {
 
         let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
 
+        //TODO: bindless descriptor layout
+        let pipeline_layout = unsafe {
+            device.core.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder().push_constant_ranges(&[
+                    vk::PushConstantRange {
+                        stage_flags: vk::ShaderStageFlags::ALL,
+                        offset: 0,
+                        size: 128,
+                    },
+                ]),
+                None,
+            )?
+        };
+
         Ok(Device {
             device,
+            pipeline_layout,
+            raster_pipelines: SlotMap::with_key(),
             persistent_resource_manager,
             transient_resource_manager,
             swapchain_manager,
@@ -232,11 +253,20 @@ impl Device {
 
     pub fn create_raster_pipeline(
         &mut self,
-    ) -> VulkanFuture<Result<RasterPipelineHandle, VulkanError>> {
-        todo!()
+        desc: RasterPipelineDesc,
+    ) -> Result<RasterPipelineHandle, VulkanError> {
+        let new_pipeline =
+            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, &desc)?;
+        Ok(RasterPipelineHandle(
+            self.raster_pipelines.insert(new_pipeline),
+        ))
     }
     pub fn destroy_raster_pipeline(&mut self, raster_pipeline_handle: RasterPipelineHandle) {
-        todo!()
+        if let Some(pipeline) = self.raster_pipelines.remove(raster_pipeline_handle.0) {
+            unsafe {
+                self.device.core.destroy_pipeline(pipeline, None);
+            }
+        }
     }
 
     pub fn configure_surface(
@@ -332,5 +362,19 @@ impl Device {
             &mut self.swapchain_manager,
         )?;
         Ok(())
+    }
+}
+
+impl Drop for Device {
+    fn drop(&mut self) {
+        unsafe {
+            for (_key, pipeline) in self.raster_pipelines.iter() {
+                self.device.core.destroy_pipeline(*pipeline, None);
+            }
+
+            self.device
+                .core
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
     }
 }

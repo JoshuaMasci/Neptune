@@ -88,18 +88,43 @@ impl Editor {
         )?;
         device.update_data_to_buffer(buffer, &vec![255; 1024])?;
 
-        let (gltf_doc, buffers, image_buffers) =
-            gltf::import("neptune_editor/resource/WaterBottle.glb")?;
+        if let Some(gltf_file) = rfd::FileDialog::new()
+            .add_filter("gltf", &["gltf", "glb"])
+            .set_title("pick a gltf file")
+            .pick_file()
+        {
+            let (gltf_doc, buffers, _image_buffers) = {
+                let now = std::time::Instant::now();
+                let result = gltf::import(gltf_file)?;
+                info!("File Loading: {}", now.elapsed().as_secs_f32());
+                result
+            };
 
-        let meshes = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
+            let meshes = {
+                let now = std::time::Instant::now();
+                let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
+                info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+                result
+            };
 
-        for mesh in meshes.iter().enumerate() {
-            info!(
-                "Mesh({}): {} Primitives: {}",
-                mesh.0,
-                mesh.1.name,
-                mesh.1.primitives.len()
-            );
+            let mut total_vertex_count = 0;
+
+            for mesh in meshes.iter().enumerate() {
+                let vertex_count: usize =
+                    mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
+
+                total_vertex_count += vertex_count;
+
+                info!(
+                    "Mesh({}): {} Primitives: {} Vertex: {}",
+                    mesh.0,
+                    mesh.1.name,
+                    mesh.1.primitives.len(),
+                    vertex_count,
+                );
+            }
+
+            info!("Total Scene Vertex Count: {}", total_vertex_count);
         }
 
         Ok(Self {
