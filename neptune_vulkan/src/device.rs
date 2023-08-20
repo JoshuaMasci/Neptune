@@ -251,6 +251,8 @@ impl Device {
         todo!()
     }
 
+    //TODO: allow multiple creation of multiple pipelines at once?
+    //TODO: use vulkan future and some aync pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_raster_pipeline(
         &mut self,
         desc: RasterPipelineDesc,
