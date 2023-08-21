@@ -85,7 +85,7 @@ impl Editor {
 
         let buffer = device.create_buffer(
             "Test Buffer",
-            &neptune_vulkan::BufferDesc {
+            &neptune_vulkan::BufferDescription {
                 size: 1024,
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                 memory_location: MemoryLocation::GpuOnly,
@@ -133,34 +133,26 @@ impl Editor {
         // }
 
         let raster_pipeline = {
-            let vertex_shader_code_bytes = include_bytes!("../resource/shader/triangle.vert.spv");
-            let fragment_shader_code_bytes = include_bytes!("../resource/shader/triangle.frag.spv");
+            let vertex_shader_code =
+                bytes_to_u32(include_bytes!("../resource/shader/triangle.vert.spv"));
+            let fragment_shader_code =
+                bytes_to_u32(include_bytes!("../resource/shader/triangle.frag.spv"));
 
-            let vertex_shader_code: &[u32] = unsafe {
-                std::slice::from_raw_parts(
-                    vertex_shader_code_bytes.as_ptr() as *const u32,
-                    vertex_shader_code_bytes.len() / std::mem::size_of::<u32>(),
-                )
+            let vertex_state = neptune_vulkan::VertexState {
+                shader_code: vertex_shader_code,
+                layouts: &[
+                    mesh::VertexPosition::VERTEX_BUFFER_LAYOUT,
+                    mesh::VertexAttributes::VERTEX_BUFFER_LAYOUT,
+                ],
             };
 
-            let fragment_shader_code: &[u32] = unsafe {
-                std::slice::from_raw_parts(
-                    fragment_shader_code_bytes.as_ptr() as *const u32,
-                    fragment_shader_code_bytes.len() / std::mem::size_of::<u32>(),
-                )
-            };
-
-            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDesc {
+            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
+                vertex: vertex_state,
                 framebuffer: neptune_vulkan::FramebufferDesc {
                     color_attachments: &[vk::Format::B8G8R8A8_UNORM],
                     depth_attachment: Some(vk::Format::D16_UNORM),
                     stencil_attachment: None,
                 },
-                vertex_input: neptune_vulkan::VertexInputDesc {
-                    format: vk::Format::R32G32B32_SFLOAT,
-                    stride: std::mem::size_of::<[f32; 3]>() as u32,
-                },
-                vertex_shader: vertex_shader_code,
                 fragment_shader: Some(fragment_shader_code),
             })?
         };
@@ -195,7 +187,7 @@ impl Editor {
                     normal: Vec3::Z,
                     tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
                     tex_coords: Vec4::ZERO,
-                    color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    color: Vec4::new(0.0, 0.0, 1.0, 1.0),
                 },
             ];
             let attributes_buffer = device.create_buffer_init(
@@ -277,20 +269,28 @@ impl Editor {
         );
 
         let mesh1 = &self.meshes[0].primitives[0];
+        let mesh_buffer_handle = mesh1.position_buffer;
+        let mesh_attributes_handle = mesh1.attributes_buffer;
+        let mesh_vertex_count = mesh1.vertex_count as u32;
+        let raster_pipeline_handle = self.raster_pipeline;
 
         let mut buffer_usages = HashMap::new();
         buffer_usages.insert(
-            mesh1.position_buffer,
+            mesh_buffer_handle,
             BufferAccess {
                 write: false,
                 stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
                 access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
             },
         );
-
-        let mesh_buffer_handle = mesh1.position_buffer.clone();
-        let mesh_vertex_count = mesh1.vertex_count as u32;
-        let raster_pipeline_handle = self.raster_pipeline.clone();
+        buffer_usages.insert(
+            mesh_attributes_handle,
+            BufferAccess {
+                write: false,
+                stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
+                access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+            },
+        );
 
         render_graph.add_pass(RenderPass {
             name: "Raster Pass".to_string(),
@@ -312,8 +312,11 @@ impl Editor {
                 device.core.cmd_bind_vertex_buffers(
                     command_buffer,
                     0,
-                    &[resources.get_buffer(mesh_buffer_handle).handle],
-                    &[0],
+                    &[
+                        resources.get_buffer(mesh_buffer_handle).handle,
+                        resources.get_buffer(mesh_attributes_handle).handle,
+                    ],
+                    &[0, 0],
                 );
 
                 device.core.cmd_bind_pipeline(
@@ -341,12 +344,7 @@ impl Drop for Editor {
 }
 
 fn slice_to_bytes<T>(slice: &[T]) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            slice.as_ptr() as *const u8,
-            slice.len() * std::mem::size_of::<T>(),
-        )
-    }
+    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
 }
 
 fn bytes_to_u32(slice: &[u8]) -> &[u32] {

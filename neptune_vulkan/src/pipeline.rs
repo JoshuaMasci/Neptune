@@ -8,26 +8,42 @@ pub struct FramebufferDesc<'a> {
     pub stencil_attachment: Option<vk::Format>,
 }
 
-pub struct VertexInputDesc {
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct VertexAttribute {
+    pub shader_location: u32,
     pub format: vk::Format,
-    pub stride: u32,
+    pub offset: u32,
 }
 
-pub struct RasterPipelineDesc<'a> {
-    pub framebuffer: FramebufferDesc<'a>,
-    pub vertex_input: VertexInputDesc,
-    pub vertex_shader: &'a [u32],
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct VertexBufferLayout<'a> {
+    pub stride: u32,
+    pub input_rate: vk::VertexInputRate,
+    pub attributes: &'a [VertexAttribute],
+}
+
+//TODO: make enum for mesh shading?
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct VertexState<'a> {
+    pub shader_code: &'a [u32], //TODO: Shader Module
+    pub layouts: &'a [VertexBufferLayout<'a>],
+}
+
+//TODO: make this more similar to RasterPipelineDescription in commit 533d92aa25659f2c9f5b93d67f6185f5110f9562
+pub struct RasterPipelineDescription<'a> {
+    pub vertex: VertexState<'a>,
+    pub framebuffer: FramebufferDesc<'a>, //TODO: Move to a fragment state struct
     pub fragment_shader: Option<&'a [u32]>,
 }
 
 pub(crate) fn create_pipeline(
     device: &ash::Device,
     pipeline_layout: vk::PipelineLayout,
-    desc: &RasterPipelineDesc,
+    desc: &RasterPipelineDescription,
 ) -> Result<vk::Pipeline, VulkanError> {
     let vertex_shader_module = unsafe {
         device.create_shader_module(
-            &vk::ShaderModuleCreateInfo::builder().code(desc.vertex_shader),
+            &vk::ShaderModuleCreateInfo::builder().code(desc.vertex.shader_code),
             None,
         )
     }?;
@@ -66,20 +82,34 @@ pub(crate) fn create_pipeline(
         .primitive_restart_enable(false)
         .build();
 
-    let vertex_binding_desc = [vk::VertexInputBindingDescription::builder()
-        .binding(0)
-        .stride(desc.vertex_input.stride)
-        .input_rate(vk::VertexInputRate::VERTEX)
-        .build()];
-    let vertex_attribute_desc = [vk::VertexInputAttributeDescription::builder()
-        .binding(0)
-        .location(0)
-        .format(desc.vertex_input.format)
-        .offset(0)
-        .build()];
+    let mut vertex_binding_descriptions = Vec::with_capacity(desc.vertex.layouts.len());
+    let mut vertex_attribute_descriptions = Vec::new();
+    for (i, buffer_layout) in desc.vertex.layouts.iter().enumerate() {
+        let i = i as u32;
+
+        vertex_binding_descriptions.push(
+            vk::VertexInputBindingDescription::builder()
+                .binding(i)
+                .stride(buffer_layout.stride)
+                .input_rate(buffer_layout.input_rate)
+                .build(),
+        );
+
+        for vertex_attribute in buffer_layout.attributes {
+            vertex_attribute_descriptions.push(
+                vk::VertexInputAttributeDescription::builder()
+                    .binding(i)
+                    .location(vertex_attribute.shader_location)
+                    .format(vertex_attribute.format)
+                    .offset(vertex_attribute.offset)
+                    .build(),
+            );
+        }
+    }
+
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
-        .vertex_binding_descriptions(&vertex_binding_desc)
-        .vertex_attribute_descriptions(&vertex_attribute_desc);
+        .vertex_binding_descriptions(&vertex_binding_descriptions)
+        .vertex_attribute_descriptions(&vertex_attribute_descriptions);
 
     //Since dynamic states will be used here, the following values are just placeholders
     let viewports = [vk::Viewport {

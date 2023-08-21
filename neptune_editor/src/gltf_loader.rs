@@ -157,7 +157,7 @@ fn create_vertex_buffer<T>(
 
     let buffer = device.create_buffer(
         "Vertex Buffer",
-        &neptune_vulkan::BufferDesc {
+        &neptune_vulkan::BufferDescription {
             size: data_bytes.len() as vk::DeviceSize,
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             memory_location: MemoryLocation::GpuOnly,
@@ -173,7 +173,7 @@ fn create_index_buffer(
 ) -> anyhow::Result<neptune_vulkan::BufferHandle> {
     let buffer = device.create_buffer(
         "Index Buffer",
-        &neptune_vulkan::BufferDesc {
+        &neptune_vulkan::BufferDescription {
             size: data.len() as vk::DeviceSize,
             usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             memory_location: MemoryLocation::GpuOnly,

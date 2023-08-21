@@ -1,6 +1,6 @@
-use crate::buffer::{Buffer, BufferDesc};
+use crate::buffer::{Buffer, BufferDescription};
 use crate::device::AshDevice;
-use crate::image::{Image, ImageDesc2D};
+use crate::image::{Image, ImageDescription2D};
 use crate::render_graph::{TransientImageDesc, TransientImageSize, VkImage};
 use crate::swapchain::SwapchainImage;
 use crate::{BufferKey, ImageHandle, ImageKey};
@@ -263,7 +263,7 @@ impl TransientResourceManager {
 
     pub(crate) fn resolve_buffers(
         &mut self,
-        transient_image_descriptions: &[BufferDesc],
+        transient_image_descriptions: &[BufferDescription],
     ) -> &Vec<Buffer> {
         for buffer_description in transient_image_descriptions {
             self.transient_buffers.push(
@@ -292,7 +292,7 @@ impl TransientResourceManager {
 
             let image = Image::new_2d(
                 &self.device,
-                ImageDesc2D::from_transient(
+                ImageDescription2D::from_transient(
                     [image_extent.width, image_extent.height],
                     image_description,
                 ),

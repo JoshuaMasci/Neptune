@@ -92,14 +92,14 @@ pub struct TransientImageDesc {
 
 #[derive(Default)]
 pub struct RenderGraph {
-    pub(crate) transient_buffers: Vec<BufferDesc>,
+    pub(crate) transient_buffers: Vec<BufferDescription>,
     pub(crate) transient_images: Vec<TransientImageDesc>,
     pub(crate) swapchain_images: Vec<SurfaceHandle>,
     pub(crate) passes: Vec<RenderPass>,
 }
 
 impl RenderGraph {
-    pub fn create_transient_buffer(&mut self, desc: BufferDesc) -> BufferHandle {
+    pub fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle {
         let index = self.transient_buffers.len();
         self.transient_buffers.push(desc);
         BufferHandle::Transient(index)
@@ -181,7 +181,7 @@ impl<'a> RenderGraphResources<'a> {
     }
 }
 
-use crate::buffer::{Buffer, BufferDesc};
+use crate::buffer::{Buffer, BufferDescription};
 use crate::device::{AshDevice, AshQueue};
 use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
 use crate::swapchain::{SwapchainImage, SwapchainManager};

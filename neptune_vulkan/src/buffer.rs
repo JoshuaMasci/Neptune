@@ -3,7 +3,7 @@ use crate::VulkanError;
 use ash::vk;
 
 #[derive(Debug, Clone)]
-pub struct BufferDesc {
+pub struct BufferDescription {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
     pub memory_location: gpu_allocator::MemoryLocation,
@@ -68,7 +68,7 @@ impl Buffer {
 
     pub fn new_desc(
         device: &AshDevice,
-        buffer_description: &BufferDesc,
+        buffer_description: &BufferDescription,
     ) -> Result<Self, VulkanError> {
         Self::new(
             device,

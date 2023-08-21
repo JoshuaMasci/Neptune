@@ -13,12 +13,14 @@ neptune_vulkan = { path = "../neptune_vulkan" }
 
 log = "0.4"
 pretty_env_logger = "0.5.0"
+anyhow = "1.0.72"
+serde = "1.0.183"
+memoffset = "0.9.0"
+glam = "0.24.0"
+
 raw-window-handle = "0.5.0"
 winit = "0.28.3"
-image = "0.24.2"
-glam = "0.24.0"
-anyhow = "1.0.72"
+
 gltf = {version =  "1.2.0", features = ["utils"] }
 rfd = "0.11.4"
 
-serde = "1.0.183"

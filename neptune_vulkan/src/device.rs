@@ -1,6 +1,6 @@
-use crate::buffer::{Buffer, BufferDesc};
+use crate::buffer::{Buffer, BufferDescription};
 use crate::instance::AshInstance;
-use crate::pipeline::RasterPipelineDesc;
+use crate::pipeline::RasterPipelineDescription;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
 use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
@@ -188,7 +188,7 @@ impl Device {
     pub fn create_buffer(
         &mut self,
         name: &str,
-        desc: &BufferDesc,
+        desc: &BufferDescription,
     ) -> Result<BufferHandle, VulkanError> {
         let buffer = Buffer::new_desc(&self.device, desc)?;
 
@@ -211,7 +211,7 @@ impl Device {
     ) -> Result<(), VulkanError> {
         let mut staging_buffer = Buffer::new_desc(
             &self.device,
-            &BufferDesc {
+            &BufferDescription {
                 size: data.len() as vk::DeviceSize,
                 usage: vk::BufferUsageFlags::TRANSFER_SRC,
                 memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
@@ -243,7 +243,7 @@ impl Device {
     ) -> Result<BufferHandle, VulkanError> {
         let buffer = self.create_buffer(
             name,
-            &BufferDesc {
+            &BufferDescription {
                 size: data.len() as vk::DeviceSize,
                 usage,
                 memory_location,
@@ -273,7 +273,7 @@ impl Device {
     //TODO: use vulkan future and some aync pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_raster_pipeline(
         &mut self,
-        desc: &RasterPipelineDesc,
+        desc: &RasterPipelineDescription,
     ) -> Result<RasterPipelineHandle, VulkanError> {
         let new_pipeline =
             crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, desc)?;

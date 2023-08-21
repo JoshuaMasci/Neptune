@@ -13,11 +13,13 @@ mod swapchain;
 pub use ash::vk;
 pub use gpu_allocator;
 
-pub use buffer::BufferDesc;
+pub use buffer::BufferDescription;
 pub use device::{Device, DeviceSettings};
 pub use instance::AppInfo;
 pub use instance::Instance;
-pub use pipeline::{FramebufferDesc, RasterPipelineDesc, VertexInputDesc};
+pub use pipeline::{
+    FramebufferDesc, RasterPipelineDescription, VertexAttribute, VertexBufferLayout, VertexState,
+};
 pub use render_graph::*;
 pub use swapchain::SurfaceSettings;
 

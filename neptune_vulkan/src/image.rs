@@ -16,7 +16,7 @@ pub fn vk_format_get_aspect_flags(format: vk::Format) -> vk::ImageAspectFlags {
 }
 
 #[derive(Debug, Clone)]
-pub struct ImageDesc2D {
+pub struct ImageDescription2D {
     pub size: [u32; 2],
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
@@ -24,7 +24,7 @@ pub struct ImageDesc2D {
     pub memory_location: gpu_allocator::MemoryLocation,
 }
 
-impl ImageDesc2D {
+impl ImageDescription2D {
     pub(crate) fn from_transient(resolved_size: [u32; 2], desc: &TransientImageDesc) -> Self {
         Self {
             size: resolved_size,
@@ -47,7 +47,7 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn new_2d(device: &AshDevice, desc: ImageDesc2D) -> Self {
+    pub fn new_2d(device: &AshDevice, desc: ImageDescription2D) -> Self {
         let create_info = vk::ImageCreateInfo::builder()
             .format(desc.format)
             .extent(vk::Extent3D {
