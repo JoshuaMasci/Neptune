@@ -148,12 +148,24 @@ impl Editor {
 
             device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
                 vertex: vertex_state,
-                framebuffer: neptune_vulkan::FramebufferDesc {
-                    color_attachments: &[vk::Format::B8G8R8A8_UNORM],
-                    depth_attachment: Some(vk::Format::D16_UNORM),
-                    stencil_attachment: None,
+                primitive: neptune_vulkan::PrimitiveState {
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    cull_mode: vk::CullModeFlags::NONE,
                 },
-                fragment_shader: Some(fragment_shader_code),
+                depth_state: Some(neptune_vulkan::DepthState {
+                    format: vk::Format::D16_UNORM,
+                    depth_enabled: true,
+                    write_depth: true,
+                    depth_op: vk::CompareOp::LESS,
+                }),
+                fragment: Some(neptune_vulkan::FragmentState {
+                    shader_code: fragment_shader_code,
+                    targets: &[neptune_vulkan::ColorTargetState {
+                        format: vk::Format::B8G8R8A8_UNORM,
+                        blend: None,
+                        write_mask: vk::ColorComponentFlags::RGBA,
+                    }],
+                }),
             })?
         };
 

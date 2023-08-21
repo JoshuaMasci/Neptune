@@ -18,7 +18,8 @@ pub use device::{Device, DeviceSettings};
 pub use instance::AppInfo;
 pub use instance::Instance;
 pub use pipeline::{
-    FramebufferDesc, RasterPipelineDescription, VertexAttribute, VertexBufferLayout, VertexState,
+    ColorTargetState, DepthState, FragmentState, FramebufferDesc, PrimitiveState,
+    RasterPipelineDescription, VertexAttribute, VertexBufferLayout, VertexState,
 };
 pub use render_graph::*;
 pub use swapchain::SurfaceSettings;

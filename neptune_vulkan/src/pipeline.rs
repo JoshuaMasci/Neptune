@@ -29,28 +29,56 @@ pub struct VertexState<'a> {
     pub layouts: &'a [VertexBufferLayout<'a>],
 }
 
-//TODO: make this more similar to RasterPipelineDescription in commit 533d92aa25659f2c9f5b93d67f6185f5110f9562
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct PrimitiveState {
+    pub front_face: vk::FrontFace,
+    pub cull_mode: vk::CullModeFlags,
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct DepthState {
+    pub format: vk::Format,
+    pub depth_enabled: bool,
+    pub write_depth: bool,
+    pub depth_op: vk::CompareOp,
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct ColorTargetState {
+    pub format: vk::Format,
+    pub blend: Option<()>, //TODO: blend states
+    pub write_mask: vk::ColorComponentFlags,
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct FragmentState<'a> {
+    pub shader_code: &'a [u32], //TODO: Shader Module
+    pub targets: &'a [ColorTargetState],
+}
+
+//TODO: StencilState
 pub struct RasterPipelineDescription<'a> {
     pub vertex: VertexState<'a>,
-    pub framebuffer: FramebufferDesc<'a>, //TODO: Move to a fragment state struct
-    pub fragment_shader: Option<&'a [u32]>,
+    pub primitive: PrimitiveState,
+    pub depth_state: Option<DepthState>,
+    pub fragment: Option<FragmentState<'a>>,
 }
 
 pub(crate) fn create_pipeline(
     device: &ash::Device,
     pipeline_layout: vk::PipelineLayout,
-    desc: &RasterPipelineDescription,
+    pipeline_description: &RasterPipelineDescription,
 ) -> Result<vk::Pipeline, VulkanError> {
     let vertex_shader_module = unsafe {
         device.create_shader_module(
-            &vk::ShaderModuleCreateInfo::builder().code(desc.vertex.shader_code),
+            &vk::ShaderModuleCreateInfo::builder().code(pipeline_description.vertex.shader_code),
             None,
         )
     }?;
-    let fragment_shader_module = if let Some(fragment_shader) = desc.fragment_shader {
+    let fragment_shader_module = if let Some(fragment_state) = &pipeline_description.fragment {
         Some(unsafe {
             device.create_shader_module(
-                &vk::ShaderModuleCreateInfo::builder().code(fragment_shader),
+                &vk::ShaderModuleCreateInfo::builder().code(fragment_state.shader_code),
                 None,
             )
         }?)
@@ -82,9 +110,10 @@ pub(crate) fn create_pipeline(
         .primitive_restart_enable(false)
         .build();
 
-    let mut vertex_binding_descriptions = Vec::with_capacity(desc.vertex.layouts.len());
+    let mut vertex_binding_descriptions =
+        Vec::with_capacity(pipeline_description.vertex.layouts.len());
     let mut vertex_attribute_descriptions = Vec::new();
-    for (i, buffer_layout) in desc.vertex.layouts.iter().enumerate() {
+    for (i, buffer_layout) in pipeline_description.vertex.layouts.iter().enumerate() {
         let i = i as u32;
 
         vertex_binding_descriptions.push(
@@ -152,40 +181,35 @@ pub(crate) fn create_pipeline(
         .alpha_to_coverage_enable(false)
         .alpha_to_one_enable(false);
 
-    //TODO: allow config
+    //TODO: allow config of stencil
     let mut depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder();
-    if desc.framebuffer.depth_attachment.is_some() {
+    if let Some(depth_state) = &pipeline_description.depth_state {
         depth_stencil_state = depth_stencil_state
-            .depth_test_enable(true)
-            .depth_write_enable(true)
-            .depth_compare_op(vk::CompareOp::LESS)
+            .depth_test_enable(depth_state.depth_enabled)
+            .depth_write_enable(depth_state.write_depth)
+            .depth_compare_op(depth_state.depth_op)
             .depth_bounds_test_enable(false)
             .min_depth_bounds(0.0)
             .max_depth_bounds(1.0)
     }
-    if desc.framebuffer.stencil_attachment.is_some() {
-        //TODO: configure stencil
-        depth_stencil_state = depth_stencil_state
-            .stencil_test_enable(false)
-            .front(vk::StencilOpState::default())
-            .back(vk::StencilOpState::default());
+
+    let mut color_attachments_formats: Vec<vk::Format> = Vec::new();
+    let mut color_attachments_blend_states: Vec<vk::PipelineColorBlendAttachmentState> = Vec::new();
+    if let Some(fragment_state) = &pipeline_description.fragment {
+        for color_target in fragment_state.targets {
+            color_attachments_formats.push(color_target.format);
+            color_attachments_blend_states.push(
+                vk::PipelineColorBlendAttachmentState::builder()
+                    .color_write_mask(color_target.write_mask)
+                    .blend_enable(false)
+                    .build(),
+            );
+        }
     }
 
-    //TODO: allow config
-    let color_blend_attachments: Vec<vk::PipelineColorBlendAttachmentState> = desc
-        .framebuffer
-        .color_attachments
-        .iter()
-        .map(|_format| {
-            vk::PipelineColorBlendAttachmentState::builder()
-                .color_write_mask(vk::ColorComponentFlags::RGBA)
-                .blend_enable(false)
-                .build()
-        })
-        .collect();
     let color_blending_state = vk::PipelineColorBlendStateCreateInfo::builder()
         .logic_op_enable(false)
-        .attachments(&color_blend_attachments)
+        .attachments(&color_attachments_blend_states)
         .build();
 
     //TODO: allow depth bias (and other?) dynamic state
@@ -195,13 +219,14 @@ pub(crate) fn create_pipeline(
         .build();
 
     let mut dynamic_rendering = vk::PipelineRenderingCreateInfo::builder()
-        .color_attachment_formats(&desc.framebuffer.color_attachments);
-    if let Some(depth_format) = desc.framebuffer.depth_attachment {
-        dynamic_rendering = dynamic_rendering.depth_attachment_format(depth_format);
+        .color_attachment_formats(&color_attachments_formats);
+    if let Some(depth_state) = &pipeline_description.depth_state {
+        dynamic_rendering = dynamic_rendering.depth_attachment_format(depth_state.format);
     }
-    if let Some(stencil_format) = desc.framebuffer.stencil_attachment {
-        dynamic_rendering = dynamic_rendering.stencil_attachment_format(stencil_format);
-    }
+    //TODO: stencil
+    // if let Some(stencil_format) = pipeline_description.framebuffer.stencil_attachment {
+    //     dynamic_rendering = dynamic_rendering.stencil_attachment_format(stencil_format);
+    // }
 
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
         .push_next(&mut dynamic_rendering)
