@@ -187,12 +187,15 @@ impl Editor {
 
         let raster_pipeline = {
             let vertex_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/triangle.vert.spv"));
+                bytes_to_u32(include_bytes!("../resource/shader/mesh_static.vert.spv"));
             let fragment_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/triangle.frag.spv"));
+                bytes_to_u32(include_bytes!("../resource/shader/mesh.frag.spv"));
 
             let vertex_state = neptune_vulkan::VertexState {
-                shader_code: vertex_shader_code,
+                shader: neptune_vulkan::ShaderStage {
+                    code: vertex_shader_code,
+                    entry: "main",
+                },
                 layouts: &[
                     mesh::VertexPosition::VERTEX_BUFFER_LAYOUT,
                     mesh::VertexAttributes::VERTEX_BUFFER_LAYOUT,
@@ -212,7 +215,10 @@ impl Editor {
                     depth_op: vk::CompareOp::LESS,
                 }),
                 fragment: Some(neptune_vulkan::FragmentState {
-                    shader_code: fragment_shader_code,
+                    shader: neptune_vulkan::ShaderStage {
+                        code: fragment_shader_code,
+                        entry: "main",
+                    },
                     targets: &[neptune_vulkan::ColorTargetState {
                         format: vk::Format::B8G8R8A8_UNORM,
                         blend: None,

@@ -22,10 +22,16 @@ pub struct VertexBufferLayout<'a> {
     pub attributes: &'a [VertexAttribute],
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct ShaderStage<'a> {
+    pub code: &'a [u32], //TODO: Shader Module
+    pub entry: &'a str,
+}
+
 //TODO: make enum for mesh shading?
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct VertexState<'a> {
-    pub shader_code: &'a [u32], //TODO: Shader Module
+    pub shader: ShaderStage<'a>,
     pub layouts: &'a [VertexBufferLayout<'a>],
 }
 
@@ -52,7 +58,7 @@ pub struct ColorTargetState {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct FragmentState<'a> {
-    pub shader_code: &'a [u32], //TODO: Shader Module
+    pub shader: ShaderStage<'a>,
     pub targets: &'a [ColorTargetState],
 }
 
@@ -71,14 +77,14 @@ pub(crate) fn create_pipeline(
 ) -> Result<vk::Pipeline, VulkanError> {
     let vertex_shader_module = unsafe {
         device.create_shader_module(
-            &vk::ShaderModuleCreateInfo::builder().code(pipeline_description.vertex.shader_code),
+            &vk::ShaderModuleCreateInfo::builder().code(pipeline_description.vertex.shader.code),
             None,
         )
     }?;
     let fragment_shader_module = if let Some(fragment_state) = &pipeline_description.fragment {
         Some(unsafe {
             device.create_shader_module(
-                &vk::ShaderModuleCreateInfo::builder().code(fragment_state.shader_code),
+                &vk::ShaderModuleCreateInfo::builder().code(fragment_state.shader.code),
                 None,
             )
         }?)
@@ -86,23 +92,32 @@ pub(crate) fn create_pipeline(
         None
     };
 
-    let entry_point_name = std::ffi::CString::new("main").unwrap();
+    let vertex_entry_point_name =
+        std::ffi::CString::new(pipeline_description.vertex.shader.entry).unwrap();
 
     let mut shader_stages = vec![vk::PipelineShaderStageCreateInfo::builder()
         .stage(vk::ShaderStageFlags::VERTEX)
         .module(vertex_shader_module)
-        .name(&entry_point_name)
+        .name(&vertex_entry_point_name)
         .build()];
 
-    if let Some(fragment_shader_module) = fragment_shader_module {
+    //Keep around to guarantee lifetime
+    let _fragment_entry_point_name = if let Some(fragment_shader_module) = fragment_shader_module {
+        let fragment_entry_point_name =
+            std::ffi::CString::new(pipeline_description.fragment.as_ref().unwrap().shader.entry)
+                .unwrap();
+
         shader_stages.push(
             vk::PipelineShaderStageCreateInfo::builder()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(fragment_shader_module)
-                .name(&entry_point_name)
+                .name(&fragment_entry_point_name)
                 .build(),
         );
-    }
+        Some(fragment_entry_point_name)
+    } else {
+        None
+    };
 
     //TODO: allow config
     let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()

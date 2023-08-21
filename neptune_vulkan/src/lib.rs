@@ -19,7 +19,7 @@ pub use instance::AppInfo;
 pub use instance::Instance;
 pub use pipeline::{
     ColorTargetState, DepthState, FragmentState, FramebufferDesc, PrimitiveState,
-    RasterPipelineDescription, VertexAttribute, VertexBufferLayout, VertexState,
+    RasterPipelineDescription, ShaderStage, VertexAttribute, VertexBufferLayout, VertexState,
 };
 pub use render_graph::*;
 pub use swapchain::SurfaceSettings;
