@@ -93,83 +93,46 @@ impl Editor {
         )?;
         device.update_data_to_buffer(buffer, &vec![255; 1024])?;
 
-        // if let Some(gltf_file) = rfd::FileDialog::new()
-        //     .add_filter("gltf", &["gltf", "glb"])
-        //     .set_title("pick a gltf file")
-        //     .pick_file()
-        // {
-        //     let (gltf_doc, buffers, _image_buffers) = {
-        //         let now = std::time::Instant::now();
-        //         let result = gltf::import(gltf_file)?;
-        //         info!("File Loading: {}", now.elapsed().as_secs_f32());
-        //         result
-        //     };
-        //
-        //     let meshes = {
-        //         let now = std::time::Instant::now();
-        //         let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
-        //         info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
-        //         result
-        //     };
-        //
-        //     let mut total_vertex_count = 0;
-        //
-        //     for mesh in meshes.iter().enumerate() {
-        //         let vertex_count: usize =
-        //             mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
-        //
-        //         total_vertex_count += vertex_count;
-        //
-        //         info!(
-        //             "Mesh({}): {} Primitives: {} Vertex: {}",
-        //             mesh.0,
-        //             mesh.1.name,
-        //             mesh.1.primitives.len(),
-        //             vertex_count,
-        //         );
-        //     }
-        //
-        //     info!("Total Scene Vertex Count: {}", total_vertex_count);
-        // }
-
-        let raster_pipeline = {
-            let vertex_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/triangle.vert.spv"));
-            let fragment_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/triangle.frag.spv"));
-
-            let vertex_state = neptune_vulkan::VertexState {
-                shader_code: vertex_shader_code,
-                layouts: &[
-                    mesh::VertexPosition::VERTEX_BUFFER_LAYOUT,
-                    mesh::VertexAttributes::VERTEX_BUFFER_LAYOUT,
-                ],
+        let meshes = if let Some(gltf_file) = rfd::FileDialog::new()
+            .add_filter("gltf", &["gltf", "glb"])
+            .set_title("pick a gltf file")
+            .pick_file()
+        {
+            let (gltf_doc, buffers, _image_buffers) = {
+                let now = std::time::Instant::now();
+                let result = gltf::import(gltf_file)?;
+                info!("File Loading: {}", now.elapsed().as_secs_f32());
+                result
             };
 
-            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
-                vertex: vertex_state,
-                primitive: neptune_vulkan::PrimitiveState {
-                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                    cull_mode: vk::CullModeFlags::NONE,
-                },
-                depth_state: Some(neptune_vulkan::DepthState {
-                    format: vk::Format::D16_UNORM,
-                    depth_enabled: true,
-                    write_depth: true,
-                    depth_op: vk::CompareOp::LESS,
-                }),
-                fragment: Some(neptune_vulkan::FragmentState {
-                    shader_code: fragment_shader_code,
-                    targets: &[neptune_vulkan::ColorTargetState {
-                        format: vk::Format::B8G8R8A8_UNORM,
-                        blend: None,
-                        write_mask: vk::ColorComponentFlags::RGBA,
-                    }],
-                }),
-            })?
-        };
+            let meshes = {
+                let now = std::time::Instant::now();
+                let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
+                info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+                result
+            };
 
-        let mesh = {
+            let mut total_vertex_count = 0;
+
+            for mesh in meshes.iter().enumerate() {
+                let vertex_count: usize =
+                    mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
+
+                total_vertex_count += vertex_count;
+
+                info!(
+                    "Mesh({}): {} Primitives: {} Vertex: {}",
+                    mesh.0,
+                    mesh.1.name,
+                    mesh.1.primitives.len(),
+                    vertex_count,
+                );
+            }
+
+            info!("Total Scene Vertex Count: {}", total_vertex_count);
+
+            meshes
+        } else {
             let position_data = [
                 Vec3::new(-0.75, 0.75, 0.5),
                 Vec3::new(0.0, -0.75, 0.5),
@@ -209,7 +172,7 @@ impl Editor {
                 slice_to_bytes(&attributes_data),
             )?;
 
-            mesh::Mesh {
+            vec![mesh::Mesh {
                 name: "Triangle".to_string(),
                 primitives: vec![crate::mesh::Primitive {
                     bounding_box: BoundingBox::default(),
@@ -219,7 +182,44 @@ impl Editor {
                     skinning_buffer: None,
                     index_buffer: None,
                 }],
-            }
+            }]
+        };
+
+        let raster_pipeline = {
+            let vertex_shader_code =
+                bytes_to_u32(include_bytes!("../resource/shader/triangle.vert.spv"));
+            let fragment_shader_code =
+                bytes_to_u32(include_bytes!("../resource/shader/triangle.frag.spv"));
+
+            let vertex_state = neptune_vulkan::VertexState {
+                shader_code: vertex_shader_code,
+                layouts: &[
+                    mesh::VertexPosition::VERTEX_BUFFER_LAYOUT,
+                    mesh::VertexAttributes::VERTEX_BUFFER_LAYOUT,
+                ],
+            };
+
+            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
+                vertex: vertex_state,
+                primitive: neptune_vulkan::PrimitiveState {
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    cull_mode: vk::CullModeFlags::NONE,
+                },
+                depth_state: Some(neptune_vulkan::DepthState {
+                    format: vk::Format::D16_UNORM,
+                    depth_enabled: true,
+                    write_depth: true,
+                    depth_op: vk::CompareOp::LESS,
+                }),
+                fragment: Some(neptune_vulkan::FragmentState {
+                    shader_code: fragment_shader_code,
+                    targets: &[neptune_vulkan::ColorTargetState {
+                        format: vk::Format::B8G8R8A8_UNORM,
+                        blend: None,
+                        write_mask: vk::ColorComponentFlags::RGBA,
+                    }],
+                }),
+            })?
         };
 
         Ok(Self {
@@ -227,7 +227,7 @@ impl Editor {
             surface_handle,
             device,
             raster_pipeline,
-            meshes: vec![mesh],
+            meshes,
         })
     }
 
@@ -284,6 +284,9 @@ impl Editor {
         let mesh_buffer_handle = mesh1.position_buffer;
         let mesh_attributes_handle = mesh1.attributes_buffer;
         let mesh_vertex_count = mesh1.vertex_count as u32;
+
+        let mesh_index_buffer = mesh1.index_buffer.clone();
+
         let raster_pipeline_handle = self.raster_pipeline;
 
         let mut buffer_usages = HashMap::new();
@@ -303,6 +306,17 @@ impl Editor {
                 access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
             },
         );
+
+        if let Some(index_buffer) = &mesh_index_buffer {
+            buffer_usages.insert(
+                index_buffer.buffer,
+                BufferAccess {
+                    write: false,
+                    stage: vk::PipelineStageFlags2::INDEX_INPUT_KHR,
+                    access: vk::AccessFlags2::INDEX_READ,
+                },
+            );
+        }
 
         render_graph.add_pass(RenderPass {
             name: "Raster Pass".to_string(),
@@ -337,9 +351,22 @@ impl Editor {
                     resources.get_raster_pipeline(raster_pipeline_handle),
                 );
 
-                device
-                    .core
-                    .cmd_draw(command_buffer, mesh_vertex_count, 1, 0, 0);
+                if let Some(index_buffer) = &mesh_index_buffer {
+                    device.core.cmd_bind_index_buffer(
+                        command_buffer,
+                        resources.get_buffer(index_buffer.buffer).handle,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+
+                    device
+                        .core
+                        .cmd_draw_indexed(command_buffer, index_buffer.count, 1, 0, 0, 0);
+                } else {
+                    device
+                        .core
+                        .cmd_draw(command_buffer, mesh_vertex_count, 1, 0, 0);
+                }
             })),
         });
 

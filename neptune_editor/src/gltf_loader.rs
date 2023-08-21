@@ -49,7 +49,7 @@ pub fn load_primitive(
             None => return Err(anyhow!("Mesh contains no vertex positions")),
             Some(positions) => positions,
         }
-        .map(|position| Vec3::from_array(position))
+        .map(Vec3::from_array)
         .collect();
         (create_vertex_buffer(device, &positions)?, positions.len())
     };
@@ -124,7 +124,7 @@ pub fn load_primitive(
             let indices_vec: Vec<u32> = indices.into_u32().collect();
             Some(IndexBuffer {
                 count: indices_vec.len() as u32,
-                buffer: create_vertex_buffer(device, &indices_vec)?,
+                buffer: create_index_buffer(device, &indices_vec)?,
             })
         }
     };
@@ -163,22 +163,26 @@ fn create_vertex_buffer<T>(
             memory_location: MemoryLocation::GpuOnly,
         },
     )?;
-    device.update_data_to_buffer(buffer, &data_bytes)?;
+    device.update_data_to_buffer(buffer, data_bytes)?;
     Ok(buffer)
 }
 
 fn create_index_buffer(
     device: &mut neptune_vulkan::Device,
-    data: &[u8],
+    data: &[u32],
 ) -> anyhow::Result<neptune_vulkan::BufferHandle> {
+    let data_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+    };
+
     let buffer = device.create_buffer(
         "Index Buffer",
         &neptune_vulkan::BufferDescription {
-            size: data.len() as vk::DeviceSize,
+            size: std::mem::size_of_val(data) as vk::DeviceSize,
             usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             memory_location: MemoryLocation::GpuOnly,
         },
     )?;
-    device.update_data_to_buffer(buffer, &data)?;
+    device.update_data_to_buffer(buffer, data_bytes)?;
     Ok(buffer)
 }

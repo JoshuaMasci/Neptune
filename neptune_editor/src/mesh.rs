@@ -7,12 +7,12 @@ pub struct VertexPosition(glam::Vec3);
 impl VertexPosition {
     pub const VERTEX_BUFFER_LAYOUT: neptune_vulkan::VertexBufferLayout<'static> =
         neptune_vulkan::VertexBufferLayout {
-            stride: std::mem::size_of::<glam::Vec3>() as u32,
+            stride: std::mem::size_of::<Self>() as u32,
             input_rate: vk::VertexInputRate::VERTEX,
             attributes: &[neptune_vulkan::VertexAttribute {
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
                 shader_location: 0,
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: offset_of!(Self, 0) as u32,
             }],
         };
 }
@@ -63,12 +63,33 @@ pub struct VertexSkinningAttributes {
     pub weight: glam::Vec4,
 }
 
+impl VertexSkinningAttributes {
+    pub const VERTEX_BUFFER_LAYOUT: neptune_vulkan::VertexBufferLayout<'static> =
+        neptune_vulkan::VertexBufferLayout {
+            stride: std::mem::size_of::<Self>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+            attributes: &[
+                neptune_vulkan::VertexAttribute {
+                    shader_location: 5,
+                    format: vk::Format::R32G32B32_UINT,
+                    offset: offset_of!(Self, joint) as u32,
+                },
+                neptune_vulkan::VertexAttribute {
+                    shader_location: 6,
+                    format: vk::Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(Self, weight) as u32,
+                },
+            ],
+        };
+}
+
 #[derive(Debug, Default, Copy, Clone)]
 pub struct BoundingBox {
     pub min: glam::Vec3,
     pub max: glam::Vec3,
 }
 
+#[derive(Clone)]
 pub struct IndexBuffer {
     pub buffer: neptune_vulkan::BufferHandle,
     pub count: u32,
