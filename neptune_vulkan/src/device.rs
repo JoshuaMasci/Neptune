@@ -234,6 +234,24 @@ impl Device {
 
         Ok(())
     }
+    pub fn create_buffer_init(
+        &mut self,
+        name: &str,
+        usage: vk::BufferUsageFlags,
+        memory_location: gpu_allocator::MemoryLocation,
+        data: &[u8],
+    ) -> Result<BufferHandle, VulkanError> {
+        let buffer = self.create_buffer(
+            name,
+            &BufferDesc {
+                size: data.len() as vk::DeviceSize,
+                usage,
+                memory_location,
+            },
+        )?;
+        self.update_data_to_buffer(buffer, data)?;
+        Ok(buffer)
+    }
 
     pub fn create_image(&mut self) -> Result<ImageHandle, VulkanError> {
         todo!()
@@ -255,10 +273,10 @@ impl Device {
     //TODO: use vulkan future and some aync pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_raster_pipeline(
         &mut self,
-        desc: RasterPipelineDesc,
+        desc: &RasterPipelineDesc,
     ) -> Result<RasterPipelineHandle, VulkanError> {
         let new_pipeline =
-            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, &desc)?;
+            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, desc)?;
         Ok(RasterPipelineHandle(
             self.raster_pipelines.insert(new_pipeline),
         ))
@@ -362,6 +380,7 @@ impl Device {
             &mut self.persistent_resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,
+            &self.raster_pipelines,
         )?;
         Ok(())
     }
@@ -370,6 +389,8 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
+            let _ = self.device.core.device_wait_idle();
+
             for (_key, pipeline) in self.raster_pipelines.iter() {
                 self.device.core.destroy_pipeline(*pipeline, None);
             }

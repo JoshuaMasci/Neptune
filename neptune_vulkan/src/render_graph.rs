@@ -1,4 +1,7 @@
-use crate::{BufferHandle, BufferKey, ImageHandle, ImageKey, SurfaceHandle};
+use crate::{
+    BufferHandle, BufferKey, ImageHandle, ImageKey, RasterPipelineHandle, RasterPipleineKey,
+    SurfaceHandle,
+};
 use ash::vk;
 use std::collections::HashMap;
 
@@ -132,6 +135,7 @@ pub struct RenderGraphResources<'a> {
     swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
     transient_images: &'a [VkImage],
     transient_buffers: &'a [Buffer],
+    raster_pipelines: &'a slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
 }
 
 impl<'a> RenderGraphResources<'a> {
@@ -170,6 +174,10 @@ impl<'a> RenderGraphResources<'a> {
                 .expect("render pass tried to access invalid persistent buffer"),
             BufferHandle::Transient(index) => &self.transient_buffers[index],
         }
+    }
+
+    pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {
+        self.raster_pipelines.get(pipeline.0).unwrap().clone()
     }
 }
 
@@ -248,6 +256,7 @@ impl BasicRenderGraphExecutor {
         persistent_resource_manager: &mut PersistentResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
         swapchain_manager: &mut SwapchainManager,
+        raster_pipelines: &slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
     ) -> ash::prelude::VkResult<()> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
 
@@ -369,6 +378,7 @@ impl BasicRenderGraphExecutor {
                 swapchain_images: &swapchain_image,
                 transient_images: &transient_images,
                 transient_buffers,
+                raster_pipelines,
             };
 
             if let Some(transfer_pass) = transfer_pass {

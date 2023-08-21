@@ -2,22 +2,22 @@ use crate::VulkanError;
 use ash::vk;
 
 //TODO: put blending config in here as well
-pub struct FramebufferDesc {
-    color_attachments: Vec<vk::Format>,
-    depth_attachment: Option<vk::Format>,
-    stencil_attachment: Option<vk::Format>,
+pub struct FramebufferDesc<'a> {
+    pub color_attachments: &'a [vk::Format],
+    pub depth_attachment: Option<vk::Format>,
+    pub stencil_attachment: Option<vk::Format>,
 }
 
 pub struct VertexInputDesc {
-    format: vk::Format,
-    stride: u32,
+    pub format: vk::Format,
+    pub stride: u32,
 }
 
 pub struct RasterPipelineDesc<'a> {
-    framebuffer: FramebufferDesc,
-    vertex_input: VertexInputDesc,
-    vertex_shader: &'a [u32],
-    fragment_shader: Option<&'a [u32]>,
+    pub framebuffer: FramebufferDesc<'a>,
+    pub vertex_input: VertexInputDesc,
+    pub vertex_shader: &'a [u32],
+    pub fragment_shader: Option<&'a [u32]>,
 }
 
 pub(crate) fn create_pipeline(
@@ -45,6 +45,7 @@ pub(crate) fn create_pipeline(
     let entry_point_name = std::ffi::CString::new("main").unwrap();
 
     let mut shader_stages = vec![vk::PipelineShaderStageCreateInfo::builder()
+        .stage(vk::ShaderStageFlags::VERTEX)
         .module(vertex_shader_module)
         .name(&entry_point_name)
         .build()];
@@ -52,6 +53,7 @@ pub(crate) fn create_pipeline(
     if let Some(fragment_shader_module) = fragment_shader_module {
         shader_stages.push(
             vk::PipelineShaderStageCreateInfo::builder()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(fragment_shader_module)
                 .name(&entry_point_name)
                 .build(),

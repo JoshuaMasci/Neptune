@@ -14,6 +14,7 @@ pub struct VertexSkinningAttributes {
     pub weight: glam::Vec4,
 }
 
+#[derive(Debug, Default, Copy, Clone)]
 pub struct BoundingBox {
     pub min: glam::Vec3,
     pub max: glam::Vec3,

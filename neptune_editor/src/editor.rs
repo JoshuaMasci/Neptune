@@ -1,8 +1,10 @@
-use crate::gltf_loader;
+use crate::mesh::BoundingBox;
+use crate::{gltf_loader, mesh};
+use glam::{Vec3, Vec4};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{
-    vk, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer, ImageAccess,
-    RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
+    vk, BufferAccess, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer,
+    ImageAccess, RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
 };
 use std::collections::HashMap;
 
@@ -11,6 +13,9 @@ pub struct Editor {
     surface_handle: neptune_vulkan::SurfaceHandle,
 
     device: neptune_vulkan::Device,
+
+    raster_pipeline: neptune_vulkan::RasterPipelineHandle,
+    meshes: Vec<crate::mesh::Mesh>,
 }
 
 impl Editor {
@@ -88,49 +93,137 @@ impl Editor {
         )?;
         device.update_data_to_buffer(buffer, &vec![255; 1024])?;
 
-        if let Some(gltf_file) = rfd::FileDialog::new()
-            .add_filter("gltf", &["gltf", "glb"])
-            .set_title("pick a gltf file")
-            .pick_file()
-        {
-            let (gltf_doc, buffers, _image_buffers) = {
-                let now = std::time::Instant::now();
-                let result = gltf::import(gltf_file)?;
-                info!("File Loading: {}", now.elapsed().as_secs_f32());
-                result
+        // if let Some(gltf_file) = rfd::FileDialog::new()
+        //     .add_filter("gltf", &["gltf", "glb"])
+        //     .set_title("pick a gltf file")
+        //     .pick_file()
+        // {
+        //     let (gltf_doc, buffers, _image_buffers) = {
+        //         let now = std::time::Instant::now();
+        //         let result = gltf::import(gltf_file)?;
+        //         info!("File Loading: {}", now.elapsed().as_secs_f32());
+        //         result
+        //     };
+        //
+        //     let meshes = {
+        //         let now = std::time::Instant::now();
+        //         let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
+        //         info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+        //         result
+        //     };
+        //
+        //     let mut total_vertex_count = 0;
+        //
+        //     for mesh in meshes.iter().enumerate() {
+        //         let vertex_count: usize =
+        //             mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
+        //
+        //         total_vertex_count += vertex_count;
+        //
+        //         info!(
+        //             "Mesh({}): {} Primitives: {} Vertex: {}",
+        //             mesh.0,
+        //             mesh.1.name,
+        //             mesh.1.primitives.len(),
+        //             vertex_count,
+        //         );
+        //     }
+        //
+        //     info!("Total Scene Vertex Count: {}", total_vertex_count);
+        // }
+
+        let raster_pipeline = {
+            let vertex_shader_code_bytes = include_bytes!("../resource/shader/triangle.vert.spv");
+            let fragment_shader_code_bytes = include_bytes!("../resource/shader/triangle.frag.spv");
+
+            let vertex_shader_code: &[u32] = unsafe {
+                std::slice::from_raw_parts(
+                    vertex_shader_code_bytes.as_ptr() as *const u32,
+                    vertex_shader_code_bytes.len() / std::mem::size_of::<u32>(),
+                )
             };
 
-            let meshes = {
-                let now = std::time::Instant::now();
-                let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
-                info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
-                result
+            let fragment_shader_code: &[u32] = unsafe {
+                std::slice::from_raw_parts(
+                    fragment_shader_code_bytes.as_ptr() as *const u32,
+                    fragment_shader_code_bytes.len() / std::mem::size_of::<u32>(),
+                )
             };
 
-            let mut total_vertex_count = 0;
+            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDesc {
+                framebuffer: neptune_vulkan::FramebufferDesc {
+                    color_attachments: &[vk::Format::B8G8R8A8_UNORM],
+                    depth_attachment: Some(vk::Format::D16_UNORM),
+                    stencil_attachment: None,
+                },
+                vertex_input: neptune_vulkan::VertexInputDesc {
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    stride: std::mem::size_of::<[f32; 3]>() as u32,
+                },
+                vertex_shader: vertex_shader_code,
+                fragment_shader: Some(fragment_shader_code),
+            })?
+        };
 
-            for mesh in meshes.iter().enumerate() {
-                let vertex_count: usize =
-                    mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
+        let mesh = {
+            let position_data = [
+                Vec3::new(-0.75, 0.75, 0.5),
+                Vec3::new(0.0, -0.75, 0.5),
+                Vec3::new(0.75, 0.75, 0.5),
+            ];
+            let position_buffer = device.create_buffer_init(
+                "Triangle Position Buffer",
+                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                slice_to_bytes(&position_data),
+            )?;
 
-                total_vertex_count += vertex_count;
+            let attributes_data = [
+                mesh::VertexAttributes {
+                    normal: Vec3::Z,
+                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    tex_coords: Vec4::ZERO,
+                    color: Vec4::new(1.0, 0.0, 0.0, 1.0),
+                },
+                mesh::VertexAttributes {
+                    normal: Vec3::Z,
+                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    tex_coords: Vec4::ZERO,
+                    color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                },
+                mesh::VertexAttributes {
+                    normal: Vec3::Z,
+                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    tex_coords: Vec4::ZERO,
+                    color: Vec4::new(0.0, 1.0, 0.0, 1.0),
+                },
+            ];
+            let attributes_buffer = device.create_buffer_init(
+                "Triangle Attribute Buffer",
+                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                slice_to_bytes(&attributes_data),
+            )?;
 
-                info!(
-                    "Mesh({}): {} Primitives: {} Vertex: {}",
-                    mesh.0,
-                    mesh.1.name,
-                    mesh.1.primitives.len(),
-                    vertex_count,
-                );
+            mesh::Mesh {
+                name: "Triangle".to_string(),
+                primitives: vec![crate::mesh::Primitive {
+                    bounding_box: BoundingBox::default(),
+                    vertex_count: 3,
+                    position_buffer,
+                    attributes_buffer,
+                    skinning_buffer: None,
+                    index_buffer: None,
+                }],
             }
-
-            info!("Total Scene Vertex Count: {}", total_vertex_count);
-        }
+        };
 
         Ok(Self {
             instance,
             surface_handle,
             device,
+            raster_pipeline,
+            meshes: vec![mesh],
         })
     }
 
@@ -183,10 +276,26 @@ impl Editor {
             },
         );
 
+        let mesh1 = &self.meshes[0].primitives[0];
+
+        let mut buffer_usages = HashMap::new();
+        buffer_usages.insert(
+            mesh1.position_buffer,
+            BufferAccess {
+                write: false,
+                stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
+                access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+            },
+        );
+
+        let mesh_buffer_handle = mesh1.position_buffer.clone();
+        let mesh_vertex_count = mesh1.vertex_count as u32;
+        let raster_pipeline_handle = self.raster_pipeline.clone();
+
         render_graph.add_pass(RenderPass {
             name: "Raster Pass".to_string(),
             queue: Default::default(),
-            buffer_usages: Default::default(),
+            buffer_usages,
             image_usages,
             framebuffer: Some(Framebuffer {
                 color_attachments: vec![ColorAttachment::new_clear(
@@ -199,7 +308,24 @@ impl Editor {
                 )),
                 input_attachments: vec![],
             }),
-            build_cmd_fn: None,
+            build_cmd_fn: Some(Box::new(move |device, command_buffer, resources| unsafe {
+                device.core.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &[resources.get_buffer(mesh_buffer_handle).handle],
+                    &[0],
+                );
+
+                device.core.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    resources.get_raster_pipeline(raster_pipeline_handle),
+                );
+
+                device
+                    .core
+                    .cmd_draw(command_buffer, mesh_vertex_count, 1, 0, 0);
+            })),
         });
 
         self.device.submit_frame(&render_graph)?;
@@ -211,5 +337,23 @@ impl Drop for Editor {
     fn drop(&mut self) {
         self.device.release_surface(self.surface_handle);
         self.instance.destroy_surface(self.surface_handle);
+    }
+}
+
+fn slice_to_bytes<T>(slice: &[T]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            slice.as_ptr() as *const u8,
+            slice.len() * std::mem::size_of::<T>(),
+        )
+    }
+}
+
+fn bytes_to_u32(slice: &[u8]) -> &[u32] {
+    unsafe {
+        std::slice::from_raw_parts(
+            slice.as_ptr() as *const u32,
+            slice.len() / std::mem::size_of::<u32>(),
+        )
     }
 }

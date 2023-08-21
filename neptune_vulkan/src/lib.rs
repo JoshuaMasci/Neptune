@@ -17,6 +17,7 @@ pub use buffer::BufferDesc;
 pub use device::{Device, DeviceSettings};
 pub use instance::AppInfo;
 pub use instance::Instance;
+pub use pipeline::{FramebufferDesc, RasterPipelineDesc, VertexInputDesc};
 pub use render_graph::*;
 pub use swapchain::SurfaceSettings;
 
