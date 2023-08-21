@@ -139,14 +139,6 @@ pub fn load_primitive(
     })
 }
 
-fn create_gltf_vertex_buffer<T: gltf::accessor::Item>(
-    device: &mut neptune_vulkan::Device,
-    iter: gltf::accessor::util::Iter<T>,
-) -> anyhow::Result<neptune_vulkan::BufferHandle> {
-    let data_vec: Vec<T> = iter.collect();
-    create_vertex_buffer(device, &data_vec)
-}
-
 fn create_vertex_buffer<T>(
     device: &mut neptune_vulkan::Device,
     data: &[T],

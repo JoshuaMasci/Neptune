@@ -5,6 +5,7 @@ use neptune_vulkan::vk;
 pub struct VertexPosition(glam::Vec3);
 
 impl VertexPosition {
+    #[allow(unused)]
     pub const VERTEX_BUFFER_LAYOUT: neptune_vulkan::VertexBufferLayout<'static> =
         neptune_vulkan::VertexBufferLayout {
             stride: std::mem::size_of::<Self>() as u32,
@@ -27,6 +28,7 @@ pub struct VertexAttributes {
 }
 
 impl VertexAttributes {
+    #[allow(unused)]
     pub const VERTEX_BUFFER_LAYOUT: neptune_vulkan::VertexBufferLayout<'static> =
         neptune_vulkan::VertexBufferLayout {
             stride: std::mem::size_of::<Self>() as u32,
@@ -64,6 +66,7 @@ pub struct VertexSkinningAttributes {
 }
 
 impl VertexSkinningAttributes {
+    #[allow(unused)]
     pub const VERTEX_BUFFER_LAYOUT: neptune_vulkan::VertexBufferLayout<'static> =
         neptune_vulkan::VertexBufferLayout {
             stride: std::mem::size_of::<Self>() as u32,

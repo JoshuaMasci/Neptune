@@ -186,10 +186,8 @@ impl Editor {
         };
 
         let raster_pipeline = {
-            let vertex_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/mesh_static.vert.spv"));
-            let fragment_shader_code =
-                bytes_to_u32(include_bytes!("../resource/shader/mesh.frag.spv"));
+            let vertex_shader_code = crate::shader::MESH_STATIC_VERT;
+            let fragment_shader_code = crate::shader::MESH_FRAG;
 
             let vertex_state = neptune_vulkan::VertexState {
                 shader: neptune_vulkan::ShaderStage {
@@ -390,13 +388,4 @@ impl Drop for Editor {
 
 fn slice_to_bytes<T>(slice: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
-}
-
-fn bytes_to_u32(slice: &[u8]) -> &[u32] {
-    unsafe {
-        std::slice::from_raw_parts(
-            slice.as_ptr() as *const u32,
-            slice.len() / std::mem::size_of::<u32>(),
-        )
-    }
 }
