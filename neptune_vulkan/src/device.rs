@@ -4,10 +4,11 @@ use crate::instance::AshInstance;
 use crate::pipeline::RasterPipelineDescription;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
 use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
+use crate::sampler::SamplerDescription;
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
     BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
-    SurfaceHandle, VulkanError, VulkanFuture,
+    SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
 use log::error;
@@ -274,6 +275,16 @@ impl Device {
         ))
     }
     pub fn destroy_image(&mut self, image_handle: ImageHandle) {
+        todo!()
+    }
+
+    pub fn create_sampler(
+        &mut self,
+        sampler_description: &SamplerDescription,
+    ) -> Result<SamplerHandle, VulkanError> {
+        todo!()
+    }
+    pub fn destroy_sampler(&mut self, sampler_handle: SamplerHandle) {
         todo!()
     }
 

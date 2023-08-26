@@ -30,6 +30,7 @@ slotmap::new_key_type! {
     pub struct SurfaceKey;
     pub struct BufferKey;
     pub struct ImageKey;
+    pub struct SamplerKey;
     pub struct ComputePipelineKey;
     pub struct RasterPipleineKey;
 }
@@ -55,6 +56,9 @@ pub enum ImageHandle {
     Transient(usize),
     Swapchain(usize),
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct SamplerHandle(SamplerKey);
 
 #[derive(Copy, Clone, Debug)]
 pub struct ComputePipelineHandle(ComputePipelineKey);
