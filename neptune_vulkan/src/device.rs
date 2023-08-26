@@ -1,4 +1,5 @@
 use crate::buffer::{Buffer, BufferDescription};
+use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::RasterPipelineDescription;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
@@ -9,6 +10,7 @@ use crate::{
     SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
+use log::error;
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -152,8 +154,7 @@ impl Device {
 
         let device =
             AshDevice::new(instance, physical_device, &[graphics_queue_index]).map(Arc::new)?;
-        let persistent_resource_manager =
-            PersistentResourceManager::new(device.clone(), settings.frames_in_flight);
+        let persistent_resource_manager = PersistentResourceManager::new(device.clone());
         let transient_resource_manager = TransientResourceManager::new(device.clone());
         let swapchain_manager = SwapchainManager::default();
 
@@ -188,33 +189,34 @@ impl Device {
     pub fn create_buffer(
         &mut self,
         name: &str,
-        desc: &BufferDescription,
+        description: &BufferDescription,
     ) -> Result<BufferHandle, VulkanError> {
-        let buffer = Buffer::new_desc(&self.device, desc)?;
-
-        if let Some(debug_util) = &self.device.instance.debug_utils {
-            debug_util.set_object_name(self.device.core.handle(), buffer.handle, name);
-        }
+        let buffer = Buffer::new(self.device.clone(), name, description)?;
 
         Ok(BufferHandle::Persistent(
             self.persistent_resource_manager.add_buffer(buffer),
         ))
     }
     pub fn destroy_buffer(&mut self, buffer_handle: BufferHandle) {
-        //TODO: this
-        let _ = buffer_handle;
+        match buffer_handle {
+            BufferHandle::Persistent(key) => self.persistent_resource_manager.remove_buffer(key),
+            BufferHandle::Transient(index) => {
+                error!("Transient buffer {index} cannot be destroyed, this shouldn't happen")
+            }
+        }
     }
     pub fn update_data_to_buffer(
         &mut self,
         buffer_handle: BufferHandle,
         data: &[u8],
     ) -> Result<(), VulkanError> {
-        let mut staging_buffer = Buffer::new_desc(
-            &self.device,
+        let mut staging_buffer = Buffer::new(
+            self.device.clone(),
+            "Stating Buffer",
             &BufferDescription {
                 size: data.len() as vk::DeviceSize,
                 usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                memory_location: gpu_allocator::MemoryLocation::CpuToGpu,
+                location: gpu_allocator::MemoryLocation::CpuToGpu,
             },
         )?;
 
@@ -238,7 +240,7 @@ impl Device {
         &mut self,
         name: &str,
         usage: vk::BufferUsageFlags,
-        memory_location: gpu_allocator::MemoryLocation,
+        location: gpu_allocator::MemoryLocation,
         data: &[u8],
     ) -> Result<BufferHandle, VulkanError> {
         let buffer = self.create_buffer(
@@ -246,15 +248,23 @@ impl Device {
             &BufferDescription {
                 size: data.len() as vk::DeviceSize,
                 usage,
-                memory_location,
+                location,
             },
         )?;
         self.update_data_to_buffer(buffer, data)?;
         Ok(buffer)
     }
 
-    pub fn create_image(&mut self) -> Result<ImageHandle, VulkanError> {
-        todo!()
+    pub fn create_image(
+        &mut self,
+        name: &str,
+        description: &ImageDescription2D,
+    ) -> Result<ImageHandle, VulkanError> {
+        let image = Image::new_2d(self.device.clone(), name, description)?;
+
+        Ok(ImageHandle::Persistent(
+            self.persistent_resource_manager.add_image(image),
+        ))
     }
     pub fn destroy_image(&mut self, image_handle: ImageHandle) {
         todo!()
@@ -273,10 +283,10 @@ impl Device {
     //TODO: use vulkan future and some aync pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_raster_pipeline(
         &mut self,
-        desc: &RasterPipelineDescription,
+        description: &RasterPipelineDescription,
     ) -> Result<RasterPipelineHandle, VulkanError> {
         let new_pipeline =
-            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, desc)?;
+            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, description)?;
         Ok(RasterPipelineHandle(
             self.raster_pipelines.insert(new_pipeline),
         ))
@@ -322,8 +332,6 @@ impl Device {
     }
 
     pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        // let mut render_graph = RenderGraph::default();
-
         let transfer_pass = (!self.transfer_list.is_empty()).then(|| {
             let mut buffer_usages = HashMap::new();
 

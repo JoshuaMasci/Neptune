@@ -1,15 +1,18 @@
 use crate::device::AshDevice;
 use crate::VulkanError;
 use ash::vk;
+use log::warn;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct BufferDescription {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
-    pub memory_location: gpu_allocator::MemoryLocation,
+    pub location: gpu_allocator::MemoryLocation,
 }
 
 pub struct Buffer {
+    pub device: Arc<AshDevice>,
     pub handle: vk::Buffer,
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub size: vk::DeviceSize,
@@ -19,72 +22,75 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(
-        device: &AshDevice,
-        create_info: &vk::BufferCreateInfo,
-        location: gpu_allocator::MemoryLocation,
+        device: Arc<AshDevice>,
+        name: &str,
+        description: &BufferDescription,
     ) -> Result<Self, VulkanError> {
-        let handle = unsafe { device.core.create_buffer(create_info, None) }?;
+        let handle = unsafe {
+            device.core.create_buffer(
+                &vk::BufferCreateInfo::builder()
+                    .size(description.size)
+                    .usage(description.usage)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            )
+        }?;
+
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.set_object_name(device.core.handle(), handle, name);
+        }
 
         let requirements = unsafe { device.core.get_buffer_memory_requirements(handle) };
 
-        let allocation = device.allocator.lock().unwrap().allocate(
+        let allocation = match device.allocator.lock().unwrap().allocate(
             &gpu_allocator::vulkan::AllocationCreateDesc {
-                name: "Buffer Allocation",
+                name,
                 requirements,
-                location,
+                location: description.location,
                 linear: true,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             },
-        );
-
-        if allocation.is_err() {
-            unsafe {
+        ) {
+            Ok(allocation) => allocation,
+            Err(err) => unsafe {
                 device.core.destroy_buffer(handle, None);
-            }
-        }
-        let allocation = allocation?;
+                return Err(VulkanError::from(err));
+            },
+        };
 
-        let bind_result = unsafe {
+        if let Err(err) = unsafe {
             device
                 .core
                 .bind_buffer_memory(handle, allocation.memory(), allocation.offset())
-        };
+        } {
+            unsafe {
+                device.core.destroy_buffer(handle, None);
+            };
+            let _ = device.allocator.lock().unwrap().free(allocation);
+            return Err(VulkanError::from(err));
+        }
 
-        let new_self = Self {
+        Ok(Self {
+            device,
             handle,
             allocation,
-            size: create_info.size,
-            usage: create_info.usage,
-            location,
-        };
-
-        if let Err(err) = bind_result {
-            new_self.delete(&device);
-            Err(err.into())
-        } else {
-            Ok(new_self)
-        }
+            size: description.size,
+            usage: description.usage,
+            location: description.location,
+        })
     }
+}
 
-    pub fn new_desc(
-        device: &AshDevice,
-        buffer_description: &BufferDescription,
-    ) -> Result<Self, VulkanError> {
-        Self::new(
-            device,
-            &vk::BufferCreateInfo::builder()
-                .size(buffer_description.size)
-                .usage(buffer_description.usage)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE),
-            buffer_description.memory_location,
-        )
-    }
-
-    pub fn delete(self, device: &AshDevice) {
+impl Drop for Buffer {
+    fn drop(&mut self) {
         unsafe {
-            device.core.destroy_buffer(self.handle, None);
+            self.device.core.destroy_buffer(self.handle, None);
         };
-
-        let _ = device.allocator.lock().unwrap().free(self.allocation);
+        let _ = self
+            .device
+            .allocator
+            .lock()
+            .unwrap()
+            .free(std::mem::take(&mut self.allocation));
     }
 }

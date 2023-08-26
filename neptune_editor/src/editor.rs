@@ -88,7 +88,7 @@ impl Editor {
             &neptune_vulkan::BufferDescription {
                 size: 1024,
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                memory_location: MemoryLocation::GpuOnly,
+                location: MemoryLocation::GpuOnly,
             },
         )?;
         device.update_data_to_buffer(buffer, &vec![255; 1024])?;

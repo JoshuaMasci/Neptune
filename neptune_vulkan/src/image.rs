@@ -1,6 +1,8 @@
 use crate::device::AshDevice;
 use crate::render_graph::TransientImageDesc;
+use crate::VulkanError;
 use ash::vk;
+use std::sync::Arc;
 
 pub fn vk_format_get_aspect_flags(format: vk::Format) -> vk::ImageAspectFlags {
     match format {
@@ -21,7 +23,7 @@ pub struct ImageDescription2D {
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
-    pub memory_location: gpu_allocator::MemoryLocation,
+    pub location: gpu_allocator::MemoryLocation,
 }
 
 impl ImageDescription2D {
@@ -31,15 +33,17 @@ impl ImageDescription2D {
             format: desc.format,
             usage: desc.usage,
             mip_levels: desc.mip_levels,
-            memory_location: desc.memory_location,
+            location: desc.memory_location,
         }
     }
 }
 
 pub struct Image {
+    pub device: Arc<AshDevice>,
     pub handle: vk::Image,
     pub view: vk::ImageView,
     pub allocation: gpu_allocator::vulkan::Allocation,
+    pub sampler: Option<vk::Sampler>,
     pub extend: vk::Extent2D,
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
@@ -47,80 +51,115 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn new_2d(device: &AshDevice, desc: ImageDescription2D) -> Self {
-        let create_info = vk::ImageCreateInfo::builder()
-            .format(desc.format)
-            .extent(vk::Extent3D {
-                width: desc.size[0],
-                height: desc.size[1],
-                depth: 1,
-            })
-            .usage(desc.usage)
-            .array_layers(1)
-            .mip_levels(desc.mip_levels)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .image_type(vk::ImageType::TYPE_2D);
+    pub fn new_2d(
+        device: Arc<AshDevice>,
+        name: &str,
+        description: &ImageDescription2D,
+    ) -> Result<Self, VulkanError> {
+        let handle = unsafe {
+            device.core.create_image(
+                &vk::ImageCreateInfo::builder()
+                    .format(description.format)
+                    .extent(vk::Extent3D {
+                        width: description.size[0],
+                        height: description.size[1],
+                        depth: 1,
+                    })
+                    .usage(description.usage)
+                    .array_layers(1)
+                    .mip_levels(description.mip_levels)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .image_type(vk::ImageType::TYPE_2D),
+                None,
+            )
+        }?;
 
-        let handle =
-            unsafe { device.core.create_image(&create_info, None) }.expect("TODO: return error");
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.set_object_name(device.core.handle(), handle, name);
+        }
 
         let requirements = unsafe { device.core.get_image_memory_requirements(handle) };
 
-        let allocation = device
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name: "Image Allocation",
+        let allocation = match device.allocator.lock().unwrap().allocate(
+            &gpu_allocator::vulkan::AllocationCreateDesc {
+                name,
                 requirements,
-                location: desc.memory_location,
+                location: description.location,
                 linear: true,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            })
-            .expect("TODO: return error");
+            },
+        ) {
+            Ok(allocation) => allocation,
+            Err(err) => unsafe {
+                device.core.destroy_image(handle, None);
+                return Err(VulkanError::from(err));
+            },
+        };
 
-        unsafe {
+        if let Err(err) = unsafe {
             device
                 .core
                 .bind_image_memory(handle, allocation.memory(), allocation.offset())
-                .expect("TODO: return error");
+        } {
+            unsafe {
+                device.core.destroy_image(handle, None);
+            };
+            let _ = device.allocator.lock().unwrap().free(allocation);
+            return Err(VulkanError::from(err));
         }
 
         let mut view_create_info = vk::ImageViewCreateInfo::builder()
             .image(handle)
-            .format(desc.format)
+            .format(description.format)
             .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk_format_get_aspect_flags(desc.format),
+                aspect_mask: vk_format_get_aspect_flags(description.format),
                 base_mip_level: 0,
-                level_count: desc.mip_levels,
+                level_count: description.mip_levels,
                 base_array_layer: 0,
                 layer_count: 1,
             })
             .view_type(vk::ImageViewType::TYPE_2D);
 
-        let view = unsafe { device.core.create_image_view(&view_create_info, None) }
-            .expect("TODO: return error");
+        let view = match unsafe { device.core.create_image_view(&view_create_info, None) } {
+            Ok(view) => view,
+            Err(err) => {
+                unsafe {
+                    device.core.destroy_image(handle, None);
+                };
+                let _ = device.allocator.lock().unwrap().free(allocation);
+                return Err(VulkanError::from(err));
+            }
+        };
 
-        Self {
+        Ok(Self {
+            device,
             handle,
             view,
             allocation,
+            sampler: None,
             extend: vk::Extent2D {
-                width: create_info.extent.width,
-                height: create_info.extent.height,
+                width: description.size[0],
+                height: description.size[1],
             },
-            format: create_info.format,
-            usage: create_info.usage,
-            location: desc.memory_location,
-        }
+            format: description.format,
+            usage: description.usage,
+            location: description.location,
+        })
     }
+}
 
-    pub fn delete(self, device: &AshDevice) {
+impl Drop for Image {
+    fn drop(&mut self) {
         unsafe {
-            device.core.destroy_image_view(self.view, None);
-            device.core.destroy_image(self.handle, None);
+            self.device.core.destroy_image_view(self.view, None);
+            self.device.core.destroy_image(self.handle, None);
         };
 
-        let _ = device.allocator.lock().unwrap().free(self.allocation);
+        let _ = self
+            .device
+            .allocator
+            .lock()
+            .unwrap()
+            .free(std::mem::take(&mut self.allocation));
     }
 }

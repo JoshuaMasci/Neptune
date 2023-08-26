@@ -152,7 +152,7 @@ fn create_vertex_buffer<T>(
         &neptune_vulkan::BufferDescription {
             size: data_bytes.len() as vk::DeviceSize,
             usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            memory_location: MemoryLocation::GpuOnly,
+            location: MemoryLocation::GpuOnly,
         },
     )?;
     device.update_data_to_buffer(buffer, data_bytes)?;
@@ -172,7 +172,7 @@ fn create_index_buffer(
         &neptune_vulkan::BufferDescription {
             size: std::mem::size_of_val(data) as vk::DeviceSize,
             usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            memory_location: MemoryLocation::GpuOnly,
+            location: MemoryLocation::GpuOnly,
         },
     )?;
     device.update_data_to_buffer(buffer, data_bytes)?;
