@@ -57,12 +57,18 @@ impl AshDevice {
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-        let mut vulkan_1_1_features =
-            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let mut vulkan_1_1_features = vk::PhysicalDeviceVulkan12Features::builder()
+            .buffer_device_address(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
+            .descriptor_binding_sampled_image_update_after_bind(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::builder()
             .synchronization2(true)
             .dynamic_rendering(true);
+
+        let mut physical_device_robustness2_features =
+            vk::PhysicalDeviceRobustness2FeaturesEXT::builder().null_descriptor(true);
 
         let core = unsafe {
             instance.core.create_device(
@@ -72,6 +78,7 @@ impl AshDevice {
                     .enabled_extension_names(&device_extension_names_raw)
                     .push_next(&mut vulkan_1_1_features)
                     .push_next(&mut vulkan_1_3_features)
+                    .push_next(&mut physical_device_robustness2_features)
                     .build(),
                 None,
             )
@@ -158,21 +165,21 @@ impl Device {
         let transient_resource_manager = TransientResourceManager::new(device.clone());
         let swapchain_manager = SwapchainManager::default();
 
-        let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
-
-        //TODO: bindless descriptor layout
         let pipeline_layout = unsafe {
             device.core.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::builder().push_constant_ranges(&[
-                    vk::PushConstantRange {
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&[persistent_resource_manager.descriptor_set.get_layout()])
+                    .push_constant_ranges(&[vk::PushConstantRange {
                         stage_flags: vk::ShaderStageFlags::ALL,
                         offset: 0,
                         size: 128,
-                    },
-                ]),
+                    }]),
                 None,
             )?
         };
+
+        let graph_executor =
+            BasicRenderGraphExecutor::new(device.clone(), pipeline_layout, graphics_queue_index)?;
 
         Ok(Device {
             device,
@@ -280,7 +287,7 @@ impl Device {
     }
 
     //TODO: allow multiple creation of multiple pipelines at once?
-    //TODO: use vulkan future and some aync pipeline creation method to avoid pipeline creation in the main code paths
+    //TODO: use vulkan future and some async pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_raster_pipeline(
         &mut self,
         description: &RasterPipelineDescription,

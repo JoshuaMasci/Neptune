@@ -1,4 +1,5 @@
 use crate::buffer::{Buffer, BufferDescription};
+use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
 use crate::image::{Image, ImageDescription2D};
 use crate::render_graph::{TransientImageDesc, TransientImageSize, VkImage};
@@ -7,7 +8,6 @@ use crate::{BufferKey, ImageHandle, ImageKey};
 use ash::vk;
 use log::warn;
 use slotmap::SlotMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct AshBufferResource {
@@ -26,16 +26,30 @@ pub struct PersistentResourceManager {
 
     images: SlotMap<ImageKey, AshImageHandle>,
     freed_images: Vec<ImageKey>,
+
+    pub(crate) descriptor_set: DescriptorSet,
 }
 
 impl PersistentResourceManager {
     pub fn new(device: Arc<AshDevice>) -> Self {
+        let descriptor_set = DescriptorSet::new(
+            device.clone(),
+            DescriptorCount {
+                storage_buffers: 1024,
+                storage_images: 1024,
+                sampled_images: 1024,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
         Self {
             device,
             buffers: SlotMap::with_key(),
             freed_buffers: Vec::new(),
             images: SlotMap::with_key(),
             freed_images: Vec::new(),
+            descriptor_set,
         }
     }
 
@@ -52,7 +66,11 @@ impl PersistentResourceManager {
         }
     }
 
-    pub fn add_buffer(&mut self, buffer: Buffer) -> BufferKey {
+    pub fn add_buffer(&mut self, mut buffer: Buffer) -> BufferKey {
+        if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
+        }
+
         self.buffers.insert(AshBufferResource { buffer })
     }
 
@@ -64,7 +82,11 @@ impl PersistentResourceManager {
         self.freed_buffers.push(key);
     }
 
-    pub fn add_image(&mut self, image: Image) -> ImageKey {
+    pub fn add_image(&mut self, mut image: Image) -> ImageKey {
+        if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
+            image.storage_binding = Some(self.descriptor_set.bind_storage_image(&image));
+        }
+
         self.images.insert(AshImageHandle { image })
     }
 

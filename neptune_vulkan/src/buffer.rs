@@ -1,7 +1,7 @@
+use crate::descriptor_set::DescriptorBinding;
 use crate::device::AshDevice;
 use crate::VulkanError;
 use ash::vk;
-use log::warn;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -18,6 +18,7 @@ pub struct Buffer {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
     pub location: gpu_allocator::MemoryLocation,
+    pub storage_binding: Option<DescriptorBinding>,
 }
 
 impl Buffer {
@@ -77,7 +78,12 @@ impl Buffer {
             size: description.size,
             usage: description.usage,
             location: description.location,
+            storage_binding: None,
         })
+    }
+
+    pub fn get_storage_binding(&self) -> Option<u32> {
+        self.storage_binding.as_ref().map(|binding| binding.index())
     }
 }
 

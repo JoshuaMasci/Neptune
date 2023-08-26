@@ -1,5 +1,7 @@
+use crate::descriptor_set::DescriptorBinding;
 use crate::device::AshDevice;
 use crate::render_graph::TransientImageDesc;
+use crate::sampler::Sampler;
 use crate::VulkanError;
 use ash::vk;
 use std::sync::Arc;
@@ -43,11 +45,12 @@ pub struct Image {
     pub handle: vk::Image,
     pub view: vk::ImageView,
     pub allocation: gpu_allocator::vulkan::Allocation,
-    pub sampler: Option<vk::Sampler>,
     pub extend: vk::Extent2D,
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
     pub location: gpu_allocator::MemoryLocation,
+    pub storage_binding: Option<DescriptorBinding>,
+    pub combined_image_sampler: Option<(Arc<Sampler>, DescriptorBinding)>,
 }
 
 impl Image {
@@ -136,7 +139,6 @@ impl Image {
             handle,
             view,
             allocation,
-            sampler: None,
             extend: vk::Extent2D {
                 width: description.size[0],
                 height: description.size[1],
@@ -144,7 +146,19 @@ impl Image {
             format: description.format,
             usage: description.usage,
             location: description.location,
+            storage_binding: None,
+            combined_image_sampler: None,
         })
+    }
+
+    pub fn get_storage_binding(&self) -> Option<u32> {
+        self.storage_binding.as_ref().map(|binding| binding.index())
+    }
+
+    pub fn get_sampled_binding(&self) -> Option<u32> {
+        self.combined_image_sampler
+            .as_ref()
+            .map(|(_, binding)| binding.index())
     }
 }
 

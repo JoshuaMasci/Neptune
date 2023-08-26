@@ -1,9 +1,90 @@
 use crate::buffer::Buffer;
 use crate::device::AshDevice;
 use crate::image::Image;
+use crate::sampler::Sampler;
 use crate::VulkanError;
 use ash::vk;
 use std::sync::{Arc, Mutex};
+
+#[derive(Default, Debug, Clone)]
+pub struct DescriptorCount {
+    pub storage_buffers: u16,
+    pub storage_images: u16,
+    pub sampled_images: u16,
+    pub acceleration_structures: u16,
+}
+
+pub struct DescriptorBinding {
+    binding: u16,
+    index: u16,
+    set: Arc<Mutex<DescriptorSetInner>>,
+}
+
+impl DescriptorBinding {
+    pub(crate) fn index(&self) -> u32 {
+        //TODO: Use last 16(?) bits of index to encode the binding for GPU error checking
+        self.index as u32
+    }
+}
+
+impl Drop for DescriptorBinding {
+    fn drop(&mut self) {
+        self.set.lock().unwrap().unbind(self.binding, self.index);
+    }
+}
+
+pub struct DescriptorSet {
+    inner: Arc<Mutex<DescriptorSetInner>>,
+    layout: vk::DescriptorSetLayout,
+    set: vk::DescriptorSet,
+}
+
+impl DescriptorSet {
+    pub fn new(device: Arc<AshDevice>, count: DescriptorCount) -> Result<Self, VulkanError> {
+        let inner = DescriptorSetInner::new(device, count)?;
+        let layout = inner.layout;
+        let set = inner.set;
+        let inner = Arc::new(Mutex::new(inner));
+
+        Ok(Self { inner, layout, set })
+    }
+
+    pub fn get_layout(&self) -> vk::DescriptorSetLayout {
+        self.layout
+    }
+
+    pub fn get_set(&self) -> vk::DescriptorSet {
+        self.set
+    }
+
+    pub fn bind_storage_buffer(&self, buffer: &Buffer) -> DescriptorBinding {
+        DescriptorBinding {
+            binding: DescriptorSetInner::STORAGE_BUFFER_BINDING,
+            index: self.inner.lock().unwrap().bind_storage_buffer(buffer),
+            set: self.inner.clone(),
+        }
+    }
+
+    pub fn bind_storage_image(&self, image: &Image) -> DescriptorBinding {
+        DescriptorBinding {
+            binding: DescriptorSetInner::STORAGE_IMAGE_BINDING,
+            index: self.inner.lock().unwrap().bind_storage_image(image),
+            set: self.inner.clone(),
+        }
+    }
+
+    pub fn bind_sampled_image(&self, image: &Image, sampler: &Sampler) -> DescriptorBinding {
+        DescriptorBinding {
+            binding: DescriptorSetInner::SAMPLED_IMAGE_BINDING,
+            index: self
+                .inner
+                .lock()
+                .unwrap()
+                .bind_sampled_image(image, sampler),
+            set: self.inner.clone(),
+        }
+    }
+}
 
 const EMPTY_BUFFER_INFO: vk::DescriptorBufferInfo = vk::DescriptorBufferInfo {
     buffer: vk::Buffer::null(),
@@ -17,14 +98,7 @@ const EMPTY_IMAGE_INFO: vk::DescriptorImageInfo = vk::DescriptorImageInfo {
     image_layout: vk::ImageLayout::UNDEFINED,
 };
 
-pub struct DescriptorCount {
-    storage_buffers: u16,
-    storage_images: u16,
-    sampled_images: u16,
-    acceleration_structures: u16,
-}
-
-pub struct DescriptorSet {
+pub struct DescriptorSetInner {
     device: Arc<AshDevice>,
     layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
@@ -33,10 +107,10 @@ pub struct DescriptorSet {
     storage_buffer_pool: IndexPool,
     storage_image_pool: IndexPool,
     sampled_image_pool: IndexPool,
-    acceleration_structure_pool: IndexPool,
+    //acceleration_structure_pool: IndexPool,
 }
 
-impl DescriptorSet {
+impl DescriptorSetInner {
     const STORAGE_BUFFER_BINDING: u16 = 0;
     const SAMPLED_IMAGE_BINDING: u16 = 1;
     const STORAGE_IMAGE_BINDING: u16 = 2;
@@ -77,30 +151,31 @@ impl DescriptorSet {
         if count.sampled_images != 0 {
             bindings.push(vk::DescriptorSetLayoutBinding {
                 binding: Self::SAMPLED_IMAGE_BINDING as u32,
-                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: count.sampled_images as u32,
                 stage_flags: vk::ShaderStageFlags::ALL,
                 p_immutable_samplers: std::ptr::null(),
             });
             pool_sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: count.sampled_images as u32,
             });
         }
 
-        if count.acceleration_structures != 0 {
-            bindings.push(vk::DescriptorSetLayoutBinding {
-                binding: Self::ACCELERATION_STRUCTURE_BINDING as u32,
-                descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
-                descriptor_count: count.acceleration_structures as u32,
-                stage_flags: vk::ShaderStageFlags::ALL,
-                p_immutable_samplers: std::ptr::null(),
-            });
-            pool_sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
-                descriptor_count: count.acceleration_structures as u32,
-            });
-        }
+        let _ = count.acceleration_structures;
+        // if count.acceleration_structures != 0 {
+        //     bindings.push(vk::DescriptorSetLayoutBinding {
+        //         binding: Self::ACCELERATION_STRUCTURE_BINDING as u32,
+        //         descriptor_type: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+        //         descriptor_count: count.acceleration_structures as u32,
+        //         stage_flags: vk::ShaderStageFlags::ALL,
+        //         p_immutable_samplers: std::ptr::null(),
+        //     });
+        //     pool_sizes.push(vk::DescriptorPoolSize {
+        //         ty: vk::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+        //         descriptor_count: count.acceleration_structures as u32,
+        //     });
+        // }
 
         let layout = unsafe {
             device.core.create_descriptor_set_layout(
@@ -134,14 +209,15 @@ impl DescriptorSet {
             storage_buffer_pool: IndexPool::new(0..count.storage_buffers),
             storage_image_pool: IndexPool::new(0..count.storage_images),
             sampled_image_pool: IndexPool::new(0..count.sampled_images),
-            acceleration_structure_pool: IndexPool::new(0..count.acceleration_structures),
+            //acceleration_structure_pool: IndexPool::new(0..count.acceleration_structures),
         })
     }
 
     fn unbind(&mut self, binding: u16, index: u16) {
         match binding {
             Self::STORAGE_BUFFER_BINDING => self.unbind_storage_buffer(index),
-            Self::STORAGE_BUFFER_BINDING => self.unbind_storage_buffer(index),
+            Self::STORAGE_IMAGE_BINDING => self.unbind_storage_image(index),
+            Self::SAMPLED_IMAGE_BINDING => self.unbind_sampled_image(index),
             other => panic!("Unknown binding ({})", other),
         }
     }
@@ -200,7 +276,7 @@ impl DescriptorSet {
         );
     }
 
-    fn bind_sampled_image(&mut self, image: &Image) -> u16 {
+    fn bind_sampled_image(&mut self, image: &Image, sampler: &Sampler) -> u16 {
         let index = self
             .sampled_image_pool
             .get()
@@ -210,7 +286,7 @@ impl DescriptorSet {
             Self::SAMPLED_IMAGE_BINDING,
             index,
             &[vk::DescriptorImageInfo {
-                sampler: image.sampler.expect("Sampled image require a sampler"),
+                sampler: sampler.handle,
                 image_view: image.view,
                 image_layout: vk::ImageLayout::GENERAL, //TODO: change this to SHADER_READ_ONLY_OPTIMAL once image transitions are supported
             }],
@@ -287,15 +363,15 @@ impl DescriptorSet {
     }
 }
 
-struct Binding {
-    binding: u16,
-    index: u16,
-    set: Arc<Mutex<DescriptorSet>>,
-}
-
-impl Drop for Binding {
+impl Drop for DescriptorSetInner {
     fn drop(&mut self) {
-        self.set.lock().unwrap().unbind(self.binding, self.index);
+        unsafe {
+            //No need to free the descriptor set, it will be destroyed up with the pool
+            self.device.core.destroy_descriptor_pool(self.pool, None);
+            self.device
+                .core
+                .destroy_descriptor_set_layout(self.layout, None);
+        }
     }
 }
 

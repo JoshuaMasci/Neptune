@@ -1,7 +1,4 @@
-use crate::{
-    BufferHandle, BufferKey, ImageHandle, ImageKey, RasterPipelineHandle, RasterPipleineKey,
-    SurfaceHandle,
-};
+use crate::{BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey, SurfaceHandle};
 use ash::vk;
 use std::collections::HashMap;
 
@@ -192,6 +189,8 @@ pub struct BasicRenderGraphExecutor {
     device: Arc<AshDevice>,
     queue: AshQueue,
 
+    pipeline_layout: vk::PipelineLayout,
+
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
 
@@ -200,7 +199,11 @@ pub struct BasicRenderGraphExecutor {
 }
 
 impl BasicRenderGraphExecutor {
-    pub fn new(device: Arc<AshDevice>, device_queue_index: u32) -> ash::prelude::VkResult<Self> {
+    pub fn new(
+        device: Arc<AshDevice>,
+        pipeline_layout: vk::PipelineLayout,
+        device_queue_index: u32,
+    ) -> ash::prelude::VkResult<Self> {
         let queue = device.queues[device_queue_index as usize].clone();
 
         let command_pool = unsafe {
@@ -242,6 +245,7 @@ impl BasicRenderGraphExecutor {
         Ok(Self {
             device,
             queue,
+            pipeline_layout,
             command_pool,
             command_buffer,
             swapchain_semaphores,
@@ -329,6 +333,23 @@ impl BasicRenderGraphExecutor {
                 .core
                 .begin_command_buffer(self.command_buffer, &vk::CommandBufferBeginInfo::builder())
                 .unwrap();
+
+            let pipeline_bind_points = [
+                vk::PipelineBindPoint::COMPUTE,
+                vk::PipelineBindPoint::GRAPHICS,
+            ];
+            let layout = self.pipeline_layout;
+            let set = persistent_resource_manager.descriptor_set.get_set();
+            for pipeline_bind_point in pipeline_bind_points {
+                self.device.core.cmd_bind_descriptor_sets(
+                    self.command_buffer,
+                    pipeline_bind_point,
+                    layout,
+                    0,
+                    &[set],
+                    &[],
+                );
+            }
 
             // Transition Swapchain to General
             if !swapchain_image.is_empty() {

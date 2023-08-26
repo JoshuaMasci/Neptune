@@ -174,7 +174,7 @@ impl Editor {
 
             vec![mesh::Mesh {
                 name: "Triangle".to_string(),
-                primitives: vec![crate::mesh::Primitive {
+                primitives: vec![mesh::Primitive {
                     bounding_box: BoundingBox::default(),
                     vertex_count: 3,
                     position_buffer,

@@ -8,6 +8,7 @@ mod interface;
 mod pipeline;
 mod render_graph;
 mod resource_managers;
+mod sampler;
 mod swapchain;
 
 //Public Types
