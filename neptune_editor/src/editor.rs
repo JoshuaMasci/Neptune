@@ -1,12 +1,18 @@
-use crate::mesh::BoundingBox;
+use crate::mesh::{Mesh, Primitive};
 use crate::{gltf_loader, mesh};
-use glam::{Vec3, Vec4};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{
     vk, BufferAccess, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer,
-    ImageAccess, RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
+    ImageAccess, ImageHandle, RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
 };
 use std::collections::HashMap;
+
+#[derive(clap::Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct EditorConfig {
+    #[arg(short = 'p', long, value_name = "FILE")]
+    gltf_scene_path: Option<std::path::PathBuf>,
+}
 
 pub struct Editor {
     instance: neptune_vulkan::Instance,
@@ -15,7 +21,8 @@ pub struct Editor {
     device: neptune_vulkan::Device,
 
     raster_pipeline: neptune_vulkan::RasterPipelineHandle,
-    meshes: Vec<crate::mesh::Mesh>,
+
+    scene: GltfScene,
 }
 
 impl Editor {
@@ -23,10 +30,11 @@ impl Editor {
         W: raw_window_handle::HasRawDisplayHandle + raw_window_handle::HasRawWindowHandle,
     >(
         window: &W,
+        config: &EditorConfig,
     ) -> anyhow::Result<Self> {
         let mut instance = neptune_vulkan::Instance::new(
             &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
-            &neptune_vulkan::AppInfo::new("Neptune Editor", [0, 0, 1, 0]),
+            &neptune_vulkan::AppInfo::new(crate::APP_NAME, [0, 0, 1, 0]),
             Some(window.raw_display_handle()),
         )?;
 
@@ -83,108 +91,6 @@ impl Editor {
             },
         )?;
 
-        let buffer = device.create_buffer(
-            "Test Buffer",
-            &neptune_vulkan::BufferDescription {
-                size: 1024,
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                location: MemoryLocation::GpuOnly,
-            },
-        )?;
-        device.update_data_to_buffer(buffer, &vec![255; 1024])?;
-
-        let meshes = if let Some(gltf_file) = rfd::FileDialog::new()
-            .add_filter("gltf", &["gltf", "glb"])
-            .set_title("pick a gltf file")
-            .pick_file()
-        {
-            let (gltf_doc, buffers, _image_buffers) = {
-                let now = std::time::Instant::now();
-                let result = gltf::import(gltf_file)?;
-                info!("File Loading: {}", now.elapsed().as_secs_f32());
-                result
-            };
-
-            let meshes = {
-                let now = std::time::Instant::now();
-                let result = gltf_loader::load_meshes(&mut device, &gltf_doc, &buffers)?;
-                info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
-                result
-            };
-
-            let mut total_vertex_count = 0;
-
-            for mesh in meshes.iter().enumerate() {
-                let vertex_count: usize =
-                    mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
-
-                total_vertex_count += vertex_count;
-
-                info!(
-                    "Mesh({}): {} Primitives: {} Vertex: {}",
-                    mesh.0,
-                    mesh.1.name,
-                    mesh.1.primitives.len(),
-                    vertex_count,
-                );
-            }
-
-            info!("Total Scene Vertex Count: {}", total_vertex_count);
-
-            meshes
-        } else {
-            let position_data = [
-                Vec3::new(-0.75, 0.75, 0.5),
-                Vec3::new(0.0, -0.75, 0.5),
-                Vec3::new(0.75, 0.75, 0.5),
-            ];
-            let position_buffer = device.create_buffer_init(
-                "Triangle Position Buffer",
-                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                slice_to_bytes(&position_data),
-            )?;
-
-            let attributes_data = [
-                mesh::VertexAttributes {
-                    normal: Vec3::Z,
-                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                    tex_coords: Vec4::ZERO,
-                    color: Vec4::new(1.0, 0.0, 0.0, 1.0),
-                },
-                mesh::VertexAttributes {
-                    normal: Vec3::Z,
-                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                    tex_coords: Vec4::ZERO,
-                    color: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                },
-                mesh::VertexAttributes {
-                    normal: Vec3::Z,
-                    tangent: Vec4::new(0.0, 1.0, 0.0, 1.0),
-                    tex_coords: Vec4::ZERO,
-                    color: Vec4::new(0.0, 0.0, 1.0, 1.0),
-                },
-            ];
-            let attributes_buffer = device.create_buffer_init(
-                "Triangle Attribute Buffer",
-                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                slice_to_bytes(&attributes_data),
-            )?;
-
-            vec![mesh::Mesh {
-                name: "Triangle".to_string(),
-                primitives: vec![mesh::Primitive {
-                    bounding_box: BoundingBox::default(),
-                    vertex_count: 3,
-                    position_buffer,
-                    attributes_buffer,
-                    skinning_buffer: None,
-                    index_buffer: None,
-                }],
-            }]
-        };
-
         let raster_pipeline = {
             let vertex_shader_code = crate::shader::MESH_STATIC_VERT;
             let fragment_shader_code = crate::shader::MESH_FRAG;
@@ -226,12 +132,24 @@ impl Editor {
             })?
         };
 
+        let gltf_scene_path = if let Some(path) = &config.gltf_scene_path {
+            path.clone()
+        } else {
+            rfd::FileDialog::new()
+                .add_filter("gltf", &["gltf", "glb"])
+                .set_title("pick a gltf file")
+                .pick_file()
+                .expect("Failed to pick a gltf file")
+        };
+
+        let scene = load_gltf_scene(&mut device, &gltf_scene_path)?;
+
         Ok(Self {
             instance,
             surface_handle,
             device,
             raster_pipeline,
-            meshes,
+            scene,
         })
     }
 
@@ -284,44 +202,44 @@ impl Editor {
             },
         );
 
-        let mesh1 = &self.meshes[0].primitives[0];
-        let mesh_buffer_handle = mesh1.position_buffer;
-        let mesh_attributes_handle = mesh1.attributes_buffer;
-        let mesh_vertex_count = mesh1.vertex_count as u32;
-
-        let mesh_index_buffer = mesh1.index_buffer.clone();
-
-        let raster_pipeline_handle = self.raster_pipeline;
-
         let mut buffer_usages = HashMap::new();
-        buffer_usages.insert(
-            mesh_buffer_handle,
-            BufferAccess {
-                write: false,
-                stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
-                access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-            },
-        );
-        buffer_usages.insert(
-            mesh_attributes_handle,
-            BufferAccess {
-                write: false,
-                stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
-                access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-            },
-        );
+        let mut primitives: Vec<Primitive> = Vec::new();
 
-        if let Some(index_buffer) = &mesh_index_buffer {
-            buffer_usages.insert(
-                index_buffer.buffer,
-                BufferAccess {
-                    write: false,
-                    stage: vk::PipelineStageFlags2::INDEX_INPUT_KHR,
-                    access: vk::AccessFlags2::INDEX_READ,
-                },
-            );
+        for mesh in self.scene.meshes.iter() {
+            for primitive in mesh.primitives.iter() {
+                buffer_usages.insert(
+                    primitive.position_buffer,
+                    BufferAccess {
+                        write: false,
+                        stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
+                        access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+                    },
+                );
+                buffer_usages.insert(
+                    primitive.attributes_buffer,
+                    BufferAccess {
+                        write: false,
+                        stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
+                        access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+                    },
+                );
+
+                if let Some(index_buffer) = &primitive.index_buffer {
+                    buffer_usages.insert(
+                        index_buffer.buffer,
+                        BufferAccess {
+                            write: false,
+                            stage: vk::PipelineStageFlags2::INDEX_INPUT_KHR,
+                            access: vk::AccessFlags2::INDEX_READ,
+                        },
+                    );
+                }
+
+                primitives.push(primitive.clone());
+            }
         }
 
+        let raster_pipeline_handle = self.raster_pipeline;
         render_graph.add_pass(RenderPass {
             name: "Raster Pass".to_string(),
             queue: Default::default(),
@@ -339,37 +257,48 @@ impl Editor {
                 input_attachments: vec![],
             }),
             build_cmd_fn: Some(Box::new(move |device, command_buffer, resources| unsafe {
-                device.core.cmd_bind_vertex_buffers(
-                    command_buffer,
-                    0,
-                    &[
-                        resources.get_buffer(mesh_buffer_handle).handle,
-                        resources.get_buffer(mesh_attributes_handle).handle,
-                    ],
-                    &[0, 0],
-                );
-
                 device.core.cmd_bind_pipeline(
                     command_buffer,
                     vk::PipelineBindPoint::GRAPHICS,
                     resources.get_raster_pipeline(raster_pipeline_handle),
                 );
 
-                if let Some(index_buffer) = &mesh_index_buffer {
-                    device.core.cmd_bind_index_buffer(
+                for primitive in primitives.iter() {
+                    device.core.cmd_bind_vertex_buffers(
                         command_buffer,
-                        resources.get_buffer(index_buffer.buffer).handle,
                         0,
-                        vk::IndexType::UINT32,
+                        &[
+                            resources.get_buffer(primitive.position_buffer).handle,
+                            resources.get_buffer(primitive.attributes_buffer).handle,
+                        ],
+                        &[0, 0],
                     );
 
-                    device
-                        .core
-                        .cmd_draw_indexed(command_buffer, index_buffer.count, 1, 0, 0, 0);
-                } else {
-                    device
-                        .core
-                        .cmd_draw(command_buffer, mesh_vertex_count, 1, 0, 0);
+                    if let Some(index_buffer) = &primitive.index_buffer {
+                        device.core.cmd_bind_index_buffer(
+                            command_buffer,
+                            resources.get_buffer(index_buffer.buffer).handle,
+                            0,
+                            vk::IndexType::UINT32,
+                        );
+
+                        device.core.cmd_draw_indexed(
+                            command_buffer,
+                            index_buffer.count,
+                            1,
+                            0,
+                            0,
+                            0,
+                        );
+                    } else {
+                        device.core.cmd_draw(
+                            command_buffer,
+                            primitive.vertex_count as u32,
+                            1,
+                            0,
+                            0,
+                        );
+                    }
                 }
             })),
         });
@@ -388,4 +317,53 @@ impl Drop for Editor {
 
 fn slice_to_bytes<T>(slice: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
+}
+
+struct GltfScene {
+    meshes: Vec<Mesh>,
+    textures: Vec<ImageHandle>,
+}
+
+fn load_gltf_scene<P: AsRef<std::path::Path>>(
+    device: &mut neptune_vulkan::Device,
+    path: P,
+) -> anyhow::Result<GltfScene> {
+    let (gltf_doc, buffer_data, image_data) = {
+        let now = std::time::Instant::now();
+        let result = gltf::import(path)?;
+        info!("File Loading: {}", now.elapsed().as_secs_f32());
+        result
+    };
+
+    let scene = {
+        let now = std::time::Instant::now();
+        let meshes = gltf_loader::load_meshes(device, &gltf_doc, &buffer_data)?;
+        info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+
+        let now = std::time::Instant::now();
+        let textures = gltf_loader::load_textures(device, &gltf_doc, &image_data)?;
+        info!("Texture Convert/Upload: {}", now.elapsed().as_secs_f32());
+
+        GltfScene { meshes, textures }
+    };
+
+    let mut total_vertex_count = 0;
+
+    for mesh in scene.meshes.iter().enumerate() {
+        let vertex_count: usize = mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
+
+        total_vertex_count += vertex_count;
+
+        info!(
+            "Mesh({}): {} Primitives: {} Vertex: {}",
+            mesh.0,
+            mesh.1.name,
+            mesh.1.primitives.len(),
+            vertex_count,
+        );
+    }
+
+    info!("Total Scene Vertex Count: {}", total_vertex_count);
+
+    Ok(scene)
 }

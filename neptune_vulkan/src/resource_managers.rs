@@ -3,8 +3,9 @@ use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
 use crate::image::{Image, ImageDescription2D};
 use crate::render_graph::{TransientImageDesc, TransientImageSize, VkImage};
+use crate::sampler::Sampler;
 use crate::swapchain::SwapchainImage;
-use crate::{BufferKey, ImageHandle, ImageKey};
+use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
 use log::warn;
 use slotmap::SlotMap;
@@ -18,7 +19,7 @@ pub struct AshImageHandle {
     image: Image,
 }
 
-pub struct PersistentResourceManager {
+pub struct ResourceManager {
     device: Arc<AshDevice>,
 
     buffers: SlotMap<BufferKey, AshBufferResource>,
@@ -27,10 +28,12 @@ pub struct PersistentResourceManager {
     images: SlotMap<ImageKey, AshImageHandle>,
     freed_images: Vec<ImageKey>,
 
+    samplers: SlotMap<SamplerKey, Arc<Sampler>>,
+
     pub(crate) descriptor_set: DescriptorSet,
 }
 
-impl PersistentResourceManager {
+impl ResourceManager {
     pub fn new(device: Arc<AshDevice>) -> Self {
         let descriptor_set = DescriptorSet::new(
             device.clone(),
@@ -49,6 +52,7 @@ impl PersistentResourceManager {
             freed_buffers: Vec::new(),
             images: SlotMap::with_key(),
             freed_images: Vec::new(),
+            samplers: SlotMap::with_key(),
             descriptor_set,
         }
     }
@@ -97,6 +101,20 @@ impl PersistentResourceManager {
     pub fn remove_image(&mut self, key: ImageKey) {
         self.freed_images.push(key);
     }
+
+    pub fn add_sampler(&mut self, sampler: Sampler) -> SamplerKey {
+        self.samplers.insert(Arc::new(sampler))
+    }
+
+    pub fn remove_sampler(&mut self, key: SamplerKey) {
+        if self.samplers.remove(key).is_none() {
+            warn!("Tried to remove invalid SamplerKey({:?})", key);
+        }
+    }
+
+    pub fn get_sampler(&self, key: SamplerKey) -> Option<Arc<Sampler>> {
+        self.samplers.get(key).cloned()
+    }
 }
 
 pub struct TransientResourceManager {
@@ -131,7 +149,7 @@ impl TransientResourceManager {
 
     pub(crate) fn resolve_images(
         &mut self,
-        persistent: &mut PersistentResourceManager,
+        persistent: &mut ResourceManager,
         swapchain_images: &[(vk::SwapchainKHR, SwapchainImage)],
         transient_image_descriptions: &[TransientImageDesc],
     ) -> Vec<VkImage> {
@@ -183,7 +201,7 @@ impl Drop for TransientResourceManager {
 
 fn get_transient_image_size(
     size: TransientImageSize,
-    persistent: &PersistentResourceManager,
+    persistent: &ResourceManager,
     swapchain_images: &[(vk::SwapchainKHR, SwapchainImage)],
     transient_image_descriptions: &[TransientImageDesc],
 ) -> vk::Extent2D {

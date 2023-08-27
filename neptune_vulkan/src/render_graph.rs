@@ -128,7 +128,7 @@ pub struct VkImage {
 }
 
 pub struct RenderGraphResources<'a> {
-    persistent: &'a mut PersistentResourceManager,
+    persistent: &'a mut ResourceManager,
     swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
     transient_images: &'a [VkImage],
     transient_buffers: &'a [Buffer],
@@ -180,7 +180,7 @@ impl<'a> RenderGraphResources<'a> {
 
 use crate::buffer::{Buffer, BufferDescription};
 use crate::device::{AshDevice, AshQueue};
-use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
+use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::swapchain::{SwapchainImage, SwapchainManager};
 use log::info;
 use std::sync::Arc;
@@ -257,7 +257,7 @@ impl BasicRenderGraphExecutor {
         &mut self,
         transfer_pass: Option<RenderPass>,
         render_graph: &RenderGraph,
-        persistent_resource_manager: &mut PersistentResourceManager,
+        persistent_resource_manager: &mut ResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
         swapchain_manager: &mut SwapchainManager,
         raster_pipelines: &slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,

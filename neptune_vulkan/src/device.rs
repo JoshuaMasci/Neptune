@@ -3,12 +3,12 @@ use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::RasterPipelineDescription;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
-use crate::resource_managers::{PersistentResourceManager, TransientResourceManager};
-use crate::sampler::SamplerDescription;
+use crate::resource_managers::{ResourceManager, TransientResourceManager};
+use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
-    SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
+    BufferHandle, ComputePipelineHandle, ImageAccess, ImageHandle, RasterPipelineHandle,
+    RasterPipleineKey, SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
 use log::error;
@@ -144,11 +144,12 @@ pub struct Device {
     pipeline_layout: vk::PipelineLayout,
     raster_pipelines: SlotMap<RasterPipleineKey, vk::Pipeline>,
 
-    persistent_resource_manager: PersistentResourceManager,
+    resource_manager: ResourceManager,
     transient_resource_manager: TransientResourceManager,
     swapchain_manager: SwapchainManager,
 
-    transfer_list: Vec<(BufferHandle, BufferHandle)>,
+    buffer_transfer_list: Vec<(BufferHandle, BufferHandle)>,
+    image_transfer_list: Vec<(BufferHandle, ImageHandle)>,
     graph_executor: BasicRenderGraphExecutor,
 }
 
@@ -162,14 +163,14 @@ impl Device {
 
         let device =
             AshDevice::new(instance, physical_device, &[graphics_queue_index]).map(Arc::new)?;
-        let persistent_resource_manager = PersistentResourceManager::new(device.clone());
+        let resource_manager = ResourceManager::new(device.clone());
         let transient_resource_manager = TransientResourceManager::new(device.clone());
         let swapchain_manager = SwapchainManager::default();
 
         let pipeline_layout = unsafe {
             device.core.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&[persistent_resource_manager.descriptor_set.get_layout()])
+                    .set_layouts(&[resource_manager.descriptor_set.get_layout()])
                     .push_constant_ranges(&[vk::PushConstantRange {
                         stage_flags: vk::ShaderStageFlags::ALL,
                         offset: 0,
@@ -186,10 +187,11 @@ impl Device {
             device,
             pipeline_layout,
             raster_pipelines: SlotMap::with_key(),
-            persistent_resource_manager,
+            resource_manager,
             transient_resource_manager,
             swapchain_manager,
-            transfer_list: Vec::new(),
+            buffer_transfer_list: Vec::new(),
+            image_transfer_list: Vec::new(),
             graph_executor,
         })
     }
@@ -202,12 +204,12 @@ impl Device {
         let buffer = Buffer::new(self.device.clone(), name, description)?;
 
         Ok(BufferHandle::Persistent(
-            self.persistent_resource_manager.add_buffer(buffer),
+            self.resource_manager.add_buffer(buffer),
         ))
     }
     pub fn destroy_buffer(&mut self, buffer_handle: BufferHandle) {
         match buffer_handle {
-            BufferHandle::Persistent(key) => self.persistent_resource_manager.remove_buffer(key),
+            BufferHandle::Persistent(key) => self.resource_manager.remove_buffer(key),
             BufferHandle::Transient(index) => {
                 error!("Transient buffer {index} cannot be destroyed, this shouldn't happen")
             }
@@ -235,9 +237,10 @@ impl Device {
         mut_slice.copy_from_slice(data);
 
         let staging_handle =
-            BufferHandle::Persistent(self.persistent_resource_manager.add_buffer(staging_buffer));
+            BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.transfer_list.push((staging_handle, buffer_handle));
+        self.buffer_transfer_list
+            .push((staging_handle, buffer_handle));
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -271,21 +274,64 @@ impl Device {
         let image = Image::new_2d(self.device.clone(), name, description)?;
 
         Ok(ImageHandle::Persistent(
-            self.persistent_resource_manager.add_image(image),
+            self.resource_manager.add_image(image),
         ))
     }
     pub fn destroy_image(&mut self, image_handle: ImageHandle) {
-        todo!()
+        match image_handle {
+            ImageHandle::Persistent(key) => self.resource_manager.remove_image(key),
+            ImageHandle::Transient(index) => {
+                error!("Transient image {index} cannot be destroyed, this shouldn't happen")
+            }
+            ImageHandle::Swapchain(index) => {
+                error!("Swapchain image {index} cannot be destroyed, this shouldn't happen")
+            }
+        }
+    }
+    pub fn update_data_to_image(
+        &mut self,
+        image_handle: ImageHandle,
+        data: &[u8],
+    ) -> Result<(), VulkanError> {
+        let mut staging_buffer = Buffer::new(
+            self.device.clone(),
+            "Stating Buffer",
+            &BufferDescription {
+                size: data.len() as vk::DeviceSize,
+                usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                location: gpu_allocator::MemoryLocation::CpuToGpu,
+            },
+        )?;
+
+        let mut_slice = match staging_buffer.allocation.mapped_slice_mut() {
+            None => return Err(VulkanError::Vk(vk::Result::ERROR_MEMORY_MAP_FAILED)),
+            Some(mut_slice) => mut_slice,
+        };
+        mut_slice.copy_from_slice(data);
+
+        let staging_handle =
+            BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
+
+        self.image_transfer_list
+            .push((staging_handle, image_handle));
+
+        //Destroy stating buffer once frame is done
+        self.destroy_buffer(staging_handle);
+
+        Ok(())
     }
 
     pub fn create_sampler(
         &mut self,
+        name: &str,
         sampler_description: &SamplerDescription,
     ) -> Result<SamplerHandle, VulkanError> {
-        todo!()
+        Ok(SamplerHandle(self.resource_manager.add_sampler(
+            Sampler::new(self.device.clone(), name, sampler_description)?,
+        )))
     }
     pub fn destroy_sampler(&mut self, sampler_handle: SamplerHandle) {
-        todo!()
+        self.resource_manager.remove_sampler(sampler_handle.0);
     }
 
     pub fn create_compute_pipeline(
@@ -350,10 +396,12 @@ impl Device {
     }
 
     pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        let transfer_pass = (!self.transfer_list.is_empty()).then(|| {
+        let transfer_pass = (!self.buffer_transfer_list.is_empty()
+            || !self.image_transfer_list.is_empty())
+        .then(|| {
             let mut buffer_usages = HashMap::new();
 
-            for &(staging_handle, target_handle) in self.transfer_list.iter() {
+            for &(staging_handle, target_handle) in self.buffer_transfer_list.iter() {
                 buffer_usages.insert(
                     staging_handle,
                     BufferAccess {
@@ -371,15 +419,39 @@ impl Device {
                     },
                 );
             }
-            let transfer_list = std::mem::take(&mut self.transfer_list);
+
+            let mut image_usages = HashMap::new();
+
+            for &(staging_handle, target_handle) in self.image_transfer_list.iter() {
+                buffer_usages.insert(
+                    staging_handle,
+                    BufferAccess {
+                        write: false,
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_READ,
+                    },
+                );
+                image_usages.insert(
+                    target_handle,
+                    ImageAccess {
+                        write: true,
+                        stage: vk::PipelineStageFlags2::TRANSFER,
+                        access: vk::AccessFlags2::TRANSFER_WRITE,
+                        layout: vk::ImageLayout::GENERAL,
+                    },
+                );
+            }
+
+            let buffer_transfer_list = std::mem::take(&mut self.buffer_transfer_list);
+            let image_transfer_list = std::mem::take(&mut self.image_transfer_list);
             RenderPass {
                 name: "Transfer Pass".to_string(),
                 queue: Default::default(),
                 buffer_usages,
-                image_usages: Default::default(),
+                image_usages,
                 framebuffer: None,
                 build_cmd_fn: Some(Box::new(move |device, command_buffer, resources| {
-                    for &(staging_handle, target_handle) in transfer_list.iter() {
+                    for &(staging_handle, target_handle) in buffer_transfer_list.iter() {
                         let staging_buffer = resources.get_buffer(staging_handle);
                         let target_buffer = resources.get_buffer(target_handle);
                         unsafe {
@@ -396,6 +468,62 @@ impl Device {
                             );
                         }
                     }
+
+                    for &(staging_handle, target_handle) in image_transfer_list.iter() {
+                        let staging_buffer = resources.get_buffer(staging_handle);
+                        let target_image = resources.get_image(target_handle);
+                        unsafe {
+                            //TODO: remove this when image transitions are implemented
+                            device.core.cmd_pipeline_barrier2(
+                                command_buffer,
+                                &vk::DependencyInfo::builder().image_memory_barriers(&[
+                                    vk::ImageMemoryBarrier2 {
+                                        src_stage_mask: vk::PipelineStageFlags2::NONE,
+                                        src_access_mask: vk::AccessFlags2::NONE,
+                                        dst_stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                                        dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                                        old_layout: vk::ImageLayout::UNDEFINED,
+                                        new_layout: vk::ImageLayout::GENERAL,
+                                        image: target_image.handle,
+                                        subresource_range: vk::ImageSubresourceRange {
+                                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                                            base_mip_level: 0,
+                                            level_count: 1,
+                                            base_array_layer: 0,
+                                            layer_count: 1,
+                                        },
+                                        ..Default::default()
+                                    },
+                                ]),
+                            );
+
+                            device.core.cmd_copy_buffer_to_image2(
+                                command_buffer,
+                                &vk::CopyBufferToImageInfo2::builder()
+                                    .src_buffer(staging_buffer.handle)
+                                    .dst_image(target_image.handle)
+                                    .dst_image_layout(vk::ImageLayout::GENERAL)
+                                    .regions(&[vk::BufferImageCopy2 {
+                                        buffer_offset: 0,
+                                        buffer_row_length: 0,
+                                        buffer_image_height: 0,
+                                        image_subresource: vk::ImageSubresourceLayers {
+                                            aspect_mask: vk::ImageAspectFlags::COLOR, //TODO: Detect Depth Images
+                                            mip_level: 0,
+                                            base_array_layer: 0,
+                                            layer_count: 1,
+                                        },
+                                        image_offset: vk::Offset3D::default(),
+                                        image_extent: vk::Extent3D {
+                                            width: target_image.size.width,
+                                            height: target_image.size.height,
+                                            depth: 1,
+                                        },
+                                        ..Default::default()
+                                    }]),
+                            );
+                        }
+                    }
                 })),
             }
         });
@@ -403,7 +531,7 @@ impl Device {
         self.graph_executor.execute_graph(
             transfer_pass,
             render_graph,
-            &mut self.persistent_resource_manager,
+            &mut self.resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,
             &self.raster_pipelines,

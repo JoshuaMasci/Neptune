@@ -17,13 +17,14 @@ pub use gpu_allocator;
 
 pub use buffer::BufferDescription;
 pub use device::{Device, DeviceSettings};
-pub use instance::AppInfo;
-pub use instance::Instance;
+pub use image::ImageDescription2D;
+pub use instance::{AppInfo, Instance};
 pub use pipeline::{
     ColorTargetState, DepthState, FragmentState, FramebufferDesc, PrimitiveState,
     RasterPipelineDescription, ShaderStage, VertexAttribute, VertexBufferLayout, VertexState,
 };
 pub use render_graph::*;
+pub use sampler::*;
 pub use swapchain::SurfaceSettings;
 
 slotmap::new_key_type! {

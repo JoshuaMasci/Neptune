@@ -86,6 +86,12 @@ impl VertexSkinningAttributes {
         };
 }
 
+#[derive(Default)]
+pub struct Mesh {
+    pub name: String,
+    pub primitives: Vec<Primitive>,
+}
+
 #[derive(Debug, Default, Copy, Clone)]
 pub struct BoundingBox {
     pub min: glam::Vec3,
@@ -98,6 +104,7 @@ pub struct IndexBuffer {
     pub count: u32,
 }
 
+#[derive(Clone)]
 pub struct Primitive {
     pub bounding_box: BoundingBox,
 
@@ -106,10 +113,4 @@ pub struct Primitive {
     pub attributes_buffer: neptune_vulkan::BufferHandle,
     pub skinning_buffer: Option<neptune_vulkan::BufferHandle>,
     pub index_buffer: Option<IndexBuffer>,
-}
-
-#[derive(Default)]
-pub struct Mesh {
-    pub name: String,
-    pub primitives: Vec<Primitive>,
 }

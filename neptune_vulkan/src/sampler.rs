@@ -109,6 +109,7 @@ pub struct Sampler {
 impl Sampler {
     pub(crate) fn new(
         device: Arc<AshDevice>,
+        name: &str,
         sampler_create_info: &SamplerDescription,
     ) -> Result<Self, VulkanError> {
         let handle = unsafe {
@@ -116,6 +117,11 @@ impl Sampler {
                 .core
                 .create_sampler(&sampler_create_info.to_vk(), None)?
         };
+
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.set_object_name(device.core.handle(), handle, name);
+        }
+
         Ok(Self { device, handle })
     }
 }

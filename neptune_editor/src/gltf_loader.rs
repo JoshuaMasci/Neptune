@@ -3,8 +3,127 @@ use crate::mesh::{
 };
 use anyhow::anyhow;
 use glam::{Vec3, Vec4};
+use gltf::image::Format;
+use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::vk;
+use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle};
+
+fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
+    match mode {
+        WrappingMode::ClampToEdge => AddressMode::ClampToEdge,
+        WrappingMode::MirroredRepeat => AddressMode::MirroredRepeat,
+        WrappingMode::Repeat => AddressMode::Repeat,
+    }
+}
+
+pub fn load_textures(
+    device: &mut neptune_vulkan::Device,
+    gltf_doc: &gltf::Document,
+    gltf_images: &[gltf::image::Data],
+) -> anyhow::Result<Vec<ImageHandle>> {
+    let mut samplers = Vec::with_capacity(gltf_doc.samplers().len());
+    for gltf_sampler in gltf_doc.samplers() {
+        let name = gltf_sampler.name().unwrap_or("Unnamed Sampler");
+
+        let address_mode_u = neptune_address_mode(gltf_sampler.wrap_s());
+        let address_mode_v = neptune_address_mode(gltf_sampler.wrap_t());
+
+        let mag_filter = match gltf_sampler.mag_filter().unwrap_or(MagFilter::Linear) {
+            MagFilter::Nearest => FilterMode::Nearest,
+            MagFilter::Linear => FilterMode::Linear,
+        };
+
+        let (min_filter, mip_filter) = match gltf_sampler.min_filter().unwrap_or(MinFilter::Linear)
+        {
+            MinFilter::Nearest | MinFilter::NearestMipmapNearest => {
+                (FilterMode::Nearest, FilterMode::Nearest)
+            }
+            MinFilter::Linear | MinFilter::LinearMipmapLinear => {
+                (FilterMode::Linear, FilterMode::Linear)
+            }
+            MinFilter::NearestMipmapLinear => (FilterMode::Nearest, FilterMode::Linear),
+            MinFilter::LinearMipmapNearest => (FilterMode::Linear, FilterMode::Nearest),
+        };
+
+        let description = neptune_vulkan::SamplerDescription {
+            address_mode_u,
+            address_mode_v,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter,
+            min_filter,
+            mip_filter,
+            lod_clamp_range: None,
+            anisotropy_clamp: None,
+            border_color: Default::default(),
+            unnormalized_coordinates: false,
+        };
+
+        samplers.push(device.create_sampler(name, &description)?);
+    }
+
+    let mut images = Vec::with_capacity(gltf_doc.textures().len());
+    for gltf_texture in gltf_doc.textures() {
+        let name = gltf_texture.name().unwrap_or("Unnamed Texture");
+
+        let gltf_image = gltf_doc.images().nth(gltf_texture.index()).unwrap();
+        let gltf_image_data = &gltf_images[gltf_image.index()];
+
+        let mut format = match gltf_image_data.format {
+            Format::R8 => vk::Format::R8_UNORM,
+            Format::R8G8 => vk::Format::R8G8_UNORM,
+            Format::R8G8B8 => vk::Format::R8G8B8_UNORM,
+            Format::R8G8B8A8 => vk::Format::R8G8B8A8_UNORM,
+            Format::R16 => vk::Format::R16_UNORM,
+            Format::R16G16 => vk::Format::R16G16_UNORM,
+            Format::R16G16B16 => vk::Format::R16G16B16_UNORM,
+            Format::R16G16B16A16 => vk::Format::R16G16B16A16_UNORM,
+            Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
+            Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
+        };
+
+        let mut image_data_slice: &[u8] = &gltf_image_data.pixels;
+
+        //Because Nvidia doesn't like non-32 aligned RGB image
+        let image_data_slice_new: Vec<u8>;
+        if format == vk::Format::R8G8B8_UNORM {
+            format = vk::Format::R8G8B8A8_UNORM;
+            image_data_slice_new = image_data_slice
+                .chunks_exact(3)
+                .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
+                .collect();
+            image_data_slice = &image_data_slice_new;
+        } else if format == vk::Format::R16G16B16_UNORM {
+            format = vk::Format::R16G16B16A16_UNORM;
+            image_data_slice_new = image_data_slice
+                .chunks_exact(6)
+                .flat_map(|chunk| {
+                    [
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], 255, 255,
+                    ]
+                })
+                .collect();
+            image_data_slice = &image_data_slice_new;
+        }
+
+        let _sampler_index = gltf_texture.sampler().index();
+
+        //TODO: sampler
+        let description = neptune_vulkan::ImageDescription2D {
+            size: [gltf_image_data.width, gltf_image_data.height],
+            format,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            mip_levels: 1,
+            location: MemoryLocation::GpuOnly,
+        };
+
+        let image_handle = device.create_image(name, &description)?;
+        device.update_data_to_image(image_handle, image_data_slice)?;
+
+        images.push(image_handle);
+    }
+
+    Ok(Vec::new())
+}
 
 pub fn load_meshes(
     device: &mut neptune_vulkan::Device,

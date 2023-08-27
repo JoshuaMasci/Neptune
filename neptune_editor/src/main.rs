@@ -6,8 +6,9 @@ mod shader;
 #[macro_use]
 extern crate log;
 
-use crate::editor::Editor;
+use crate::editor::{Editor, EditorConfig};
 
+use clap::Parser;
 use std::time::Instant;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::{
@@ -15,7 +16,7 @@ use winit::{
     event_loop::ControlFlow,
 };
 
-const APP_NAME: &str = "Neptune Editor";
+pub const APP_NAME: &str = "Neptune Editor";
 
 fn main() -> anyhow::Result<()> {
     pretty_env_logger::init_timed();
@@ -31,7 +32,7 @@ fn main() -> anyhow::Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let mut editor = Editor::new(&window)?;
+    let mut editor = Editor::new(&window, &EditorConfig::parse())?;
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);

@@ -1,7 +1,7 @@
 [package]
 name = "neptune_vulkan"
 version = "0.1.0"
-authors = ["Joshua_Masci <iamshortman@gmail.com>"]
+authors = ["Joshua_Masci <joshuamasci1@gmail.com>"]
 edition = "2021"
 
 [dependencies]
