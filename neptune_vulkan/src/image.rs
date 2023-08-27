@@ -2,7 +2,7 @@ use crate::descriptor_set::DescriptorBinding;
 use crate::device::AshDevice;
 use crate::render_graph::TransientImageDesc;
 use crate::sampler::Sampler;
-use crate::VulkanError;
+use crate::{SamplerHandle, VulkanError};
 use ash::vk;
 use std::sync::Arc;
 
@@ -26,6 +26,7 @@ pub struct ImageDescription2D {
     pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
     pub location: gpu_allocator::MemoryLocation,
+    pub sampler: Option<SamplerHandle>,
 }
 
 impl ImageDescription2D {
@@ -36,6 +37,7 @@ impl ImageDescription2D {
             usage: desc.usage,
             mip_levels: desc.mip_levels,
             location: desc.memory_location,
+            sampler: None,
         }
     }
 }
@@ -111,7 +113,7 @@ impl Image {
             return Err(VulkanError::from(err));
         }
 
-        let mut view_create_info = vk::ImageViewCreateInfo::builder()
+        let view_create_info = vk::ImageViewCreateInfo::builder()
             .image(handle)
             .format(description.format)
             .subresource_range(vk::ImageSubresourceRange {

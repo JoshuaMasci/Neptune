@@ -282,7 +282,7 @@ impl DescriptorSetInner {
             .get()
             .expect("Out of sampled image indices");
         self.write_image_descriptor(
-            vk::DescriptorType::SAMPLED_IMAGE,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             Self::SAMPLED_IMAGE_BINDING,
             index,
             &[vk::DescriptorImageInfo {

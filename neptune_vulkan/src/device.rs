@@ -274,7 +274,7 @@ impl Device {
         let image = Image::new_2d(self.device.clone(), name, description)?;
 
         Ok(ImageHandle::Persistent(
-            self.resource_manager.add_image(image),
+            self.resource_manager.add_image(image, &description.sampler),
         ))
     }
     pub fn destroy_image(&mut self, image_handle: ImageHandle) {

@@ -5,7 +5,7 @@ use crate::image::{Image, ImageDescription2D};
 use crate::render_graph::{TransientImageDesc, TransientImageSize, VkImage};
 use crate::sampler::Sampler;
 use crate::swapchain::SwapchainImage;
-use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
+use crate::{BufferKey, ImageHandle, ImageKey, SamplerHandle, SamplerKey};
 use ash::vk;
 use log::warn;
 use slotmap::SlotMap;
@@ -86,9 +86,20 @@ impl ResourceManager {
         self.freed_buffers.push(key);
     }
 
-    pub fn add_image(&mut self, mut image: Image) -> ImageKey {
+    pub fn add_image(&mut self, mut image: Image, sampler: &Option<SamplerHandle>) -> ImageKey {
         if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
             image.storage_binding = Some(self.descriptor_set.bind_storage_image(&image));
+        }
+
+        if image.usage.contains(vk::ImageUsageFlags::SAMPLED) {
+            if let Some(sampler_handle) = sampler {
+                if let Some(sampler) = self.samplers.get(sampler_handle.0) {
+                    image.combined_image_sampler = Some((
+                        sampler.clone(),
+                        self.descriptor_set.bind_sampled_image(&image, &sampler),
+                    ));
+                }
+            }
         }
 
         self.images.insert(AshImageHandle { image })

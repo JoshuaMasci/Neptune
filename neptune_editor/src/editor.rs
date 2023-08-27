@@ -315,10 +315,6 @@ impl Drop for Editor {
     }
 }
 
-fn slice_to_bytes<T>(slice: &[T]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
-}
-
 struct GltfScene {
     meshes: Vec<Mesh>,
     textures: Vec<ImageHandle>,
@@ -335,35 +331,13 @@ fn load_gltf_scene<P: AsRef<std::path::Path>>(
         result
     };
 
-    let scene = {
-        let now = std::time::Instant::now();
-        let meshes = gltf_loader::load_meshes(device, &gltf_doc, &buffer_data)?;
-        info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+    let now = std::time::Instant::now();
+    let meshes = gltf_loader::load_meshes(device, &gltf_doc, &buffer_data)?;
+    info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
 
-        let now = std::time::Instant::now();
-        let textures = gltf_loader::load_textures(device, &gltf_doc, &image_data)?;
-        info!("Texture Convert/Upload: {}", now.elapsed().as_secs_f32());
+    let now = std::time::Instant::now();
+    let textures = gltf_loader::load_textures(device, &gltf_doc, &image_data)?;
+    info!("Texture Convert/Upload: {}", now.elapsed().as_secs_f32());
 
-        GltfScene { meshes, textures }
-    };
-
-    let mut total_vertex_count = 0;
-
-    for mesh in scene.meshes.iter().enumerate() {
-        let vertex_count: usize = mesh.1.primitives.iter().map(|prim| prim.vertex_count).sum();
-
-        total_vertex_count += vertex_count;
-
-        info!(
-            "Mesh({}): {} Primitives: {} Vertex: {}",
-            mesh.0,
-            mesh.1.name,
-            mesh.1.primitives.len(),
-            vertex_count,
-        );
-    }
-
-    info!("Total Scene Vertex Count: {}", total_vertex_count);
-
-    Ok(scene)
+    Ok(GltfScene { meshes, textures })
 }

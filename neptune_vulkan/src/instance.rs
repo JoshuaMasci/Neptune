@@ -64,7 +64,7 @@ impl AshInstance {
         app_info: &AppInfo,
         enable_debug: bool,
         display_handle: Option<raw_window_handle::RawDisplayHandle>,
-    ) -> ash::prelude::VkResult<Self> {
+    ) -> VkResult<Self> {
         trace!(
             "Creating Vulkan Instance Engine: {:?}, App: {:?}",
             engine_info,
@@ -89,7 +89,7 @@ impl AshInstance {
 
         let entry = match unsafe { ash::Entry::load() } {
             Ok(entry) => entry,
-            Err(_) => return Err(ash::vk::Result::ERROR_INITIALIZATION_FAILED),
+            Err(_) => return Err(vk::Result::ERROR_INITIALIZATION_FAILED),
         };
 
         let mut layer_names_raw = Vec::new();
@@ -146,7 +146,7 @@ impl AshInstance {
         &self,
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
-    ) -> VkResult<crate::SurfaceKey> {
+    ) -> VkResult<SurfaceKey> {
         match unsafe {
             ash_window::create_surface(&self.entry, &self.core, display_handle, window_handle, None)
         } {
@@ -155,7 +155,7 @@ impl AshInstance {
         }
     }
 
-    pub fn destroy_surface(&self, surface_key: crate::SurfaceKey) {
+    pub fn destroy_surface(&self, surface_key: SurfaceKey) {
         if let Some(surface) = self.surface_list.remove(surface_key) {
             unsafe {
                 self.surface.destroy_surface(surface, None);
@@ -218,7 +218,7 @@ impl Instance {
     }
 
     pub fn get_physical_device(&self, index: usize) -> Option<PhysicalDevice> {
-        todo!()
+        self.physical_devices.get(index).cloned()
     }
 
     pub fn select_physical_device(

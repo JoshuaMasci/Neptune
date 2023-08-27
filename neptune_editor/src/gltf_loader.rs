@@ -21,6 +21,22 @@ pub fn load_textures(
     gltf_doc: &gltf::Document,
     gltf_images: &[gltf::image::Data],
 ) -> anyhow::Result<Vec<ImageHandle>> {
+    let default_sampler = device.create_sampler(
+        "Gltf Default Sampler",
+        &neptune_vulkan::SamplerDescription {
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mip_filter: FilterMode::Linear,
+            lod_clamp_range: None,
+            anisotropy_clamp: None,
+            border_color: Default::default(),
+            unnormalized_coordinates: false,
+        },
+    )?;
+
     let mut samplers = Vec::with_capacity(gltf_doc.samplers().len());
     for gltf_sampler in gltf_doc.samplers() {
         let name = gltf_sampler.name().unwrap_or("Unnamed Sampler");
@@ -83,7 +99,7 @@ pub fn load_textures(
 
         let mut image_data_slice: &[u8] = &gltf_image_data.pixels;
 
-        //Because Nvidia doesn't like non-32 aligned RGB image
+        //Because Nvidia doesn't like non-32 aligned RGB image formats
         let image_data_slice_new: Vec<u8>;
         if format == vk::Format::R8G8B8_UNORM {
             format = vk::Format::R8G8B8A8_UNORM;
@@ -105,7 +121,7 @@ pub fn load_textures(
             image_data_slice = &image_data_slice_new;
         }
 
-        let _sampler_index = gltf_texture.sampler().index();
+        let sampler_index = gltf_texture.sampler().index();
 
         //TODO: sampler
         let description = neptune_vulkan::ImageDescription2D {
@@ -114,6 +130,11 @@ pub fn load_textures(
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             mip_levels: 1,
             location: MemoryLocation::GpuOnly,
+            sampler: Some(
+                *sampler_index
+                    .and_then(|index| samplers.get(index))
+                    .unwrap_or(&default_sampler),
+            ),
         };
 
         let image_handle = device.create_image(name, &description)?;
@@ -122,7 +143,13 @@ pub fn load_textures(
         images.push(image_handle);
     }
 
-    Ok(Vec::new())
+    //Cleanup samplers, they will stay around as long as the images that use them
+    device.destroy_sampler(default_sampler);
+    for sampler in samplers {
+        device.destroy_sampler(sampler);
+    }
+
+    Ok(images)
 }
 
 pub fn load_meshes(
@@ -160,7 +187,7 @@ pub fn load_primitive(
 
     let bounding_box = BoundingBox {
         min: Vec3::from_array(gltf_primitive.bounding_box().min),
-        max: glam::Vec3::from_array(gltf_primitive.bounding_box().max),
+        max: Vec3::from_array(gltf_primitive.bounding_box().max),
     };
 
     let (position_buffer, vertex_count) = {
@@ -226,7 +253,7 @@ pub fn load_primitive(
                         joint[2] as u32,
                         joint[3] as u32,
                     ),
-                    weight: glam::Vec4::from_array(weights),
+                    weight: Vec4::from_array(weights),
                 })
                 .collect();
             Some(create_vertex_buffer(device, &array)?)
