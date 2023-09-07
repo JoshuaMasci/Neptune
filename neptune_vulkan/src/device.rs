@@ -58,11 +58,14 @@ impl AshDevice {
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-        let mut vulkan_1_1_features = vk::PhysicalDeviceVulkan12Features::builder()
+        let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::builder()
             .buffer_device_address(true)
+            .descriptor_indexing(true)
+            .descriptor_binding_partially_bound(true)
             .descriptor_binding_storage_buffer_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
-            .descriptor_binding_sampled_image_update_after_bind(true);
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_update_unused_while_pending(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::builder()
             .synchronization2(true)
@@ -77,7 +80,7 @@ impl AshDevice {
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_create_infos)
                     .enabled_extension_names(&device_extension_names_raw)
-                    .push_next(&mut vulkan_1_1_features)
+                    .push_next(&mut vulkan_1_2_features)
                     .push_next(&mut vulkan_1_3_features)
                     .push_next(&mut physical_device_robustness2_features)
                     .build(),
@@ -159,6 +162,14 @@ impl Device {
         physical_device: vk::PhysicalDevice,
         settings: &DeviceSettings,
     ) -> Result<Device, VulkanError> {
+        let push_constant_size = unsafe {
+            instance
+                .core
+                .get_physical_device_properties(physical_device)
+        }
+        .limits
+        .max_push_constants_size;
+
         let graphics_queue_index = 0;
 
         let device =
@@ -174,7 +185,7 @@ impl Device {
                     .push_constant_ranges(&[vk::PushConstantRange {
                         stage_flags: vk::ShaderStageFlags::ALL,
                         offset: 0,
-                        size: 128,
+                        size: push_constant_size,
                     }]),
                 None,
             )?

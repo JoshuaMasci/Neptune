@@ -4,6 +4,7 @@ use crate::image::Image;
 use crate::sampler::Sampler;
 use crate::VulkanError;
 use ash::vk;
+use log::info;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default, Debug, Clone)]
@@ -103,6 +104,7 @@ pub struct DescriptorSetInner {
     layout: vk::DescriptorSetLayout,
     pool: vk::DescriptorPool,
     set: vk::DescriptorSet,
+    empty_sampler: vk::Sampler,
 
     storage_buffer_pool: IndexPool,
     storage_image_pool: IndexPool,
@@ -111,6 +113,7 @@ pub struct DescriptorSetInner {
 }
 
 impl DescriptorSetInner {
+    //TODO: separate sampled images and samplers
     const STORAGE_BUFFER_BINDING: u16 = 0;
     const SAMPLED_IMAGE_BINDING: u16 = 1;
     const STORAGE_IMAGE_BINDING: u16 = 2;
@@ -177,9 +180,22 @@ impl DescriptorSetInner {
         //     });
         // }
 
+        let binding_flags = vec![
+            vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
+            bindings.len()
+        ];
+        let mut binding_flag_create_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
+            .binding_flags(&binding_flags)
+            .build();
+
         let layout = unsafe {
             device.core.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings),
+                &vk::DescriptorSetLayoutCreateInfo::builder()
+                    .bindings(&bindings)
+                    .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+                    .push_next(&mut binding_flag_create_info),
                 None,
             )
         }?;
@@ -188,7 +204,8 @@ impl DescriptorSetInner {
             device.core.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::builder()
                     .max_sets(1)
-                    .pool_sizes(&pool_sizes),
+                    .pool_sizes(&pool_sizes)
+                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
                 None,
             )
         }?;
@@ -201,11 +218,18 @@ impl DescriptorSetInner {
             )
         }?[0];
 
+        let empty_sampler = unsafe {
+            device
+                .core
+                .create_sampler(&vk::SamplerCreateInfo::default(), None)?
+        };
+
         Ok(Self {
             device,
             layout,
             pool,
             set,
+            empty_sampler,
             storage_buffer_pool: IndexPool::new(0..count.storage_buffers),
             storage_image_pool: IndexPool::new(0..count.storage_images),
             sampled_image_pool: IndexPool::new(0..count.sampled_images),
@@ -281,6 +305,7 @@ impl DescriptorSetInner {
             .sampled_image_pool
             .get()
             .expect("Out of sampled image indices");
+
         self.write_image_descriptor(
             vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             Self::SAMPLED_IMAGE_BINDING,
@@ -296,10 +321,14 @@ impl DescriptorSetInner {
     fn unbind_sampled_image(&mut self, index: u16) {
         self.sampled_image_pool.free(index);
         self.write_image_descriptor(
-            vk::DescriptorType::SAMPLED_IMAGE,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             Self::SAMPLED_IMAGE_BINDING,
             index,
-            &[EMPTY_IMAGE_INFO],
+            &[vk::DescriptorImageInfo {
+                sampler: self.empty_sampler,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            }],
         );
     }
 
@@ -366,6 +395,8 @@ impl DescriptorSetInner {
 impl Drop for DescriptorSetInner {
     fn drop(&mut self) {
         unsafe {
+            self.device.core.destroy_sampler(self.empty_sampler, None);
+
             //No need to free the descriptor set, it will be destroyed up with the pool
             self.device.core.destroy_descriptor_pool(self.pool, None);
             self.device

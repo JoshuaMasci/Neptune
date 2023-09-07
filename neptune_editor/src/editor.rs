@@ -263,6 +263,48 @@ impl Editor {
                     resources.get_raster_pipeline(raster_pipeline_handle),
                 );
 
+                {
+                    let image_size = resources.get_image(swapchain_image).size;
+                    let image_size = [image_size.width as f32, image_size.height as f32];
+                    let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
+                        45.0f32.to_radians(),
+                        image_size[0] / image_size[1],
+                        0.01,
+                    );
+                    projection_matrix.y_axis.y *= -1.0;
+
+                    let view_matrix = glam::Mat4::look_to_lh(
+                        glam::Vec3::new(0.0, 0.0, -1.0),
+                        glam::Vec3::Z,
+                        glam::Vec3::Y,
+                    );
+                    let model_matrix = glam::Mat4::IDENTITY;
+
+                    let view_projection_matrix = projection_matrix * view_matrix;
+
+                    let push_data = &[view_projection_matrix, model_matrix];
+                    let push_data_bytes: &[u8] = std::slice::from_raw_parts(
+                        push_data.as_ptr() as *const u8,
+                        std::mem::size_of_val(push_data),
+                    );
+
+                    device.core.cmd_push_constants(
+                        command_buffer,
+                        resources.get_pipeline_layout(),
+                        vk::ShaderStageFlags::ALL,
+                        0,
+                        push_data_bytes,
+                    );
+
+                    device.core.cmd_push_constants(
+                        command_buffer,
+                        resources.get_pipeline_layout(),
+                        vk::ShaderStageFlags::ALL,
+                        push_data_bytes.len() as u32,
+                        &0u32.to_ne_bytes(),
+                    );
+                }
+
                 for primitive in primitives.iter() {
                     device.core.cmd_bind_vertex_buffers(
                         command_buffer,

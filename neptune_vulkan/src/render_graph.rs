@@ -132,6 +132,8 @@ pub struct RenderGraphResources<'a> {
     swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
     transient_images: &'a [VkImage],
     transient_buffers: &'a [Buffer],
+
+    pipeline_layout: vk::PipelineLayout,
     raster_pipelines: &'a slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
 }
 
@@ -175,6 +177,10 @@ impl<'a> RenderGraphResources<'a> {
 
     pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {
         self.raster_pipelines.get(pipeline.0).unwrap().clone()
+    }
+
+    pub fn get_pipeline_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
     }
 }
 
@@ -399,6 +405,7 @@ impl BasicRenderGraphExecutor {
                 swapchain_images: &swapchain_image,
                 transient_images: &transient_images,
                 transient_buffers,
+                pipeline_layout: self.pipeline_layout,
                 raster_pipelines,
             };
 
