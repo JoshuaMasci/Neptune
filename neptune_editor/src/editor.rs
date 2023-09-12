@@ -1,3 +1,4 @@
+use crate::gltf_loader::{load_samplers, GltfSamplers};
 use crate::mesh::{Mesh, Primitive};
 use crate::{gltf_loader, mesh};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
@@ -301,7 +302,7 @@ impl Editor {
                         resources.get_pipeline_layout(),
                         vk::ShaderStageFlags::ALL,
                         push_data_bytes.len() as u32,
-                        &0u32.to_ne_bytes(),
+                        &0u64.to_ne_bytes(),
                     );
                 }
 
@@ -359,7 +360,8 @@ impl Drop for Editor {
 
 struct GltfScene {
     meshes: Vec<Mesh>,
-    textures: Vec<ImageHandle>,
+    images: Vec<ImageHandle>,
+    samplers: GltfSamplers,
 }
 
 fn load_gltf_scene<P: AsRef<std::path::Path>>(
@@ -378,8 +380,14 @@ fn load_gltf_scene<P: AsRef<std::path::Path>>(
     info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
 
     let now = std::time::Instant::now();
-    let textures = gltf_loader::load_textures(device, &gltf_doc, &image_data)?;
-    info!("Texture Convert/Upload: {}", now.elapsed().as_secs_f32());
+    let images = gltf_loader::load_images(device, &gltf_doc, &image_data)?;
+    info!("Image Convert/Upload: {}", now.elapsed().as_secs_f32());
 
-    Ok(GltfScene { meshes, textures })
+    let samplers = load_samplers(device, &gltf_doc)?;
+
+    Ok(GltfScene {
+        meshes,
+        images,
+        samplers,
+    })
 }

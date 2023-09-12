@@ -26,7 +26,6 @@ pub struct ImageDescription2D {
     pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
     pub location: gpu_allocator::MemoryLocation,
-    pub sampler: Option<SamplerHandle>,
 }
 
 impl ImageDescription2D {
@@ -37,7 +36,6 @@ impl ImageDescription2D {
             usage: desc.usage,
             mip_levels: desc.mip_levels,
             location: desc.memory_location,
-            sampler: None,
         }
     }
 }
@@ -52,7 +50,7 @@ pub struct Image {
     pub usage: vk::ImageUsageFlags,
     pub location: gpu_allocator::MemoryLocation,
     pub storage_binding: Option<DescriptorBinding>,
-    pub combined_image_sampler: Option<(Arc<Sampler>, DescriptorBinding)>,
+    pub sampled_binding: Option<DescriptorBinding>,
 }
 
 impl Image {
@@ -149,7 +147,7 @@ impl Image {
             usage: description.usage,
             location: description.location,
             storage_binding: None,
-            combined_image_sampler: None,
+            sampled_binding: None,
         })
     }
 
@@ -158,9 +156,7 @@ impl Image {
     }
 
     pub fn get_sampled_binding(&self) -> Option<u32> {
-        self.combined_image_sampler
-            .as_ref()
-            .map(|(_, binding)| binding.index())
+        self.sampled_binding.as_ref().map(|binding| binding.index())
     }
 }
 

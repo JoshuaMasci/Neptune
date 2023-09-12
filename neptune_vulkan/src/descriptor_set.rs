@@ -1,10 +1,8 @@
 use crate::buffer::Buffer;
 use crate::device::AshDevice;
 use crate::image::Image;
-use crate::sampler::Sampler;
-use crate::VulkanError;
+use crate::{Sampler, VulkanError};
 use ash::vk;
-use log::info;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default, Debug, Clone)]
@@ -12,6 +10,7 @@ pub struct DescriptorCount {
     pub storage_buffers: u16,
     pub storage_images: u16,
     pub sampled_images: u16,
+    pub samplers: u16,
     pub acceleration_structures: u16,
 }
 
@@ -74,14 +73,18 @@ impl DescriptorSet {
         }
     }
 
-    pub fn bind_sampled_image(&self, image: &Image, sampler: &Sampler) -> DescriptorBinding {
+    pub fn bind_sampled_image(&self, image: &Image) -> DescriptorBinding {
         DescriptorBinding {
             binding: DescriptorSetInner::SAMPLED_IMAGE_BINDING,
-            index: self
-                .inner
-                .lock()
-                .unwrap()
-                .bind_sampled_image(image, sampler),
+            index: self.inner.lock().unwrap().bind_sampled_image(image),
+            set: self.inner.clone(),
+        }
+    }
+
+    pub fn bind_sampler(&self, sampler: &Sampler) -> DescriptorBinding {
+        DescriptorBinding {
+            binding: DescriptorSetInner::SAMPLER_BINDING,
+            index: self.inner.lock().unwrap().bind_sampler(sampler),
             set: self.inner.clone(),
         }
     }
@@ -109,15 +112,17 @@ pub struct DescriptorSetInner {
     storage_buffer_pool: IndexPool,
     storage_image_pool: IndexPool,
     sampled_image_pool: IndexPool,
+    sampler_pool: IndexPool,
     //acceleration_structure_pool: IndexPool,
 }
 
 impl DescriptorSetInner {
     //TODO: separate sampled images and samplers
     const STORAGE_BUFFER_BINDING: u16 = 0;
-    const SAMPLED_IMAGE_BINDING: u16 = 1;
-    const STORAGE_IMAGE_BINDING: u16 = 2;
-    const ACCELERATION_STRUCTURE_BINDING: u16 = 3;
+    const STORAGE_IMAGE_BINDING: u16 = 1;
+    const SAMPLED_IMAGE_BINDING: u16 = 2;
+    const SAMPLER_BINDING: u16 = 3;
+    const ACCELERATION_STRUCTURE_BINDING: u16 = 4;
 
     fn new(device: Arc<AshDevice>, count: DescriptorCount) -> Result<Self, VulkanError> {
         let mut bindings = Vec::new();
@@ -154,14 +159,28 @@ impl DescriptorSetInner {
         if count.sampled_images != 0 {
             bindings.push(vk::DescriptorSetLayoutBinding {
                 binding: Self::SAMPLED_IMAGE_BINDING as u32,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_type: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: count.sampled_images as u32,
                 stage_flags: vk::ShaderStageFlags::ALL,
                 p_immutable_samplers: std::ptr::null(),
             });
             pool_sizes.push(vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: count.sampled_images as u32,
+            });
+        }
+
+        if count.samplers != 0 {
+            bindings.push(vk::DescriptorSetLayoutBinding {
+                binding: Self::SAMPLER_BINDING as u32,
+                descriptor_type: vk::DescriptorType::SAMPLER,
+                descriptor_count: count.samplers as u32,
+                stage_flags: vk::ShaderStageFlags::ALL,
+                p_immutable_samplers: std::ptr::null(),
+            });
+            pool_sizes.push(vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: count.samplers as u32,
             });
         }
 
@@ -224,7 +243,7 @@ impl DescriptorSetInner {
                 .create_sampler(&vk::SamplerCreateInfo::default(), None)?
         };
 
-        Ok(Self {
+        let new_self = Self {
             device,
             layout,
             pool,
@@ -233,8 +252,27 @@ impl DescriptorSetInner {
             storage_buffer_pool: IndexPool::new(0..count.storage_buffers),
             storage_image_pool: IndexPool::new(0..count.storage_images),
             sampled_image_pool: IndexPool::new(0..count.sampled_images),
+            sampler_pool: IndexPool::new(0..count.samplers),
             //acceleration_structure_pool: IndexPool::new(0..count.acceleration_structures),
-        })
+        };
+
+        //Write empty sampler
+        {
+            let sampler_info = vk::DescriptorImageInfo {
+                sampler: empty_sampler,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            };
+            let default_samplers = vec![sampler_info; count.samplers as usize];
+            new_self.write_image_descriptor(
+                vk::DescriptorType::SAMPLER,
+                Self::SAMPLER_BINDING,
+                0,
+                &default_samplers,
+            );
+        }
+
+        Ok(new_self)
     }
 
     fn unbind(&mut self, binding: u16, index: u16) {
@@ -242,6 +280,7 @@ impl DescriptorSetInner {
             Self::STORAGE_BUFFER_BINDING => self.unbind_storage_buffer(index),
             Self::STORAGE_IMAGE_BINDING => self.unbind_storage_image(index),
             Self::SAMPLED_IMAGE_BINDING => self.unbind_sampled_image(index),
+            Self::SAMPLER_BINDING => self.unbind_sampler(index),
             other => panic!("Unknown binding ({})", other),
         }
     }
@@ -300,18 +339,18 @@ impl DescriptorSetInner {
         );
     }
 
-    fn bind_sampled_image(&mut self, image: &Image, sampler: &Sampler) -> u16 {
+    fn bind_sampled_image(&mut self, image: &Image) -> u16 {
         let index = self
             .sampled_image_pool
             .get()
             .expect("Out of sampled image indices");
 
         self.write_image_descriptor(
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            vk::DescriptorType::SAMPLED_IMAGE,
             Self::SAMPLED_IMAGE_BINDING,
             index,
             &[vk::DescriptorImageInfo {
-                sampler: sampler.handle,
+                sampler: vk::Sampler::null(),
                 image_view: image.view,
                 image_layout: vk::ImageLayout::GENERAL, //TODO: change this to SHADER_READ_ONLY_OPTIMAL once image transitions are supported
             }],
@@ -321,8 +360,33 @@ impl DescriptorSetInner {
     fn unbind_sampled_image(&mut self, index: u16) {
         self.sampled_image_pool.free(index);
         self.write_image_descriptor(
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            vk::DescriptorType::SAMPLED_IMAGE,
             Self::SAMPLED_IMAGE_BINDING,
+            index,
+            &[EMPTY_IMAGE_INFO],
+        );
+    }
+
+    fn bind_sampler(&mut self, sampler: &Sampler) -> u16 {
+        let index = self.sampler_pool.get().expect("Out of sampler indices");
+
+        self.write_image_descriptor(
+            vk::DescriptorType::SAMPLER,
+            Self::SAMPLER_BINDING,
+            index,
+            &[vk::DescriptorImageInfo {
+                sampler: sampler.handle,
+                image_view: vk::ImageView::null(),
+                image_layout: vk::ImageLayout::UNDEFINED,
+            }],
+        );
+        index
+    }
+    fn unbind_sampler(&mut self, index: u16) {
+        self.sampler_pool.free(index);
+        self.write_image_descriptor(
+            vk::DescriptorType::SAMPLER,
+            Self::SAMPLER_BINDING,
             index,
             &[vk::DescriptorImageInfo {
                 sampler: self.empty_sampler,

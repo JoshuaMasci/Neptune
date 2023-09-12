@@ -1,3 +1,4 @@
+use crate::descriptor_set::DescriptorBinding;
 use crate::device::AshDevice;
 use crate::VulkanError;
 use ash::vk;
@@ -104,6 +105,7 @@ impl SamplerDescription {
 pub struct Sampler {
     device: Arc<AshDevice>,
     pub(crate) handle: vk::Sampler,
+    pub(crate) binding: Option<DescriptorBinding>,
 }
 
 impl Sampler {
@@ -122,7 +124,11 @@ impl Sampler {
             debug_util.set_object_name(device.core.handle(), handle, name);
         }
 
-        Ok(Self { device, handle })
+        Ok(Self {
+            device,
+            handle,
+            binding: None,
+        })
     }
 }
 

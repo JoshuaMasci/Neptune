@@ -6,7 +6,7 @@ use glam::{Vec3, Vec4};
 use gltf::image::Format;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle};
+use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle, SamplerHandle};
 
 fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
     match mode {
@@ -16,11 +16,15 @@ fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
     }
 }
 
-pub fn load_textures(
+pub struct GltfSamplers {
+    default: SamplerHandle,
+    samplers: Vec<SamplerHandle>,
+}
+
+pub fn load_samplers(
     device: &mut neptune_vulkan::Device,
     gltf_doc: &gltf::Document,
-    gltf_images: &[gltf::image::Data],
-) -> anyhow::Result<Vec<ImageHandle>> {
+) -> anyhow::Result<GltfSamplers> {
     let default_sampler = device.create_sampler(
         "Gltf Default Sampler",
         &neptune_vulkan::SamplerDescription {
@@ -77,11 +81,21 @@ pub fn load_textures(
         samplers.push(device.create_sampler(name, &description)?);
     }
 
-    let mut images = Vec::with_capacity(gltf_doc.textures().len());
-    for gltf_texture in gltf_doc.textures() {
-        let name = gltf_texture.name().unwrap_or("Unnamed Texture");
+    Ok(GltfSamplers {
+        default: default_sampler,
+        samplers,
+    })
+}
 
-        let gltf_image = gltf_doc.images().nth(gltf_texture.index()).unwrap();
+pub fn load_images(
+    device: &mut neptune_vulkan::Device,
+    gltf_doc: &gltf::Document,
+    gltf_images: &[gltf::image::Data],
+) -> anyhow::Result<Vec<ImageHandle>> {
+    let mut images = Vec::with_capacity(gltf_doc.images().len());
+    for gltf_image in gltf_doc.images() {
+        let name = gltf_image.name().unwrap_or("Unnamed Image");
+
         let gltf_image_data = &gltf_images[gltf_image.index()];
 
         let mut format = match gltf_image_data.format {
@@ -120,33 +134,18 @@ pub fn load_textures(
                 .collect();
             image_data_slice = &image_data_slice_new;
         }
-
-        let sampler_index = gltf_texture.sampler().index();
-
-        //TODO: sampler
         let description = neptune_vulkan::ImageDescription2D {
             size: [gltf_image_data.width, gltf_image_data.height],
             format,
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             mip_levels: 1,
             location: MemoryLocation::GpuOnly,
-            sampler: Some(
-                *sampler_index
-                    .and_then(|index| samplers.get(index))
-                    .unwrap_or(&default_sampler),
-            ),
         };
 
         let image_handle = device.create_image(name, &description)?;
         device.update_data_to_image(image_handle, image_data_slice)?;
 
         images.push(image_handle);
-    }
-
-    //Cleanup samplers, they will stay around as long as the images that use them
-    device.destroy_sampler(default_sampler);
-    for sampler in samplers {
-        device.destroy_sampler(sampler);
     }
 
     Ok(images)

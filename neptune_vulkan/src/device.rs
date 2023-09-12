@@ -65,7 +65,8 @@ impl AshDevice {
             .descriptor_binding_storage_buffer_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
-            .descriptor_binding_update_unused_while_pending(true);
+            .descriptor_binding_update_unused_while_pending(true)
+            .runtime_descriptor_array(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::builder()
             .synchronization2(true)
@@ -285,7 +286,7 @@ impl Device {
         let image = Image::new_2d(self.device.clone(), name, description)?;
 
         Ok(ImageHandle::Persistent(
-            self.resource_manager.add_image(image, &description.sampler),
+            self.resource_manager.add_image(image),
         ))
     }
     pub fn destroy_image(&mut self, image_handle: ImageHandle) {

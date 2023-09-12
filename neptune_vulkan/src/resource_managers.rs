@@ -41,6 +41,7 @@ impl ResourceManager {
                 storage_buffers: 1024,
                 storage_images: 1024,
                 sampled_images: 1024,
+                samplers: 128,
                 ..Default::default()
             },
         )
@@ -86,20 +87,13 @@ impl ResourceManager {
         self.freed_buffers.push(key);
     }
 
-    pub fn add_image(&mut self, mut image: Image, sampler: &Option<SamplerHandle>) -> ImageKey {
+    pub fn add_image(&mut self, mut image: Image) -> ImageKey {
         if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
             image.storage_binding = Some(self.descriptor_set.bind_storage_image(&image));
         }
 
         if image.usage.contains(vk::ImageUsageFlags::SAMPLED) {
-            if let Some(sampler_handle) = sampler {
-                if let Some(sampler) = self.samplers.get(sampler_handle.0) {
-                    image.combined_image_sampler = Some((
-                        sampler.clone(),
-                        self.descriptor_set.bind_sampled_image(&image, &sampler),
-                    ));
-                }
-            }
+            image.sampled_binding = Some(self.descriptor_set.bind_sampled_image(&image));
         }
 
         self.images.insert(AshImageHandle { image })
@@ -113,7 +107,8 @@ impl ResourceManager {
         self.freed_images.push(key);
     }
 
-    pub fn add_sampler(&mut self, sampler: Sampler) -> SamplerKey {
+    pub fn add_sampler(&mut self, mut sampler: Sampler) -> SamplerKey {
+        sampler.binding = Some(self.descriptor_set.bind_sampler(&sampler));
         self.samplers.insert(Arc::new(sampler))
     }
 
