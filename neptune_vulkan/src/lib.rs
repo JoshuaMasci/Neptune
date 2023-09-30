@@ -7,6 +7,7 @@ mod instance;
 mod interface;
 mod pipeline;
 mod render_graph;
+mod render_graph_builder;
 mod resource_managers;
 mod sampler;
 mod swapchain;

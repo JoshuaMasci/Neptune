@@ -17,8 +17,8 @@ fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
 }
 
 pub struct GltfSamplers {
-    default: SamplerHandle,
-    samplers: Vec<SamplerHandle>,
+    pub default: SamplerHandle,
+    pub samplers: Vec<SamplerHandle>,
 }
 
 pub fn load_samplers(
