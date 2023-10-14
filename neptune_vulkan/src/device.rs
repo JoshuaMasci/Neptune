@@ -3,6 +3,7 @@ use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::RasterPipelineDescription;
 use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
+use crate::render_graph_builder::RenderGraphBuilder;
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
@@ -155,6 +156,7 @@ pub struct Device {
     buffer_transfer_list: Vec<(BufferHandle, BufferHandle)>,
     image_transfer_list: Vec<(BufferHandle, ImageHandle)>,
     graph_executor: BasicRenderGraphExecutor,
+    graph_executor2: crate::render_graph_executor::BasicRenderGraphExecutor,
 }
 
 impl Device {
@@ -195,6 +197,12 @@ impl Device {
         let graph_executor =
             BasicRenderGraphExecutor::new(device.clone(), pipeline_layout, graphics_queue_index)?;
 
+        let graph_executor2 = crate::render_graph_executor::BasicRenderGraphExecutor::new(
+            device.clone(),
+            pipeline_layout,
+            graphics_queue_index,
+        )?;
+
         Ok(Device {
             device,
             pipeline_layout,
@@ -205,6 +213,7 @@ impl Device {
             buffer_transfer_list: Vec::new(),
             image_transfer_list: Vec::new(),
             graph_executor,
+            graph_executor2,
         })
     }
 
@@ -543,6 +552,21 @@ impl Device {
         self.graph_executor.execute_graph(
             transfer_pass,
             render_graph,
+            &mut self.resource_manager,
+            &mut self.transient_resource_manager,
+            &mut self.swapchain_manager,
+            &self.raster_pipelines,
+        )?;
+        Ok(())
+    }
+
+    pub fn submit_frame2(
+        &mut self,
+        render_graph_builder: &RenderGraphBuilder,
+    ) -> Result<(), VulkanError> {
+        self.graph_executor2.execute_graph(
+            None,
+            render_graph_builder,
             &mut self.resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,

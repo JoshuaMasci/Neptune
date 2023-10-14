@@ -1,193 +1,11 @@
-use crate::{BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey, SurfaceHandle};
-use ash::vk;
-use std::collections::HashMap;
-
-#[derive(Clone, Debug)]
-pub struct BufferAccess {
-    pub write: bool, //TODO: calculate this from stage+access?
-    pub stage: vk::PipelineStageFlags2,
-    pub access: vk::AccessFlags2,
-}
-
-#[derive(Clone, Debug)]
-pub struct ImageAccess {
-    pub write: bool, //TODO: calculate this from stage+access+layout?
-    pub stage: vk::PipelineStageFlags2,
-    pub access: vk::AccessFlags2,
-    pub layout: vk::ImageLayout,
-}
-
-pub type BuildCommandFn = dyn Fn(&AshDevice, vk::CommandBuffer, &mut RenderGraphResources);
-
-pub struct ColorAttachment {
-    pub image: ImageHandle,
-    pub clear: Option<[f32; 4]>,
-}
-
-impl ColorAttachment {
-    pub fn new(image: ImageHandle) -> Self {
-        Self { image, clear: None }
-    }
-
-    pub fn new_clear(image: ImageHandle, clear: [f32; 4]) -> Self {
-        Self {
-            image,
-            clear: Some(clear),
-        }
-    }
-}
-
-pub struct DepthStencilAttachment {
-    pub image: ImageHandle,
-    pub clear: Option<(f32, u32)>,
-}
-
-impl DepthStencilAttachment {
-    pub fn new(image: ImageHandle) -> Self {
-        Self { image, clear: None }
-    }
-
-    pub fn new_clear(image: ImageHandle, clear: (f32, u32)) -> Self {
-        Self {
-            image,
-            clear: Some(clear),
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct Framebuffer {
-    pub color_attachments: Vec<ColorAttachment>,
-    pub depth_stencil_attachment: Option<DepthStencilAttachment>,
-    pub input_attachments: Vec<ImageHandle>,
-}
-
-#[derive(Default)]
-pub struct RenderPass {
-    pub name: String,
-    pub queue: vk::Queue,
-    pub buffer_usages: HashMap<BufferHandle, BufferAccess>,
-    pub image_usages: HashMap<ImageHandle, ImageAccess>,
-    pub framebuffer: Option<Framebuffer>,
-    pub build_cmd_fn: Option<Box<BuildCommandFn>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum TransientImageSize {
-    Exact(vk::Extent2D),
-    Relative([f32; 2], ImageHandle),
-}
-
-#[derive(Debug, Clone)]
-pub struct TransientImageDesc {
-    pub size: TransientImageSize,
-    pub format: vk::Format,
-    pub usage: vk::ImageUsageFlags,
-    pub mip_levels: u32,
-    pub memory_location: gpu_allocator::MemoryLocation,
-}
-
-#[derive(Default)]
-pub struct RenderGraph {
-    pub(crate) transient_buffers: Vec<BufferDescription>,
-    pub(crate) transient_images: Vec<TransientImageDesc>,
-    pub(crate) swapchain_images: Vec<SurfaceHandle>,
-    pub(crate) passes: Vec<RenderPass>,
-}
-
-impl RenderGraph {
-    pub fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle {
-        let index = self.transient_buffers.len();
-        self.transient_buffers.push(desc);
-        BufferHandle::Transient(index)
-    }
-
-    pub fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle {
-        let index = self.transient_images.len();
-        self.transient_images.push(desc);
-        ImageHandle::Transient(index)
-    }
-
-    pub fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle {
-        let index = self.swapchain_images.len();
-        self.swapchain_images.push(surface_handle);
-        ImageHandle::Swapchain(index)
-    }
-
-    pub fn add_pass(&mut self, pass: RenderPass) {
-        self.passes.push(pass);
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct VkImage {
-    pub handle: vk::Image,
-    pub view: vk::ImageView,
-    pub size: vk::Extent2D,
-    pub format: vk::Format,
-}
-
-pub struct RenderGraphResources<'a> {
-    pub(crate) persistent: &'a mut ResourceManager,
-    pub(crate) swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
-    pub(crate) transient_images: &'a [VkImage],
-    pub(crate) transient_buffers: &'a [Buffer],
-
-    pub(crate) pipeline_layout: vk::PipelineLayout,
-    pub(crate) raster_pipelines: &'a slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
-}
-
-impl<'a> RenderGraphResources<'a> {
-    pub fn get_image(&self, resource: ImageHandle) -> VkImage {
-        match resource {
-            ImageHandle::Persistent(image_key) => {
-                let image = self
-                    .persistent
-                    .get_image(image_key)
-                    .expect("Invalid Image Key");
-                VkImage {
-                    handle: image.handle,
-                    view: image.view,
-                    size: image.extend,
-                    format: image.format,
-                }
-            }
-            ImageHandle::Transient(index) => self.transient_images[index],
-            ImageHandle::Swapchain(index) => {
-                let swapchain_image = self.swapchain_images[index].clone();
-                VkImage {
-                    handle: swapchain_image.1.handle,
-                    view: swapchain_image.1.view,
-                    size: swapchain_image.1.extent,
-                    format: swapchain_image.1.format,
-                }
-            }
-        }
-    }
-
-    pub fn get_buffer(&self, resource: BufferHandle) -> &Buffer {
-        match resource {
-            BufferHandle::Persistent(buffer_key) => self
-                .persistent
-                .get_buffer(buffer_key)
-                .expect("render pass tried to access invalid persistent buffer"),
-            BufferHandle::Transient(index) => &self.transient_buffers[index],
-        }
-    }
-
-    pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {
-        *self.raster_pipelines.get(pipeline.0).unwrap()
-    }
-
-    pub fn get_pipeline_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
-    }
-}
-
-use crate::buffer::{Buffer, BufferDescription};
 use crate::device::{AshDevice, AshQueue};
+use crate::render_graph_builder::{
+    IndexType, RasterDispatch, RenderGraphBuilder, RenderPassType, ShaderResourceUsage,
+};
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::swapchain::{SwapchainImage, SwapchainManager};
+use crate::RasterPipleineKey;
+use ash::vk;
 use log::info;
 use std::sync::Arc;
 
@@ -261,8 +79,8 @@ impl BasicRenderGraphExecutor {
 
     pub fn execute_graph(
         &mut self,
-        transfer_pass: Option<RenderPass>,
-        render_graph: &RenderGraph,
+        upload_data: Option<()>,
+        render_graph_builder: &RenderGraphBuilder,
         persistent_resource_manager: &mut ResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
         swapchain_manager: &mut SwapchainManager,
@@ -287,8 +105,8 @@ impl BasicRenderGraphExecutor {
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
 
         //If we need more semaphores create them
-        if self.swapchain_semaphores.len() < render_graph.swapchain_images.len() {
-            for _ in self.swapchain_semaphores.len()..render_graph.swapchain_images.len() {
+        if self.swapchain_semaphores.len() < render_graph_builder.swapchain_images.len() {
+            for _ in self.swapchain_semaphores.len()..render_graph_builder.swapchain_images.len() {
                 self.swapchain_semaphores.push(unsafe {
                     (
                         self.device
@@ -303,8 +121,8 @@ impl BasicRenderGraphExecutor {
         }
 
         let mut swapchain_image: Vec<(vk::SwapchainKHR, SwapchainImage)> =
-            Vec::with_capacity(render_graph.swapchain_images.len());
-        for (surface_handle, swapchain_semaphores) in render_graph
+            Vec::with_capacity(render_graph_builder.swapchain_images.len());
+        for (surface_handle, swapchain_semaphores) in render_graph_builder
             .swapchain_images
             .iter()
             .map(|surface_handle| {
@@ -394,13 +212,11 @@ impl BasicRenderGraphExecutor {
             let transient_images = transient_resource_manager.resolve_images(
                 persistent_resource_manager,
                 &swapchain_image,
-                &render_graph.transient_images,
+                &render_graph_builder.transient_images,
             );
-
             let transient_buffers =
-                transient_resource_manager.resolve_buffers(&render_graph.transient_buffers);
-
-            let mut resources = RenderGraphResources {
+                transient_resource_manager.resolve_buffers(&render_graph_builder.transient_buffers);
+            let resources = crate::RenderGraphResources {
                 persistent: persistent_resource_manager,
                 swapchain_images: &swapchain_image,
                 transient_images: &transient_images,
@@ -409,22 +225,39 @@ impl BasicRenderGraphExecutor {
                 raster_pipelines,
             };
 
-            if let Some(transfer_pass) = transfer_pass {
-                record_single_queue_render_pass_bad_sync(
-                    &transfer_pass,
-                    &self.device,
-                    self.command_buffer,
-                    &mut resources,
-                );
-            }
+            for render_pass in render_graph_builder.passes.iter() {
+                //TODO: use queue
+                let _ = render_pass.queue;
 
-            for render_pass in render_graph.passes.iter() {
-                record_single_queue_render_pass_bad_sync(
-                    render_pass,
-                    &self.device,
-                    self.command_buffer,
-                    &mut resources,
-                );
+                if let Some(debug_util) = &self.device.instance.debug_utils {
+                    debug_util.cmd_begin_label(
+                        self.command_buffer,
+                        &render_pass.lable_name,
+                        render_pass.lable_color,
+                    );
+                }
+
+                match &render_pass.pass_type {
+                    RenderPassType::Compute { .. } => {
+                        todo!("Compute pass")
+                    }
+                    RenderPassType::Raster {
+                        framebuffer,
+                        draw_commands,
+                    } => {
+                        record_raster_pass(
+                            &self.device,
+                            self.command_buffer,
+                            framebuffer,
+                            draw_commands,
+                            &resources,
+                        );
+                    }
+                }
+
+                if let Some(debug_util) = &self.device.instance.debug_utils {
+                    debug_util.cmd_end_label(self.command_buffer);
+                }
             }
 
             // Transition Swapchain to Present
@@ -550,89 +383,37 @@ impl Drop for BasicRenderGraphExecutor {
     }
 }
 
-fn record_single_queue_render_pass_bad_sync(
-    render_pass: &RenderPass,
+fn record_raster_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
-    resources: &mut RenderGraphResources,
+    framebuffer: &crate::render_graph_builder::Framebuffer,
+    draw_commands: &[crate::render_graph_builder::RasterDrawCommand],
+    resources: &crate::RenderGraphResources,
 ) {
-    //Bad Barrier
-    unsafe {
-        device.core.cmd_pipeline_barrier2(
-            command_buffer,
-            &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                .build()]),
-        );
+    //Begin Rendering
+    {
+        let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
 
-        if let Some(debug_util) = &device.instance.debug_utils {
-            debug_util.cmd_begin_label(command_buffer, &render_pass.name, [0.0, 1.0, 0.0, 1.0]);
-        }
+        let mut extent = None;
+        let mut color_attachments = Vec::new();
 
-        if let Some(framebuffer) = &render_pass.framebuffer {
-            let mut rendering_info_builder = vk::RenderingInfo::builder().layer_count(1);
+        for color_attachment in framebuffer.color_attachments.iter() {
+            let image = resources.get_image(color_attachment.image);
 
-            let mut extent = None;
-            let mut color_attachments = Vec::new();
-
-            for color_attachment in framebuffer.color_attachments.iter() {
-                let image = resources.get_image(color_attachment.image);
-
-                if let Some(extent) = extent {
-                    if extent != image.size {
-                        panic!("Framebuffer color attachment extent does not match");
-                    }
-                } else {
-                    extent = Some(image.size);
+            if let Some(extent) = extent {
+                if extent != image.size {
+                    panic!("Framebuffer color attachment extent does not match");
                 }
-
-                let color_clear = color_attachment.clear.map(|color| vk::ClearValue {
-                    color: vk::ClearColorValue { float32: color },
-                });
-
-                color_attachments.push(
-                    vk::RenderingAttachmentInfo::builder()
-                        .image_view(image.view)
-                        .image_layout(vk::ImageLayout::GENERAL)
-                        .load_op(if color_clear.is_some() {
-                            vk::AttachmentLoadOp::CLEAR
-                        } else {
-                            vk::AttachmentLoadOp::LOAD
-                        })
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .clear_value(color_clear.unwrap_or_default())
-                        .build(),
-                );
+            } else {
+                extent = Some(image.size);
             }
 
-            rendering_info_builder = rendering_info_builder.color_attachments(&color_attachments);
+            let color_clear = color_attachment.clear.map(|color| vk::ClearValue {
+                color: vk::ClearColorValue { float32: color },
+            });
 
-            let mut depth_stencil_attachment_info = vk::RenderingAttachmentInfo::default();
-
-            if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
-                let image = resources.get_image(depth_stencil_image.image);
-
-                if let Some(extent) = extent {
-                    if extent != image.size {
-                        panic!("Framebuffer depth stencil attachment extent does not match");
-                    }
-                } else {
-                    extent = Some(image.size);
-                }
-
-                let color_clear = depth_stencil_image
-                    .clear
-                    .map(|depth_stencil| vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: depth_stencil.0,
-                            stencil: depth_stencil.1,
-                        },
-                    });
-
-                depth_stencil_attachment_info = vk::RenderingAttachmentInfo::builder()
+            color_attachments.push(
+                vk::RenderingAttachmentInfo::builder()
                     .image_view(image.view)
                     .image_layout(vk::ImageLayout::GENERAL)
                     .load_op(if color_clear.is_some() {
@@ -642,27 +423,64 @@ fn record_single_queue_render_pass_bad_sync(
                     })
                     .store_op(vk::AttachmentStoreOp::STORE)
                     .clear_value(color_clear.unwrap_or_default())
-                    .build();
+                    .build(),
+            );
+        }
 
-                rendering_info_builder =
-                    rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
+        rendering_info_builder = rendering_info_builder.color_attachments(&color_attachments);
+
+        let depth_stencil_attachment_info: vk::RenderingAttachmentInfo;
+        if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
+            let image = resources.get_image(depth_stencil_image.image);
+
+            if let Some(extent) = extent {
+                if extent != image.size {
+                    panic!("Framebuffer depth stencil attachment extent does not match");
+                }
+            } else {
+                extent = Some(image.size);
             }
 
-            let extent = extent.expect("Framebuffer has no attachments");
+            let color_clear = depth_stencil_image
+                .clear
+                .map(|depth_stencil| vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: depth_stencil.0,
+                        stencil: depth_stencil.1,
+                    },
+                });
 
-            let render_area = vk::Rect2D {
-                offset: vk::Offset2D::default(),
-                extent,
-            };
+            depth_stencil_attachment_info = vk::RenderingAttachmentInfo::builder()
+                .image_view(image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
+                .load_op(if color_clear.is_some() {
+                    vk::AttachmentLoadOp::CLEAR
+                } else {
+                    vk::AttachmentLoadOp::LOAD
+                })
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .clear_value(color_clear.unwrap_or_default())
+                .build();
 
-            rendering_info_builder = rendering_info_builder
-                .color_attachments(&color_attachments)
-                .render_area(render_area);
+            rendering_info_builder =
+                rendering_info_builder.depth_attachment(&depth_stencil_attachment_info);
+        }
 
+        let extent = extent.expect("Framebuffer has no attachments");
+
+        let render_area = vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent,
+        };
+
+        rendering_info_builder = rendering_info_builder
+            .color_attachments(&color_attachments)
+            .render_area(render_area);
+
+        unsafe {
             device
                 .core
                 .cmd_begin_rendering(command_buffer, &rendering_info_builder);
-            _ = depth_stencil_attachment_info;
 
             device.core.cmd_set_viewport(
                 command_buffer,
@@ -681,18 +499,140 @@ fn record_single_queue_render_pass_bad_sync(
                 .core
                 .cmd_set_scissor(command_buffer, 0, &[render_area])
         }
+    }
 
-        if let Some(build_cmd_fn) = &render_pass.build_cmd_fn {
-            build_cmd_fn(device, command_buffer, resources);
+    //Draw calls
+    for draw_call in draw_commands {
+        //Bind Pipeline
+        unsafe {
+            device.core.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                resources.get_raster_pipeline(draw_call.pipeline),
+            );
         }
 
-        if render_pass.framebuffer.is_some() {
-            device.core.cmd_end_rendering(command_buffer);
+        //Bind Vertex Buffers
+        if !draw_call.vertex_buffers.is_empty() {
+            let mut vertex_buffers: Vec<vk::Buffer> =
+                Vec::with_capacity(draw_call.vertex_buffers.len());
+            for vertex_buffer in draw_call.vertex_buffers.iter() {
+                vertex_buffers.push(resources.get_buffer(vertex_buffer.buffer).handle);
+            }
+
+            let vertex_offset: Vec<vk::DeviceSize> = draw_call
+                .vertex_buffers
+                .iter()
+                .map(|buffer| buffer.offset as vk::DeviceSize)
+                .collect();
+
+            unsafe {
+                device.core.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &vertex_buffers,
+                    &vertex_offset,
+                );
+            }
         }
 
-        if let Some(debug_util) = &device.instance.debug_utils {
-            debug_util.cmd_end_label(command_buffer);
+        //Bind Index Buffer
+        if let Some((index_buffer, index_type)) = draw_call.index_buffer {
+            unsafe {
+                device.core.cmd_bind_index_buffer(
+                    command_buffer,
+                    resources.get_buffer(index_buffer.buffer).handle,
+                    index_buffer.offset as vk::DeviceSize,
+                    match index_type {
+                        IndexType::U16 => vk::IndexType::UINT16,
+                        IndexType::U32 => vk::IndexType::UINT32,
+                    },
+                );
+            }
         }
+
+        //Push Resource
+        unsafe {
+            let mut push_data: Vec<u32> = Vec::new();
+
+            //TODO: get binding
+            for resource in draw_call.resources.iter() {
+                push_data.push(match resource {
+                    ShaderResourceUsage::StorageBuffer { .. } => 0,
+                    ShaderResourceUsage::StorageImage { .. } => 0,
+                    ShaderResourceUsage::SampledImage(_handle) => 0,
+                    ShaderResourceUsage::Sampler(_handle) => 0,
+                });
+            }
+
+            let push_data_bytes: &[u8] = std::slice::from_raw_parts(
+                push_data.as_ptr() as *const u8,
+                std::mem::size_of_val(&push_data),
+            );
+
+            device.core.cmd_push_constants(
+                command_buffer,
+                resources.get_pipeline_layout(),
+                vk::ShaderStageFlags::ALL,
+                0,
+                &push_data_bytes,
+            );
+        }
+
+        //Dispatch
+        unsafe {
+            match &draw_call.dispatch {
+                RasterDispatch::Draw {
+                    vertices,
+                    instances,
+                } => device.core.cmd_draw(
+                    command_buffer,
+                    vertices.len() as u32,
+                    instances.len() as u32,
+                    vertices.start,
+                    instances.start,
+                ),
+                RasterDispatch::DrawIndexed {
+                    base_vertex,
+                    indices,
+                    instances,
+                } => device.core.cmd_draw_indexed(
+                    command_buffer,
+                    indices.len() as u32,
+                    instances.len() as u32,
+                    indices.start,
+                    *base_vertex,
+                    instances.start,
+                ),
+                RasterDispatch::DrawIndirect {
+                    buffer,
+                    draw_count,
+                    stride,
+                } => device.core.cmd_draw_indirect(
+                    command_buffer,
+                    resources.get_buffer(buffer.buffer).handle,
+                    buffer.offset as vk::DeviceSize,
+                    *draw_count,
+                    *stride,
+                ),
+                RasterDispatch::DrawIndirectIndexed {
+                    buffer,
+                    draw_count,
+                    stride,
+                } => device.core.cmd_draw_indexed_indirect(
+                    command_buffer,
+                    resources.get_buffer(buffer.buffer).handle,
+                    buffer.offset as vk::DeviceSize,
+                    *draw_count,
+                    *stride,
+                ),
+            }
+        }
+    }
+
+    //End Rendering
+    unsafe {
+        device.core.cmd_end_rendering(command_buffer);
     }
 }
 

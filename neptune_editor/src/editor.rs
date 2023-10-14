@@ -6,6 +6,7 @@ use neptune_vulkan::{
     vk, BufferAccess, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer,
     ImageAccess, ImageHandle, RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
 };
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::collections::HashMap;
 
 #[derive(clap::Parser)]
@@ -18,21 +19,18 @@ pub struct EditorConfig {
 pub struct Editor {
     instance: neptune_vulkan::Instance,
     surface_handle: neptune_vulkan::SurfaceHandle,
+    surface_size: [u32; 2],
 
     device: neptune_vulkan::Device,
 
     raster_pipeline: neptune_vulkan::RasterPipelineHandle,
 
+    view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
     scene: GltfScene,
 }
 
 impl Editor {
-    pub fn new<
-        W: raw_window_handle::HasRawDisplayHandle + raw_window_handle::HasRawWindowHandle,
-    >(
-        window: &W,
-        config: &EditorConfig,
-    ) -> anyhow::Result<Self> {
+    pub fn new(window: &winit::window::Window, config: &EditorConfig) -> anyhow::Result<Self> {
         let mut instance = neptune_vulkan::Instance::new(
             &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
             &neptune_vulkan::AppInfo::new(crate::APP_NAME, [0, 0, 1, 0]),
@@ -78,6 +76,9 @@ impl Editor {
             })
             .expect("Failed to initialize vulkan device");
 
+        let window_size = window.inner_size();
+        let surface_size = [window_size.width, window_size.height];
+
         device.configure_surface(
             surface_handle,
             &neptune_vulkan::SurfaceSettings {
@@ -86,7 +87,7 @@ impl Editor {
                     format: vk::Format::B8G8R8A8_UNORM,
                     color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
                 },
-                size: [1, 1],
+                size: surface_size,
                 usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
                 present_mode: vk::PresentModeKHR::FIFO,
             },
@@ -145,16 +146,50 @@ impl Editor {
 
         let scene = load_gltf_scene(&mut device, &gltf_scene_path)?;
 
+        let view_projection_matrix_buffer = {
+            let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
+                45.0f32.to_radians(),
+                surface_size[0] as f32 / surface_size[1] as f32,
+                0.01,
+            );
+            projection_matrix.y_axis.y *= -1.0;
+
+            let view_matrix = glam::Mat4::look_to_lh(
+                glam::Vec3::new(0.0, 0.0, -1.0),
+                glam::Vec3::Z,
+                glam::Vec3::Y,
+            );
+
+            let view_projection_matrix = projection_matrix * view_matrix;
+            let matrix_data = &[view_projection_matrix];
+            let matrix_data_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    matrix_data.as_ptr() as *const u8,
+                    std::mem::size_of_val(matrix_data),
+                )
+            };
+
+            device.create_buffer_init(
+                "view_projection_matrix_buffer",
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                matrix_data_bytes,
+            )?
+        };
+
         Ok(Self {
             instance,
             surface_handle,
+            surface_size,
             device,
             raster_pipeline,
+            view_projection_matrix_buffer,
             scene,
         })
     }
 
     pub fn window_resize(&mut self, new_size: [u32; 2]) -> anyhow::Result<()> {
+        self.surface_size = new_size;
         self.device.configure_surface(
             self.surface_handle,
             &neptune_vulkan::SurfaceSettings {
@@ -168,6 +203,40 @@ impl Editor {
                 present_mode: vk::PresentModeKHR::FIFO,
             },
         )?;
+
+        self.device
+            .destroy_buffer(self.view_projection_matrix_buffer);
+        self.view_projection_matrix_buffer = {
+            let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
+                45.0f32.to_radians(),
+                self.surface_size[0] as f32 / self.surface_size[1] as f32,
+                0.01,
+            );
+            projection_matrix.y_axis.y *= -1.0;
+
+            let view_matrix = glam::Mat4::look_to_lh(
+                glam::Vec3::new(0.0, 0.0, -1.0),
+                glam::Vec3::Z,
+                glam::Vec3::Y,
+            );
+
+            let view_projection_matrix = projection_matrix * view_matrix;
+            let matrix_data = &[view_projection_matrix];
+            let matrix_data_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    matrix_data.as_ptr() as *const u8,
+                    std::mem::size_of_val(matrix_data),
+                )
+            };
+
+            self.device.create_buffer_init(
+                "view_projection_matrix_buffer",
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                matrix_data_bytes,
+            )?
+        };
+
         Ok(())
     }
 
@@ -347,6 +416,104 @@ impl Editor {
         });
 
         self.device.submit_frame(&render_graph)?;
+        Ok(())
+    }
+
+    pub fn render2(&mut self) -> anyhow::Result<()> {
+        let mut render_graph_builder =
+            neptune_vulkan::render_graph_builder::RenderGraphBuilder::default();
+
+        let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
+        let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
+            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
+            format: vk::Format::D16_UNORM,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            mip_levels: 1,
+            memory_location: MemoryLocation::GpuOnly,
+        });
+
+        let mut raster_pass =
+            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Gltf Scene")
+                .add_color_attachment(
+                    neptune_vulkan::render_graph_builder::ColorAttachment::new_clear(
+                        swapchain_image,
+                        [0.25, 0.25, 0.25, 1.0],
+                    ),
+                )
+                .add_depth_stencil_attachment(
+                    neptune_vulkan::render_graph_builder::DepthStencilAttachment::new_clear(
+                        depth_image,
+                        (1.0, 0),
+                    ),
+                );
+
+        for mesh in self.scene.meshes.iter() {
+            for primitive in mesh.primitives.iter() {
+                let pipeline = self.raster_pipeline;
+                let vertex_buffers = vec![
+                    neptune_vulkan::render_graph_builder::BufferOffset {
+                        buffer: primitive.position_buffer,
+                        offset: 0,
+                    },
+                    neptune_vulkan::render_graph_builder::BufferOffset {
+                        buffer: primitive.attributes_buffer,
+                        offset: 0,
+                    },
+                ];
+
+                let mut index_buffer = None;
+                let dispatch = if let Some(index_buffer_ref) = &primitive.index_buffer {
+                    index_buffer = Some((
+                        neptune_vulkan::render_graph_builder::BufferOffset {
+                            buffer: index_buffer_ref.buffer,
+                            offset: 0,
+                        },
+                        neptune_vulkan::render_graph_builder::IndexType::U32,
+                    ));
+
+                    neptune_vulkan::render_graph_builder::RasterDispatch::DrawIndexed {
+                        base_vertex: 0,
+                        indices: 0..index_buffer_ref.count,
+                        instances: 0..1,
+                    }
+                } else {
+                    neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
+                        vertices: 0..primitive.vertex_count as u32,
+                        instances: 0..1,
+                    }
+                };
+
+                raster_pass = raster_pass.add_draw_command(
+                    neptune_vulkan::render_graph_builder::RasterDrawCommand {
+                        pipeline: self.raster_pipeline,
+                        vertex_buffers: vec![
+                            neptune_vulkan::render_graph_builder::BufferOffset {
+                                buffer: primitive.position_buffer,
+                                offset: 0,
+                            },
+                            neptune_vulkan::render_graph_builder::BufferOffset {
+                                buffer: primitive.attributes_buffer,
+                                offset: 0,
+                            },
+                        ],
+                        index_buffer,
+                        resources: vec![
+                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::Sampler(
+                                self.scene.samplers.default,
+                            ),
+                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::SampledImage(
+                                self.scene.images[0],
+                            ),
+                        ],
+                        dispatch,
+                    },
+                );
+            }
+        }
+
+        render_graph_builder.add_pass(raster_pass.build());
+
+        self.device.submit_frame2(&render_graph_builder)?;
         Ok(())
     }
 }

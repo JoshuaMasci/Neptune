@@ -7,7 +7,8 @@ mod instance;
 mod interface;
 mod pipeline;
 mod render_graph;
-mod render_graph_builder;
+pub mod render_graph_builder;
+mod render_graph_executor;
 mod resource_managers;
 mod sampler;
 mod swapchain;
@@ -40,17 +41,11 @@ slotmap::new_key_type! {
 #[derive(Copy, Clone, Debug)]
 pub struct SurfaceHandle(SurfaceKey);
 
-// #[derive(Copy, Clone, Debug)]
-// pub struct BufferHandle(BufferKey);
-
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum BufferHandle {
     Persistent(BufferKey),
     Transient(usize),
 }
-
-// #[derive(Copy, Clone, Debug)]
-// pub struct ImageHandle(ImageKey);
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ImageHandle {
