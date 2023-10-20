@@ -1,9 +1,9 @@
 use crate::buffer::{Buffer, BufferDescription};
 use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
-use crate::image::{AshImage, Image, ImageDescription2D, TransientImageDesc, TransientImageSize};
+use crate::image::{Image, ImageDescription2D, TransientImageDesc, TransientImageSize};
 use crate::sampler::Sampler;
-use crate::swapchain::SwapchainImage;
+use crate::swapchain::AcquiredSwapchainImage;
 use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey};
 use ash::vk;
 use log::warn;
@@ -150,7 +150,7 @@ impl TransientResourceManager {
     pub(crate) fn resolve_images(
         &mut self,
         persistent: &mut ResourceManager,
-        swapchain_images: &[(vk::SwapchainKHR, SwapchainImage)],
+        swapchain_images: &[AcquiredSwapchainImage],
         transient_image_descriptions: &[TransientImageDesc],
     ) {
         for image_description in transient_image_descriptions {
@@ -170,7 +170,6 @@ impl TransientResourceManager {
                 ),
             )
             .expect("TODO: replace this");
-            let image_copy = image.get_copy();
             self.transient_images.push(image);
         }
     }
@@ -190,7 +189,7 @@ impl Drop for TransientResourceManager {
 fn get_transient_image_size(
     size: TransientImageSize,
     persistent: &ResourceManager,
-    swapchain_images: &[(vk::SwapchainKHR, SwapchainImage)],
+    swapchain_images: &[AcquiredSwapchainImage],
     transient_image_descriptions: &[TransientImageDesc],
 ) -> vk::Extent2D {
     match size {
@@ -206,7 +205,7 @@ fn get_transient_image_size(
                     swapchain_images,
                     transient_image_descriptions,
                 ),
-                ImageHandle::Swapchain(index) => swapchain_images[index].1.extent,
+                ImageHandle::Swapchain(index) => swapchain_images[index].image.size,
             };
             extent.width = ((extent.width as f32) * scale[0]) as u32;
             extent.height = ((extent.height as f32) * scale[1]) as u32;

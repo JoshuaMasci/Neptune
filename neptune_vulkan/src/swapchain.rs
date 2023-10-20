@@ -1,32 +1,26 @@
 use crate::device::AshDevice;
+use crate::image::AshImage;
 use ash::vk;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-#[derive(Clone)]
-pub struct SwapchainImage {
-    pub index: u32,
-    pub handle: vk::Image,
-    pub view: vk::ImageView,
-
-    pub format: vk::Format,
-    pub extent: vk::Extent2D,
-    pub usage: vk::ImageUsageFlags,
-}
 
 struct SwapchainInstance {
     device: Arc<AshDevice>,
     handle: vk::SwapchainKHR,
 
-    images: Vec<SwapchainImage>,
+    images: Vec<AshImage>,
 
-    pub image_format: vk::Format,
-    pub image_color_space: vk::ColorSpaceKHR,
-    pub image_extent: vk::Extent2D,
-    pub image_usage: vk::ImageUsageFlags,
-    pub pre_transform: vk::SurfaceTransformFlagsKHR,
-    pub composite_alpha: vk::CompositeAlphaFlagsKHR,
-    pub present_mode: vk::PresentModeKHR,
+    #[allow(unused)]
+    image_color_space: vk::ColorSpaceKHR,
+
+    #[allow(unused)]
+    pre_transform: vk::SurfaceTransformFlagsKHR,
+
+    #[allow(unused)]
+    composite_alpha: vk::CompositeAlphaFlagsKHR,
+
+    #[allow(unused)]
+    present_mode: vk::PresentModeKHR,
 }
 
 impl SwapchainInstance {
@@ -38,10 +32,7 @@ impl SwapchainInstance {
 
         let mut images = Vec::new();
 
-        for (index, &handle) in unsafe { device.swapchain.get_swapchain_images(handle) }?
-            .iter()
-            .enumerate()
-        {
+        for &handle in unsafe { device.swapchain.get_swapchain_images(handle) }?.iter() {
             let view = unsafe {
                 device.core.create_image_view(
                     &vk::ImageViewCreateInfo::builder()
@@ -65,13 +56,15 @@ impl SwapchainInstance {
                 )?
             };
 
-            images.push(SwapchainImage {
-                index: index as u32,
+            images.push(AshImage {
                 handle,
                 view,
                 format: create_info.image_format,
-                extent: create_info.image_extent,
+                size: create_info.image_extent,
                 usage: create_info.image_usage,
+                location: gpu_allocator::MemoryLocation::GpuOnly,
+                storage_binding: None,
+                sampled_binding: None,
             });
         }
 
@@ -79,10 +72,7 @@ impl SwapchainInstance {
             device,
             handle,
             images,
-            image_format: create_info.image_format,
             image_color_space: create_info.image_color_space,
-            image_extent: create_info.image_extent,
-            image_usage: create_info.image_usage,
             pre_transform: create_info.pre_transform,
             composite_alpha: create_info.composite_alpha,
             present_mode: create_info.present_mode,
@@ -176,27 +166,37 @@ impl Swapchain {
         Ok(())
     }
 
-    pub(crate) fn get_handle(&self) -> vk::SwapchainKHR {
-        self.current_swapchain.as_ref().unwrap().handle
-    }
-
-    pub(crate) fn get_image(&self, index: u32) -> SwapchainImage {
-        self.current_swapchain.as_ref().unwrap().images[index as usize].clone()
-    }
-
     pub(crate) fn acquire_next_image(
         &self,
         image_ready_semaphore: vk::Semaphore,
-    ) -> ash::prelude::VkResult<(u32, bool)> {
+    ) -> ash::prelude::VkResult<(AcquiredSwapchainImage, bool)> {
+        let swapchain = self.current_swapchain.as_ref().unwrap();
+
         unsafe {
             self.device.swapchain.acquire_next_image(
-                self.get_handle(),
+                swapchain.handle,
                 u64::MAX,
                 image_ready_semaphore,
                 vk::Fence::null(),
             )
         }
+        .map(|(index, suboptimal)| {
+            (
+                AcquiredSwapchainImage {
+                    swapchain_handle: swapchain.handle,
+                    image_index: index,
+                    image: swapchain.images[index as usize],
+                },
+                suboptimal,
+            )
+        })
     }
+}
+
+pub struct AcquiredSwapchainImage {
+    pub swapchain_handle: vk::SwapchainKHR,
+    pub image_index: u32,
+    pub image: AshImage,
 }
 
 fn get_swapchain_extent_transform_count(

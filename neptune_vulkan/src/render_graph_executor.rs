@@ -6,7 +6,7 @@ use crate::render_graph_builder::{
     Transfer,
 };
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
-use crate::swapchain::{SwapchainImage, SwapchainManager};
+use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::{BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey};
 use ash::vk;
 use log::info;
@@ -130,7 +130,7 @@ impl BasicRenderGraphExecutor {
             }
         }
 
-        let mut swapchain_image: Vec<(vk::SwapchainKHR, SwapchainImage)> =
+        let mut swapchain_index_images: Vec<AcquiredSwapchainImage> =
             Vec::with_capacity(render_graph_builder.swapchain_images.len());
         for (surface_handle, swapchain_semaphores) in render_graph_builder
             .swapchain_images
@@ -149,17 +149,17 @@ impl BasicRenderGraphExecutor {
                 .get_mut(&surface_handle)
                 .expect("Failed to find swapchain");
 
-            let mut swapchain_result: ash::prelude::VkResult<(u32, bool)> =
+            let mut swapchain_result: ash::prelude::VkResult<(AcquiredSwapchainImage, bool)> =
                 swapchain.acquire_next_image(swapchain_semaphores.0);
-            while swapchain_result == Err(vk::Result::ERROR_OUT_OF_DATE_KHR) {
+
+            while let Err(vk::Result::ERROR_OUT_OF_DATE_KHR) = &swapchain_result {
                 info!("Swapchain Out of Data, Rebuilding");
                 swapchain.rebuild()?;
                 swapchain_result = swapchain.acquire_next_image(swapchain_semaphores.0);
             }
 
-            let index = swapchain_result.unwrap().0;
-
-            swapchain_image.push((swapchain.get_handle(), swapchain.get_image(index)));
+            let image = swapchain_result.unwrap().0;
+            swapchain_index_images.push(image);
         }
 
         unsafe {
@@ -186,7 +186,7 @@ impl BasicRenderGraphExecutor {
             }
 
             // Transition Swapchain to General
-            if !swapchain_image.is_empty() {
+            if !swapchain_index_images.is_empty() {
                 let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
@@ -195,11 +195,11 @@ impl BasicRenderGraphExecutor {
                     .level_count(1)
                     .build();
 
-                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_image
+                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_index_images
                     .iter()
-                    .map(|(_swapchain, image)| {
+                    .map(|swapchain_image| {
                         vk::ImageMemoryBarrier2::builder()
-                            .image(image.handle)
+                            .image(swapchain_image.image.handle)
                             .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                             .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
                             .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -221,13 +221,13 @@ impl BasicRenderGraphExecutor {
 
             transient_resource_manager.resolve_images(
                 persistent_resource_manager,
-                &swapchain_image,
+                &swapchain_index_images,
                 &render_graph_builder.transient_images,
             );
             transient_resource_manager.resolve_buffers(&render_graph_builder.transient_buffers);
             let resources = RenderGraphResources {
                 persistent: persistent_resource_manager,
-                swapchain_images: &swapchain_image,
+                swapchain_images: &swapchain_index_images,
                 transient_images: &transient_resource_manager.transient_images,
                 transient_buffers: &transient_resource_manager.transient_buffers,
                 pipeline_layout: self.pipeline_layout,
@@ -266,7 +266,7 @@ impl BasicRenderGraphExecutor {
             }
 
             // Transition Swapchain to Present
-            if !swapchain_image.is_empty() {
+            if !swapchain_index_images.is_empty() {
                 let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .base_array_layer(0)
@@ -275,11 +275,11 @@ impl BasicRenderGraphExecutor {
                     .level_count(1)
                     .build();
 
-                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_image
+                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_index_images
                     .iter()
-                    .map(|(_swapchain, image)| {
+                    .map(|swapchain_image| {
                         vk::ImageMemoryBarrier2::builder()
-                            .image(image.handle)
+                            .image(swapchain_image.image.handle)
                             .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                             .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
                             .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -308,7 +308,7 @@ impl BasicRenderGraphExecutor {
                 .command_buffer(self.command_buffer)
                 .build()];
             let wait_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
-                [0..swapchain_image.len()]
+                [0..swapchain_index_images.len()]
                 .iter()
                 .map(|(semaphore, _)| {
                     vk::SemaphoreSubmitInfo::builder()
@@ -319,7 +319,7 @@ impl BasicRenderGraphExecutor {
                 .collect();
 
             let signal_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
-                [0..swapchain_image.len()]
+                [0..swapchain_index_images.len()]
                 .iter()
                 .map(|(_, semaphore)| {
                     vk::SemaphoreSubmitInfo::builder()
@@ -343,15 +343,16 @@ impl BasicRenderGraphExecutor {
                 )
                 .unwrap();
 
-            let mut swapchains = Vec::with_capacity(swapchain_image.len());
-            let mut swapchain_indies = Vec::with_capacity(swapchain_image.len());
-            let mut wait_semaphores = Vec::with_capacity(swapchain_image.len());
+            let mut swapchains = Vec::with_capacity(swapchain_index_images.len());
+            let mut swapchain_indies = Vec::with_capacity(swapchain_index_images.len());
+            let mut wait_semaphores = Vec::with_capacity(swapchain_index_images.len());
 
-            for ((swapchain_handle, swapchain_image), swapchain_semaphores) in
-                swapchain_image.iter().zip(self.swapchain_semaphores.iter())
+            for (swapchain_image, swapchain_semaphores) in swapchain_index_images
+                .iter()
+                .zip(self.swapchain_semaphores.iter())
             {
-                swapchains.push(*swapchain_handle);
-                swapchain_indies.push(swapchain_image.index);
+                swapchains.push(swapchain_image.swapchain_handle);
+                swapchain_indies.push(swapchain_image.image_index);
                 wait_semaphores.push(swapchain_semaphores.1);
             }
 
@@ -412,8 +413,8 @@ fn record_render_pass(
     if let Some(debug_util) = &device.instance.debug_utils {
         debug_util.cmd_begin_label(
             command_buffer,
-            &render_pass.lable_name,
-            render_pass.lable_color,
+            &render_pass.label_name,
+            render_pass.label_color,
         );
     }
 
@@ -862,7 +863,7 @@ fn record_raster_pass(
 
 pub struct RenderGraphResources<'a> {
     pub(crate) persistent: &'a mut ResourceManager,
-    pub(crate) swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
+    pub(crate) swapchain_images: &'a [AcquiredSwapchainImage],
     pub(crate) transient_images: &'a [Image],
     pub(crate) transient_buffers: &'a [Buffer],
 
@@ -890,19 +891,7 @@ impl<'a> RenderGraphResources<'a> {
                 .expect("Invalid Image Key")
                 .get_copy(),
             ImageHandle::Transient(index) => self.transient_images[index].get_copy(),
-            ImageHandle::Swapchain(index) => {
-                let swapchain_image = self.swapchain_images[index].clone();
-                AshImage {
-                    handle: swapchain_image.1.handle,
-                    view: swapchain_image.1.view,
-                    size: swapchain_image.1.extent,
-                    format: swapchain_image.1.format,
-                    usage: swapchain_image.1.usage,
-                    location: gpu_allocator::MemoryLocation::GpuOnly,
-                    storage_binding: None,
-                    sampled_binding: None,
-                }
-            }
+            ImageHandle::Swapchain(index) => self.swapchain_images[index].image,
         }
     }
 

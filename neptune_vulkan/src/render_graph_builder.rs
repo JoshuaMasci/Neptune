@@ -89,8 +89,8 @@ impl TransferPassBuilder {
 
     pub fn build(self) -> RenderPass {
         RenderPass {
-            lable_name: self.name,
-            lable_color: [1.0, 0.0, 0.0, 1.0],
+            label_name: self.name,
+            label_color: [1.0, 0.0, 0.0, 1.0],
             queue: self.queue,
             pass_type: RenderPassType::Transfer {
                 transfers: self.transfers,
@@ -186,8 +186,8 @@ impl ComputePassBuilder {
 
     pub fn build(self) -> RenderPass {
         RenderPass {
-            lable_name: self.name,
-            lable_color: [0.0, 1.0, 0.0, 1.0],
+            label_name: self.name,
+            label_color: [0.0, 1.0, 0.0, 1.0],
             queue: self.queue,
             pass_type: RenderPassType::Compute {
                 pipeline: self.pipeline,
@@ -315,8 +315,8 @@ impl RasterPassBuilder {
 
     pub fn build(self) -> RenderPass {
         RenderPass {
-            lable_name: self.name,
-            lable_color: [0.0, 0.0, 1.0, 1.0],
+            label_name: self.name,
+            label_color: [0.0, 0.0, 1.0, 1.0],
             queue: QueueType::Graphics,
             pass_type: RenderPassType::Raster {
                 framebuffer: self.framebuffer,
@@ -344,8 +344,8 @@ pub(crate) enum RenderPassType {
 
 #[derive(Debug)]
 pub struct RenderPass {
-    pub(crate) lable_name: String,
-    pub(crate) lable_color: [f32; 4],
+    pub(crate) label_name: String,
+    pub(crate) label_color: [f32; 4],
     pub(crate) queue: QueueType,
     pub(crate) pass_type: RenderPassType,
 }
