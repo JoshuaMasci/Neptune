@@ -1,4 +1,5 @@
 use crate::buffer::{AshBuffer, Buffer};
+use crate::descriptor_set::GpuBindingIndex;
 use crate::device::{AshDevice, AshQueue};
 use crate::image::{vk_format_get_aspect_flags, AshImage, Image};
 use crate::render_graph_builder::{
@@ -7,7 +8,9 @@ use crate::render_graph_builder::{
 };
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
-use crate::{BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey};
+use crate::{
+    BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey, Sampler, SamplerHandle,
+};
 use ash::vk;
 use log::info;
 use std::sync::Arc;
@@ -771,22 +774,35 @@ fn record_raster_pass(
 
         //Push Resource
         unsafe {
-            let mut push_data: Vec<u32> = Vec::new();
+            let mut push_bindings: Vec<GpuBindingIndex> = Vec::new();
 
-            //TODO: get binding
             for resource in draw_call.resources.iter() {
-                push_data.push(match resource {
-                    ShaderResourceUsage::StorageBuffer { .. } => 0,
-                    ShaderResourceUsage::StorageImage { .. } => 0,
-                    ShaderResourceUsage::SampledImage(_handle) => 0,
-                    ShaderResourceUsage::Sampler(_handle) => 0,
+                push_bindings.push(match resource {
+                    ShaderResourceUsage::StorageBuffer { buffer, .. } => resources
+                        .get_buffer(*buffer)
+                        .storage_binding
+                        .expect("Buffer not bound as storage buffer"),
+                    ShaderResourceUsage::StorageImage { image, .. } => resources
+                        .get_image(*image)
+                        .storage_binding
+                        .expect("Image not bound as storage image"),
+                    ShaderResourceUsage::SampledImage(handle) => resources
+                        .get_image(*handle)
+                        .sampled_binding
+                        .expect("Image not bound as sampled image"),
+                    ShaderResourceUsage::Sampler(handle) => resources
+                        .get_sampler(*handle)
+                        .binding
+                        .as_ref()
+                        .expect("Sampler is not bound")
+                        .index(),
                 });
             }
 
-            let push_data_bytes: &[u8] = std::slice::from_raw_parts(
-                push_data.as_ptr() as *const u8,
-                std::mem::size_of_val(&push_data),
-            );
+            let push_data_bytes: Vec<u8> = push_bindings
+                .drain(..)
+                .flat_map(|binding| binding.to_bytes())
+                .collect();
 
             device.core.cmd_push_constants(
                 command_buffer,
@@ -893,6 +909,12 @@ impl<'a> RenderGraphResources<'a> {
             ImageHandle::Transient(index) => self.transient_images[index].get_copy(),
             ImageHandle::Swapchain(index) => self.swapchain_images[index].image,
         }
+    }
+
+    pub(crate) fn get_sampler(&self, resource: SamplerHandle) -> Arc<Sampler> {
+        self.persistent
+            .get_sampler(resource.0)
+            .expect("Invalid Sampler Key")
     }
 
     pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {

@@ -17,6 +17,13 @@ pub struct DescriptorCount {
 #[repr(transparent)]
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GpuBindingIndex(u32);
+
+impl GpuBindingIndex {
+    pub(crate) fn to_bytes(self) -> [u8; 4] {
+        self.0.to_ne_bytes()
+    }
+}
+
 pub struct DescriptorBinding {
     binding: u16,
     index: u16,
@@ -120,7 +127,6 @@ pub struct DescriptorSetInner {
 }
 
 impl DescriptorSetInner {
-    //TODO: separate sampled images and samplers
     const STORAGE_BUFFER_BINDING: u16 = 0;
     const STORAGE_IMAGE_BINDING: u16 = 1;
     const SAMPLED_IMAGE_BINDING: u16 = 2;

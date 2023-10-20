@@ -254,7 +254,7 @@ impl Editor {
                 .add_color_attachment(
                     neptune_vulkan::render_graph_builder::ColorAttachment::new_clear(
                         swapchain_image,
-                        [0.25, 0.25, 0.25, 1.0],
+                        [0.0, 0.0, 0.0, 1.0],
                     ),
                 )
                 .add_depth_stencil_attachment(
