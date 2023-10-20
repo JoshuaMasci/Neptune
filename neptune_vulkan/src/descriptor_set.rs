@@ -14,6 +14,9 @@ pub struct DescriptorCount {
     pub acceleration_structures: u16,
 }
 
+#[repr(transparent)]
+#[derive(Default, Debug, Clone, Copy)]
+pub struct GpuBindingIndex(u32);
 pub struct DescriptorBinding {
     binding: u16,
     index: u16,
@@ -21,9 +24,9 @@ pub struct DescriptorBinding {
 }
 
 impl DescriptorBinding {
-    pub(crate) fn index(&self) -> u32 {
+    pub(crate) fn index(&self) -> GpuBindingIndex {
         //TODO: Use last 16(?) bits of index to encode the binding for GPU error checking
-        self.index as u32
+        GpuBindingIndex(self.index as u32)
     }
 }
 

@@ -1,8 +1,6 @@
-use crate::descriptor_set::DescriptorBinding;
+use crate::descriptor_set::{DescriptorBinding, GpuBindingIndex};
 use crate::device::AshDevice;
-use crate::render_graph::TransientImageDesc;
-use crate::sampler::Sampler;
-use crate::{SamplerHandle, VulkanError};
+use crate::{ImageHandle, VulkanError};
 use ash::vk;
 use std::sync::Arc;
 
@@ -17,6 +15,21 @@ pub fn vk_format_get_aspect_flags(format: vk::Format) -> vk::ImageAspectFlags {
         }
         _ => vk::ImageAspectFlags::COLOR,
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum TransientImageSize {
+    Exact(vk::Extent2D),
+    Relative([f32; 2], ImageHandle),
+}
+
+#[derive(Debug, Clone)]
+pub struct TransientImageDesc {
+    pub size: TransientImageSize,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
+    pub mip_levels: u32,
+    pub memory_location: gpu_allocator::MemoryLocation,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +58,7 @@ pub struct Image {
     pub handle: vk::Image,
     pub view: vk::ImageView,
     pub allocation: gpu_allocator::vulkan::Allocation,
-    pub extend: vk::Extent2D,
+    pub size: vk::Extent2D,
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
     pub location: gpu_allocator::MemoryLocation,
@@ -139,7 +152,7 @@ impl Image {
             handle,
             view,
             allocation,
-            extend: vk::Extent2D {
+            size: vk::Extent2D {
                 width: description.size[0],
                 height: description.size[1],
             },
@@ -151,12 +164,17 @@ impl Image {
         })
     }
 
-    pub fn get_storage_binding(&self) -> Option<u32> {
-        self.storage_binding.as_ref().map(|binding| binding.index())
-    }
-
-    pub fn get_sampled_binding(&self) -> Option<u32> {
-        self.sampled_binding.as_ref().map(|binding| binding.index())
+    pub fn get_copy(&self) -> AshImage {
+        AshImage {
+            handle: self.handle,
+            view: self.view,
+            size: self.size,
+            format: self.format,
+            usage: self.usage,
+            location: self.location,
+            storage_binding: self.storage_binding.as_ref().map(|binding| binding.index()),
+            sampled_binding: self.sampled_binding.as_ref().map(|binding| binding.index()),
+        }
     }
 }
 
@@ -174,4 +192,16 @@ impl Drop for Image {
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AshImage {
+    pub handle: vk::Image,
+    pub view: vk::ImageView,
+    pub size: vk::Extent2D,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
+    pub location: gpu_allocator::MemoryLocation,
+    pub storage_binding: Option<GpuBindingIndex>,
+    pub sampled_binding: Option<GpuBindingIndex>,
 }

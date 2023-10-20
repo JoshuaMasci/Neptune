@@ -1,6 +1,7 @@
+use crate::image::TransientImageDesc;
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
-    SamplerHandle, SurfaceHandle, TransientImageDesc,
+    SamplerHandle, SurfaceHandle,
 };
 use std::ops::Range;
 
@@ -15,6 +16,87 @@ pub enum QueueType {
 pub struct BufferOffset {
     pub buffer: BufferHandle,
     pub offset: usize,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub struct ImageOffset {
+    pub buffer: ImageHandle,
+    pub offset: usize,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub struct BufferTransfer {
+    pub src: BufferOffset,
+    pub dst: BufferOffset,
+    pub size: usize,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+
+pub struct ImageCopyBuffer {
+    pub buffer: BufferHandle,
+    pub offset: u64,
+    pub row_length: Option<u32>,
+    pub row_height: Option<u32>,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+
+pub struct ImageCopyImage {
+    pub image: ImageHandle,
+    pub offset: [u32; 2],
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Transfer {
+    CopyBufferToBuffer {
+        src: BufferOffset,
+        dst: BufferOffset,
+        copy_size: u64,
+    },
+    CopyBufferToImage {
+        src: ImageCopyBuffer,
+        dst: ImageCopyImage,
+        copy_size: [u32; 2],
+    },
+    CopyImageToBuffer {
+        src: ImageCopyImage,
+        dst: ImageCopyBuffer,
+        copy_size: [u32; 2],
+    },
+    CopyImageToImage {
+        src: ImageCopyImage,
+        dst: ImageCopyImage,
+        copy_size: [u32; 2],
+    },
+}
+
+#[derive(Debug)]
+pub struct TransferPassBuilder {
+    pub(crate) name: String,
+    pub(crate) queue: QueueType,
+    pub(crate) transfers: Vec<Transfer>,
+}
+
+impl TransferPassBuilder {
+    pub fn new(name: &str, queue: QueueType) -> Self {
+        Self {
+            name: name.to_string(),
+            queue,
+            transfers: Vec::new(),
+        }
+    }
+
+    pub fn build(self) -> RenderPass {
+        RenderPass {
+            lable_name: self.name,
+            lable_color: [1.0, 0.0, 0.0, 1.0],
+            queue: self.queue,
+            pass_type: RenderPassType::Transfer {
+                transfers: self.transfers,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -234,7 +316,7 @@ impl RasterPassBuilder {
     pub fn build(self) -> RenderPass {
         RenderPass {
             lable_name: self.name,
-            lable_color: [1.0, 0.0, 0.0, 1.0],
+            lable_color: [0.0, 0.0, 1.0, 1.0],
             queue: QueueType::Graphics,
             pass_type: RenderPassType::Raster {
                 framebuffer: self.framebuffer,
@@ -246,6 +328,9 @@ impl RasterPassBuilder {
 
 #[derive(Debug)]
 pub(crate) enum RenderPassType {
+    Transfer {
+        transfers: Vec<Transfer>,
+    },
     Compute {
         pipeline: ComputePipelineHandle,
         resources: Vec<ShaderResourceUsage>,

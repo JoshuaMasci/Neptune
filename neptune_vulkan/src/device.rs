@@ -2,20 +2,22 @@ use crate::buffer::{Buffer, BufferDescription};
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::RasterPipelineDescription;
-use crate::render_graph::{BasicRenderGraphExecutor, BufferAccess, RenderGraph, RenderPass};
-use crate::render_graph_builder::RenderGraphBuilder;
+use crate::render_graph_builder::{
+    BufferOffset, ImageCopyBuffer, ImageCopyImage, RenderGraphBuilder, Transfer,
+};
+use crate::render_graph_executor::BasicRenderGraphExecutor;
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageAccess, ImageHandle, RasterPipelineHandle,
-    RasterPipleineKey, SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
+    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
+    SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
 use log::error;
 use slotmap::SlotMap;
-use std::collections::HashMap;
 use std::mem::ManuallyDrop;
+use std::ops::Not;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
@@ -153,10 +155,8 @@ pub struct Device {
     transient_resource_manager: TransientResourceManager,
     swapchain_manager: SwapchainManager,
 
-    buffer_transfer_list: Vec<(BufferHandle, BufferHandle)>,
-    image_transfer_list: Vec<(BufferHandle, ImageHandle)>,
+    transfer_list: Vec<Transfer>,
     graph_executor: BasicRenderGraphExecutor,
-    graph_executor2: crate::render_graph_executor::BasicRenderGraphExecutor,
 }
 
 impl Device {
@@ -197,12 +197,6 @@ impl Device {
         let graph_executor =
             BasicRenderGraphExecutor::new(device.clone(), pipeline_layout, graphics_queue_index)?;
 
-        let graph_executor2 = crate::render_graph_executor::BasicRenderGraphExecutor::new(
-            device.clone(),
-            pipeline_layout,
-            graphics_queue_index,
-        )?;
-
         Ok(Device {
             device,
             pipeline_layout,
@@ -210,10 +204,8 @@ impl Device {
             resource_manager,
             transient_resource_manager,
             swapchain_manager,
-            buffer_transfer_list: Vec::new(),
-            image_transfer_list: Vec::new(),
+            transfer_list: Vec::new(),
             graph_executor,
-            graph_executor2,
         })
     }
 
@@ -260,8 +252,20 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.buffer_transfer_list
-            .push((staging_handle, buffer_handle));
+        // self.buffer_transfer_list
+        //     .push((staging_handle, buffer_handle));
+
+        self.transfer_list.push(Transfer::CopyBufferToBuffer {
+            src: BufferOffset {
+                buffer: staging_handle,
+                offset: 0,
+            },
+            dst: BufferOffset {
+                buffer: buffer_handle,
+                offset: 0,
+            },
+            copy_size: data.len() as u64,
+        });
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -312,6 +316,7 @@ impl Device {
     pub fn update_data_to_image(
         &mut self,
         image_handle: ImageHandle,
+        image_size: [u32; 2],
         data: &[u8],
     ) -> Result<(), VulkanError> {
         let mut staging_buffer = Buffer::new(
@@ -333,13 +338,34 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.image_transfer_list
-            .push((staging_handle, image_handle));
+        self.transfer_list.push(Transfer::CopyBufferToImage {
+            src: ImageCopyBuffer {
+                buffer: staging_handle,
+                offset: 0,
+                row_length: None,
+                row_height: None,
+            },
+            dst: ImageCopyImage {
+                image: image_handle,
+                offset: [0, 0],
+            },
+            copy_size: image_size,
+        });
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
 
         Ok(())
+    }
+    pub fn create_image_init(
+        &mut self,
+        name: &str,
+        description: &ImageDescription2D,
+        data: &[u8],
+    ) -> Result<ImageHandle, VulkanError> {
+        let image = self.create_image(name, description)?;
+        self.update_data_to_image(image, description.size, data)?;
+        Ok(image)
     }
 
     pub fn create_sampler(
@@ -416,162 +442,26 @@ impl Device {
         let _ = self.swapchain_manager.swapchains.remove(&surface);
     }
 
-    pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        let transfer_pass = (!self.buffer_transfer_list.is_empty()
-            || !self.image_transfer_list.is_empty())
-        .then(|| {
-            let mut buffer_usages = HashMap::new();
-
-            for &(staging_handle, target_handle) in self.buffer_transfer_list.iter() {
-                buffer_usages.insert(
-                    staging_handle,
-                    BufferAccess {
-                        write: false,
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_READ,
-                    },
-                );
-                buffer_usages.insert(
-                    target_handle,
-                    BufferAccess {
-                        write: true,
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_WRITE,
-                    },
-                );
-            }
-
-            let mut image_usages = HashMap::new();
-
-            for &(staging_handle, target_handle) in self.image_transfer_list.iter() {
-                buffer_usages.insert(
-                    staging_handle,
-                    BufferAccess {
-                        write: false,
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_READ,
-                    },
-                );
-                image_usages.insert(
-                    target_handle,
-                    ImageAccess {
-                        write: true,
-                        stage: vk::PipelineStageFlags2::TRANSFER,
-                        access: vk::AccessFlags2::TRANSFER_WRITE,
-                        layout: vk::ImageLayout::GENERAL,
-                    },
-                );
-            }
-
-            let buffer_transfer_list = std::mem::take(&mut self.buffer_transfer_list);
-            let image_transfer_list = std::mem::take(&mut self.image_transfer_list);
-            RenderPass {
-                name: "Transfer Pass".to_string(),
-                queue: Default::default(),
-                buffer_usages,
-                image_usages,
-                framebuffer: None,
-                build_cmd_fn: Some(Box::new(move |device, command_buffer, resources| {
-                    for &(staging_handle, target_handle) in buffer_transfer_list.iter() {
-                        let staging_buffer = resources.get_buffer(staging_handle);
-                        let target_buffer = resources.get_buffer(target_handle);
-                        unsafe {
-                            device.core.cmd_copy_buffer2(
-                                command_buffer,
-                                &vk::CopyBufferInfo2::builder()
-                                    .src_buffer(staging_buffer.handle)
-                                    .dst_buffer(target_buffer.handle)
-                                    .regions(&[vk::BufferCopy2::builder()
-                                        .src_offset(0)
-                                        .dst_offset(0)
-                                        .size(staging_buffer.size)
-                                        .build()]),
-                            );
-                        }
-                    }
-
-                    for &(staging_handle, target_handle) in image_transfer_list.iter() {
-                        let staging_buffer = resources.get_buffer(staging_handle);
-                        let target_image = resources.get_image(target_handle);
-                        unsafe {
-                            //TODO: remove this when image transitions are implemented
-                            device.core.cmd_pipeline_barrier2(
-                                command_buffer,
-                                &vk::DependencyInfo::builder().image_memory_barriers(&[
-                                    vk::ImageMemoryBarrier2 {
-                                        src_stage_mask: vk::PipelineStageFlags2::NONE,
-                                        src_access_mask: vk::AccessFlags2::NONE,
-                                        dst_stage_mask: vk::PipelineStageFlags2::TRANSFER,
-                                        dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
-                                        old_layout: vk::ImageLayout::UNDEFINED,
-                                        new_layout: vk::ImageLayout::GENERAL,
-                                        image: target_image.handle,
-                                        subresource_range: vk::ImageSubresourceRange {
-                                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                                            base_mip_level: 0,
-                                            level_count: 1,
-                                            base_array_layer: 0,
-                                            layer_count: 1,
-                                        },
-                                        ..Default::default()
-                                    },
-                                ]),
-                            );
-
-                            device.core.cmd_copy_buffer_to_image2(
-                                command_buffer,
-                                &vk::CopyBufferToImageInfo2::builder()
-                                    .src_buffer(staging_buffer.handle)
-                                    .dst_image(target_image.handle)
-                                    .dst_image_layout(vk::ImageLayout::GENERAL)
-                                    .regions(&[vk::BufferImageCopy2 {
-                                        buffer_offset: 0,
-                                        buffer_row_length: 0,
-                                        buffer_image_height: 0,
-                                        image_subresource: vk::ImageSubresourceLayers {
-                                            aspect_mask: vk::ImageAspectFlags::COLOR, //TODO: Detect Depth Images
-                                            mip_level: 0,
-                                            base_array_layer: 0,
-                                            layer_count: 1,
-                                        },
-                                        image_offset: vk::Offset3D::default(),
-                                        image_extent: vk::Extent3D {
-                                            width: target_image.size.width,
-                                            height: target_image.size.height,
-                                            depth: 1,
-                                        },
-                                        ..Default::default()
-                                    }]),
-                            );
-                        }
-                    }
-                })),
-            }
-        });
-
-        self.graph_executor.execute_graph(
-            transfer_pass,
-            render_graph,
-            &mut self.resource_manager,
-            &mut self.transient_resource_manager,
-            &mut self.swapchain_manager,
-            &self.raster_pipelines,
-        )?;
-        Ok(())
-    }
-
-    pub fn submit_frame2(
+    pub fn submit_frame(
         &mut self,
         render_graph_builder: &RenderGraphBuilder,
     ) -> Result<(), VulkanError> {
-        self.graph_executor2.execute_graph(
-            None,
+        let transfers = self
+            .transfer_list
+            .is_empty()
+            .not()
+            .then_some(self.transfer_list.as_slice());
+
+        self.graph_executor.execute_graph(
+            transfers,
             render_graph_builder,
             &mut self.resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,
             &self.raster_pipelines,
         )?;
+
+        self.transfer_list.clear();
         Ok(())
     }
 }

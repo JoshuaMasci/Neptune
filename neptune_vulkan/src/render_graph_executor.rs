@@ -1,13 +1,23 @@
+use crate::buffer::{AshBuffer, Buffer};
 use crate::device::{AshDevice, AshQueue};
+use crate::image::{vk_format_get_aspect_flags, AshImage, Image};
 use crate::render_graph_builder::{
-    IndexType, RasterDispatch, RenderGraphBuilder, RenderPassType, ShaderResourceUsage,
+    IndexType, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType, ShaderResourceUsage,
+    Transfer,
 };
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::swapchain::{SwapchainImage, SwapchainManager};
-use crate::RasterPipleineKey;
+use crate::{BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey};
 use ash::vk;
 use log::info;
 use std::sync::Arc;
+
+// Render Graph Executor Evolution
+// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling
+// 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
+// 2. Whole graph evaluation with pass reordering and dead code culling
+// 3. Multi-Queue execution
+// 4. Sub resource tracking. Allowing image levels/layers and buffer regions to be transition and accessed in parallel
 
 pub struct BasicRenderGraphExecutor {
     device: Arc<AshDevice>,
@@ -79,7 +89,7 @@ impl BasicRenderGraphExecutor {
 
     pub fn execute_graph(
         &mut self,
-        upload_data: Option<()>,
+        device_transfers: Option<&[Transfer]>,
         render_graph_builder: &RenderGraphBuilder,
         persistent_resource_manager: &mut ResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
@@ -209,55 +219,50 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
-            let transient_images = transient_resource_manager.resolve_images(
+            transient_resource_manager.resolve_images(
                 persistent_resource_manager,
                 &swapchain_image,
                 &render_graph_builder.transient_images,
             );
-            let transient_buffers =
-                transient_resource_manager.resolve_buffers(&render_graph_builder.transient_buffers);
-            let resources = crate::RenderGraphResources {
+            transient_resource_manager.resolve_buffers(&render_graph_builder.transient_buffers);
+            let resources = RenderGraphResources {
                 persistent: persistent_resource_manager,
                 swapchain_images: &swapchain_image,
-                transient_images: &transient_images,
-                transient_buffers,
+                transient_images: &transient_resource_manager.transient_images,
+                transient_buffers: &transient_resource_manager.transient_buffers,
                 pipeline_layout: self.pipeline_layout,
                 raster_pipelines,
             };
 
-            for render_pass in render_graph_builder.passes.iter() {
-                //TODO: use queue
-                let _ = render_pass.queue;
-
+            if let Some(transfers) = device_transfers {
                 if let Some(debug_util) = &self.device.instance.debug_utils {
                     debug_util.cmd_begin_label(
                         self.command_buffer,
-                        &render_pass.lable_name,
-                        render_pass.lable_color,
+                        "Device Upload Pass",
+                        [0.5, 0.0, 0.5, 1.0],
                     );
                 }
 
-                match &render_pass.pass_type {
-                    RenderPassType::Compute { .. } => {
-                        todo!("Compute pass")
-                    }
-                    RenderPassType::Raster {
-                        framebuffer,
-                        draw_commands,
-                    } => {
-                        record_raster_pass(
-                            &self.device,
-                            self.command_buffer,
-                            framebuffer,
-                            draw_commands,
-                            &resources,
-                        );
-                    }
-                }
+                self.device.core.cmd_pipeline_barrier2(
+                    self.command_buffer,
+                    &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder(
+                    )
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                    .build()]),
+                );
+
+                record_transfer_pass(&self.device, self.command_buffer, &resources, transfers);
 
                 if let Some(debug_util) = &self.device.instance.debug_utils {
                     debug_util.cmd_end_label(self.command_buffer);
                 }
+            }
+
+            for render_pass in render_graph_builder.passes.iter() {
+                record_render_pass(&self.device, self.command_buffer, &resources, render_pass);
             }
 
             // Transition Swapchain to Present
@@ -383,12 +388,224 @@ impl Drop for BasicRenderGraphExecutor {
     }
 }
 
+fn record_render_pass(
+    device: &AshDevice,
+    command_buffer: vk::CommandBuffer,
+    resources: &RenderGraphResources,
+    render_pass: &RenderPass,
+) {
+    unsafe {
+        device.core.cmd_pipeline_barrier2(
+            command_buffer,
+            &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .build()]),
+        );
+    }
+
+    //TODO: use queue
+    let _ = render_pass.queue;
+
+    if let Some(debug_util) = &device.instance.debug_utils {
+        debug_util.cmd_begin_label(
+            command_buffer,
+            &render_pass.lable_name,
+            render_pass.lable_color,
+        );
+    }
+
+    match &render_pass.pass_type {
+        RenderPassType::Transfer { transfers } => {
+            record_transfer_pass(device, command_buffer, resources, transfers);
+        }
+        RenderPassType::Compute { .. } => {
+            todo!("Compute pass")
+        }
+        RenderPassType::Raster {
+            framebuffer,
+            draw_commands,
+        } => {
+            record_raster_pass(
+                device,
+                command_buffer,
+                resources,
+                framebuffer,
+                draw_commands,
+            );
+        }
+    }
+
+    if let Some(debug_util) = &device.instance.debug_utils {
+        debug_util.cmd_end_label(command_buffer);
+    }
+}
+
+fn record_transfer_pass(
+    device: &AshDevice,
+    command_buffer: vk::CommandBuffer,
+    resources: &RenderGraphResources,
+    transfers: &[Transfer],
+) {
+    for transfer in transfers.iter() {
+        match transfer {
+            Transfer::CopyBufferToBuffer {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_buffer = resources.get_buffer(src.buffer);
+                let dst_buffer = resources.get_buffer(dst.buffer);
+                unsafe {
+                    device.core.cmd_copy_buffer2(
+                        command_buffer,
+                        &vk::CopyBufferInfo2::builder()
+                            .src_buffer(src_buffer.handle)
+                            .dst_buffer(dst_buffer.handle)
+                            .regions(&[vk::BufferCopy2::builder()
+                                .src_offset(src.offset as vk::DeviceSize)
+                                .dst_offset(dst.offset as vk::DeviceSize)
+                                .size(*copy_size as vk::DeviceSize)
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::CopyBufferToImage {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_buffer = resources.get_buffer(src.buffer);
+                let dst_image = resources.get_image(dst.image);
+                unsafe {
+                    device.core.cmd_copy_buffer_to_image2(
+                        command_buffer,
+                        &vk::CopyBufferToImageInfo2::builder()
+                            .src_buffer(src_buffer.handle)
+                            .dst_image(dst_image.handle)
+                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .regions(&[vk::BufferImageCopy2::builder()
+                                .buffer_row_length(src.row_length.unwrap_or_default())
+                                .buffer_image_height(src.row_height.unwrap_or_default())
+                                .buffer_offset(src.offset)
+                                .image_offset(vk::Offset3D {
+                                    x: dst.offset[0] as i32,
+                                    y: dst.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .image_extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .image_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::CopyImageToBuffer {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_image = resources.get_image(src.image);
+                let dst_buffer = resources.get_buffer(dst.buffer);
+                unsafe {
+                    device.core.cmd_copy_image_to_buffer2(
+                        command_buffer,
+                        &vk::CopyImageToBufferInfo2::builder()
+                            .src_image(src_image.handle)
+                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .dst_buffer(dst_buffer.handle)
+                            .regions(&[vk::BufferImageCopy2::builder()
+                                .buffer_row_length(dst.row_length.unwrap_or_default())
+                                .buffer_image_height(dst.row_height.unwrap_or_default())
+                                .buffer_offset(dst.offset)
+                                .image_offset(vk::Offset3D {
+                                    x: src.offset[0] as i32,
+                                    y: src.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .image_extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .image_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::CopyImageToImage {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_image = resources.get_image(src.image);
+                let dst_image = resources.get_image(dst.image);
+
+                unsafe {
+                    device.core.cmd_copy_image2(
+                        command_buffer,
+                        &vk::CopyImageInfo2::builder()
+                            .src_image(src_image.handle)
+                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .dst_image(dst_image.handle)
+                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .regions(&[vk::ImageCopy2::builder()
+                                .src_offset(vk::Offset3D {
+                                    x: src.offset[0] as i32,
+                                    y: src.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .dst_offset(vk::Offset3D {
+                                    x: dst.offset[0] as i32,
+                                    y: dst.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .src_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .dst_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    )
+                }
+            }
+        }
+    }
+}
+
 fn record_raster_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
+    resources: &RenderGraphResources,
     framebuffer: &crate::render_graph_builder::Framebuffer,
     draw_commands: &[crate::render_graph_builder::RasterDrawCommand],
-    resources: &crate::RenderGraphResources,
 ) {
     //Begin Rendering
     {
@@ -642,3 +859,58 @@ fn record_raster_pass(
 // 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
 // 4. Sub resource tracking. Allowing image levels/layers and buffer regions to be transition and accessed in parallel
+
+pub struct RenderGraphResources<'a> {
+    pub(crate) persistent: &'a mut ResourceManager,
+    pub(crate) swapchain_images: &'a [(vk::SwapchainKHR, SwapchainImage)],
+    pub(crate) transient_images: &'a [Image],
+    pub(crate) transient_buffers: &'a [Buffer],
+
+    pub(crate) pipeline_layout: vk::PipelineLayout,
+    pub(crate) raster_pipelines: &'a slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
+}
+
+impl<'a> RenderGraphResources<'a> {
+    pub fn get_buffer(&self, resource: BufferHandle) -> AshBuffer {
+        match resource {
+            BufferHandle::Persistent(buffer_key) => self
+                .persistent
+                .get_buffer(buffer_key)
+                .expect("render pass tried to access invalid persistent buffer")
+                .get_copy(),
+            BufferHandle::Transient(index) => self.transient_buffers[index].get_copy(),
+        }
+    }
+
+    pub fn get_image(&self, resource: ImageHandle) -> AshImage {
+        match resource {
+            ImageHandle::Persistent(image_key) => self
+                .persistent
+                .get_image(image_key)
+                .expect("Invalid Image Key")
+                .get_copy(),
+            ImageHandle::Transient(index) => self.transient_images[index].get_copy(),
+            ImageHandle::Swapchain(index) => {
+                let swapchain_image = self.swapchain_images[index].clone();
+                AshImage {
+                    handle: swapchain_image.1.handle,
+                    view: swapchain_image.1.view,
+                    size: swapchain_image.1.extent,
+                    format: swapchain_image.1.format,
+                    usage: swapchain_image.1.usage,
+                    location: gpu_allocator::MemoryLocation::GpuOnly,
+                    storage_binding: None,
+                    sampled_binding: None,
+                }
+            }
+        }
+    }
+
+    pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {
+        *self.raster_pipelines.get(pipeline.0).unwrap()
+    }
+
+    pub fn get_pipeline_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
+    }
+}

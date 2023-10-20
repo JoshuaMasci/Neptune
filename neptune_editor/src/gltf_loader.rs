@@ -142,10 +142,7 @@ pub fn load_images(
             location: MemoryLocation::GpuOnly,
         };
 
-        let image_handle = device.create_image(name, &description)?;
-        device.update_data_to_image(image_handle, image_data_slice)?;
-
-        images.push(image_handle);
+        images.push(device.create_image_init(name, &description, image_data_slice)?);
     }
 
     Ok(images)
@@ -292,16 +289,12 @@ fn create_vertex_buffer<T>(
         std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
     };
 
-    let buffer = device.create_buffer(
+    Ok(device.create_buffer_init(
         "Vertex Buffer",
-        &neptune_vulkan::BufferDescription {
-            size: data_bytes.len() as vk::DeviceSize,
-            usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            location: MemoryLocation::GpuOnly,
-        },
-    )?;
-    device.update_data_to_buffer(buffer, data_bytes)?;
-    Ok(buffer)
+        vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        MemoryLocation::GpuOnly,
+        data_bytes,
+    )?)
 }
 
 fn create_index_buffer(

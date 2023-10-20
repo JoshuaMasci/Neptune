@@ -6,7 +6,6 @@ mod image;
 mod instance;
 mod interface;
 mod pipeline;
-mod render_graph;
 pub mod render_graph_builder;
 mod render_graph_executor;
 mod resource_managers;
@@ -19,13 +18,12 @@ pub use gpu_allocator;
 
 pub use buffer::BufferDescription;
 pub use device::{Device, DeviceSettings};
-pub use image::ImageDescription2D;
+pub use image::{ImageDescription2D, TransientImageDesc, TransientImageSize};
 pub use instance::{AppInfo, Instance};
 pub use pipeline::{
     ColorTargetState, DepthState, FragmentState, FramebufferDesc, PrimitiveState,
     RasterPipelineDescription, ShaderStage, VertexAttribute, VertexBufferLayout, VertexState,
 };
-pub use render_graph::*;
 pub use sampler::*;
 pub use swapchain::SurfaceSettings;
 

@@ -1,13 +1,9 @@
 use crate::gltf_loader::{load_samplers, GltfSamplers};
-use crate::mesh::{Mesh, Primitive};
+use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::{
-    vk, BufferAccess, ColorAttachment, DepthStencilAttachment, DeviceSettings, Framebuffer,
-    ImageAccess, ImageHandle, RenderGraph, RenderPass, TransientImageDesc, TransientImageSize,
-};
+use neptune_vulkan::{vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use std::collections::HashMap;
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -241,185 +237,6 @@ impl Editor {
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
-        let mut render_graph = RenderGraph::default();
-        let swapchain_image = render_graph.acquire_swapchain_image(self.surface_handle);
-        let depth_image = render_graph.create_transient_image(TransientImageDesc {
-            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: vk::Format::D16_UNORM,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            mip_levels: 1,
-            memory_location: MemoryLocation::GpuOnly,
-        });
-
-        let mut image_usages = HashMap::new();
-        image_usages.insert(
-            swapchain_image,
-            ImageAccess {
-                write: true,
-                stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                access: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-            },
-        );
-        image_usages.insert(
-            depth_image,
-            ImageAccess {
-                write: true,
-                stage: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
-                    | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-                access: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
-            },
-        );
-
-        let mut buffer_usages = HashMap::new();
-        let mut primitives: Vec<Primitive> = Vec::new();
-
-        for mesh in self.scene.meshes.iter() {
-            for primitive in mesh.primitives.iter() {
-                buffer_usages.insert(
-                    primitive.position_buffer,
-                    BufferAccess {
-                        write: false,
-                        stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
-                        access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-                    },
-                );
-                buffer_usages.insert(
-                    primitive.attributes_buffer,
-                    BufferAccess {
-                        write: false,
-                        stage: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
-                        access: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-                    },
-                );
-
-                if let Some(index_buffer) = &primitive.index_buffer {
-                    buffer_usages.insert(
-                        index_buffer.buffer,
-                        BufferAccess {
-                            write: false,
-                            stage: vk::PipelineStageFlags2::INDEX_INPUT_KHR,
-                            access: vk::AccessFlags2::INDEX_READ,
-                        },
-                    );
-                }
-
-                primitives.push(primitive.clone());
-            }
-        }
-
-        let raster_pipeline_handle = self.raster_pipeline;
-        render_graph.add_pass(RenderPass {
-            name: "Raster Pass".to_string(),
-            queue: Default::default(),
-            buffer_usages,
-            image_usages,
-            framebuffer: Some(Framebuffer {
-                color_attachments: vec![ColorAttachment::new_clear(
-                    swapchain_image,
-                    [0.25, 0.25, 0.25, 1.0],
-                )],
-                depth_stencil_attachment: Some(DepthStencilAttachment::new_clear(
-                    depth_image,
-                    (1.0, 0),
-                )),
-                input_attachments: vec![],
-            }),
-            build_cmd_fn: Some(Box::new(move |device, command_buffer, resources| unsafe {
-                device.core.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    resources.get_raster_pipeline(raster_pipeline_handle),
-                );
-
-                {
-                    let image_size = resources.get_image(swapchain_image).size;
-                    let image_size = [image_size.width as f32, image_size.height as f32];
-                    let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
-                        45.0f32.to_radians(),
-                        image_size[0] / image_size[1],
-                        0.01,
-                    );
-                    projection_matrix.y_axis.y *= -1.0;
-
-                    let view_matrix = glam::Mat4::look_to_lh(
-                        glam::Vec3::new(0.0, 0.0, -1.0),
-                        glam::Vec3::Z,
-                        glam::Vec3::Y,
-                    );
-                    let model_matrix = glam::Mat4::IDENTITY;
-
-                    let view_projection_matrix = projection_matrix * view_matrix;
-
-                    let push_data = &[view_projection_matrix, model_matrix];
-                    let push_data_bytes: &[u8] = std::slice::from_raw_parts(
-                        push_data.as_ptr() as *const u8,
-                        std::mem::size_of_val(push_data),
-                    );
-
-                    device.core.cmd_push_constants(
-                        command_buffer,
-                        resources.get_pipeline_layout(),
-                        vk::ShaderStageFlags::ALL,
-                        0,
-                        push_data_bytes,
-                    );
-
-                    device.core.cmd_push_constants(
-                        command_buffer,
-                        resources.get_pipeline_layout(),
-                        vk::ShaderStageFlags::ALL,
-                        push_data_bytes.len() as u32,
-                        &0u64.to_ne_bytes(),
-                    );
-                }
-
-                for primitive in primitives.iter() {
-                    device.core.cmd_bind_vertex_buffers(
-                        command_buffer,
-                        0,
-                        &[
-                            resources.get_buffer(primitive.position_buffer).handle,
-                            resources.get_buffer(primitive.attributes_buffer).handle,
-                        ],
-                        &[0, 0],
-                    );
-
-                    if let Some(index_buffer) = &primitive.index_buffer {
-                        device.core.cmd_bind_index_buffer(
-                            command_buffer,
-                            resources.get_buffer(index_buffer.buffer).handle,
-                            0,
-                            vk::IndexType::UINT32,
-                        );
-
-                        device.core.cmd_draw_indexed(
-                            command_buffer,
-                            index_buffer.count,
-                            1,
-                            0,
-                            0,
-                            0,
-                        );
-                    } else {
-                        device.core.cmd_draw(
-                            command_buffer,
-                            primitive.vertex_count as u32,
-                            1,
-                            0,
-                            0,
-                        );
-                    }
-                }
-            })),
-        });
-
-        self.device.submit_frame(&render_graph)?;
-        Ok(())
-    }
-
-    pub fn render2(&mut self) -> anyhow::Result<()> {
         let mut render_graph_builder =
             neptune_vulkan::render_graph_builder::RenderGraphBuilder::default();
 
@@ -485,19 +302,11 @@ impl Editor {
 
                 raster_pass = raster_pass.add_draw_command(
                     neptune_vulkan::render_graph_builder::RasterDrawCommand {
-                        pipeline: self.raster_pipeline,
-                        vertex_buffers: vec![
-                            neptune_vulkan::render_graph_builder::BufferOffset {
-                                buffer: primitive.position_buffer,
-                                offset: 0,
-                            },
-                            neptune_vulkan::render_graph_builder::BufferOffset {
-                                buffer: primitive.attributes_buffer,
-                                offset: 0,
-                            },
-                        ],
+                        pipeline,
+                        vertex_buffers,
                         index_buffer,
                         resources: vec![
+                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageBuffer { buffer: self.view_projection_matrix_buffer, write: false },
                             neptune_vulkan::render_graph_builder::ShaderResourceUsage::Sampler(
                                 self.scene.samplers.default,
                             ),
@@ -513,7 +322,7 @@ impl Editor {
 
         render_graph_builder.add_pass(raster_pass.build());
 
-        self.device.submit_frame2(&render_graph_builder)?;
+        self.device.submit_frame(&render_graph_builder)?;
         Ok(())
     }
 }

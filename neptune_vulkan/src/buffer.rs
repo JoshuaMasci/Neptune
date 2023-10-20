@@ -1,4 +1,4 @@
-use crate::descriptor_set::DescriptorBinding;
+use crate::descriptor_set::{DescriptorBinding, GpuBindingIndex};
 use crate::device::AshDevice;
 use crate::VulkanError;
 use ash::vk;
@@ -82,8 +82,14 @@ impl Buffer {
         })
     }
 
-    pub fn get_storage_binding(&self) -> Option<u32> {
-        self.storage_binding.as_ref().map(|binding| binding.index())
+    pub fn get_copy(&self) -> AshBuffer {
+        AshBuffer {
+            handle: self.handle,
+            size: self.size,
+            usage: self.usage,
+            location: self.location,
+            storage_binding: self.storage_binding.as_ref().map(|binding| binding.index()),
+        }
     }
 }
 
@@ -99,4 +105,13 @@ impl Drop for Buffer {
             .unwrap()
             .free(std::mem::take(&mut self.allocation));
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AshBuffer {
+    pub handle: vk::Buffer,
+    pub size: vk::DeviceSize,
+    pub usage: vk::BufferUsageFlags,
+    pub location: gpu_allocator::MemoryLocation,
+    pub storage_binding: Option<GpuBindingIndex>,
 }

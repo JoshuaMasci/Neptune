@@ -1,11 +1,10 @@
 use crate::buffer::{Buffer, BufferDescription};
 use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
-use crate::image::{Image, ImageDescription2D};
-use crate::render_graph::{TransientImageDesc, TransientImageSize, VkImage};
+use crate::image::{AshImage, Image, ImageDescription2D, TransientImageDesc, TransientImageSize};
 use crate::sampler::Sampler;
 use crate::swapchain::SwapchainImage;
-use crate::{BufferKey, ImageHandle, ImageKey, SamplerHandle, SamplerKey};
+use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey};
 use ash::vk;
 use log::warn;
 use slotmap::SlotMap;
@@ -20,6 +19,7 @@ pub struct AshImageHandle {
 }
 
 pub struct ResourceManager {
+    #[allow(unused)]
     device: Arc<AshDevice>,
 
     buffers: SlotMap<BufferKey, AshBufferResource>,
@@ -125,9 +125,8 @@ impl ResourceManager {
 
 pub struct TransientResourceManager {
     device: Arc<AshDevice>,
-
-    transient_buffers: Vec<Buffer>,
-    transient_images: Vec<Image>,
+    pub(crate) transient_buffers: Vec<Buffer>,
+    pub(crate) transient_images: Vec<Image>,
 }
 
 impl TransientResourceManager {
@@ -139,18 +138,13 @@ impl TransientResourceManager {
         }
     }
 
-    pub(crate) fn resolve_buffers(
-        &mut self,
-        transient_image_descriptions: &[BufferDescription],
-    ) -> &Vec<Buffer> {
+    pub(crate) fn resolve_buffers(&mut self, transient_image_descriptions: &[BufferDescription]) {
         for buffer_description in transient_image_descriptions {
             self.transient_buffers.push(
                 Buffer::new(self.device.clone(), "Transient Buffer", buffer_description)
                     .expect("TODO: replace this"),
             )
         }
-
-        &self.transient_buffers
     }
 
     pub(crate) fn resolve_images(
@@ -158,9 +152,7 @@ impl TransientResourceManager {
         persistent: &mut ResourceManager,
         swapchain_images: &[(vk::SwapchainKHR, SwapchainImage)],
         transient_image_descriptions: &[TransientImageDesc],
-    ) -> Vec<VkImage> {
-        let mut transient_images = Vec::with_capacity(transient_image_descriptions.len());
-
+    ) {
         for image_description in transient_image_descriptions {
             let image_extent = get_transient_image_size(
                 image_description.size.clone(),
@@ -178,19 +170,9 @@ impl TransientResourceManager {
                 ),
             )
             .expect("TODO: replace this");
-
-            let vk_image = VkImage {
-                handle: image.handle,
-                view: image.view,
-                size: image.extend,
-                format: image.format,
-            };
-
+            let image_copy = image.get_copy();
             self.transient_images.push(image);
-            transient_images.push(vk_image);
         }
-
-        transient_images
     }
 
     pub(crate) fn flush(&mut self) {
@@ -216,7 +198,7 @@ fn get_transient_image_size(
         TransientImageSize::Relative(scale, target) => {
             let mut extent = match target {
                 ImageHandle::Persistent(image_key) => {
-                    persistent.get_image(image_key).as_ref().unwrap().extend
+                    persistent.get_image(image_key).as_ref().unwrap().size
                 }
                 ImageHandle::Transient(index) => get_transient_image_size(
                     transient_image_descriptions[index].size.clone(),
