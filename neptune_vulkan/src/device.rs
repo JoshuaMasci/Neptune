@@ -1,7 +1,7 @@
 use crate::buffer::{Buffer, BufferDescription};
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
-use crate::pipeline::RasterPipelineDescription;
+use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
 use crate::render_graph_builder::{
     BufferOffset, ImageCopyBuffer, ImageCopyImage, RenderGraphBuilder, Transfer,
 };
@@ -11,7 +11,7 @@ use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
     BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
-    SamplerHandle, SurfaceHandle, VulkanError, VulkanFuture,
+    SamplerHandle, ShaderStage, SurfaceHandle, VulkanError, VulkanFuture,
 };
 use ash::vk;
 use log::error;
@@ -147,10 +147,7 @@ pub struct DeviceSettings {
 
 pub struct Device {
     device: Arc<AshDevice>,
-
-    pipeline_layout: vk::PipelineLayout,
-    raster_pipelines: SlotMap<RasterPipleineKey, vk::Pipeline>,
-
+    pipelines: Pipelines,
     resource_manager: ResourceManager,
     transient_resource_manager: TransientResourceManager,
     swapchain_manager: SwapchainManager,
@@ -181,7 +178,7 @@ impl Device {
         let transient_resource_manager = TransientResourceManager::new(device.clone());
         let swapchain_manager = SwapchainManager::default();
 
-        let pipeline_layout = unsafe {
+        let pipelines = Pipelines::new(device.clone(), unsafe {
             device.core.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::builder()
                     .set_layouts(&[resource_manager.descriptor_set.get_layout()])
@@ -192,15 +189,13 @@ impl Device {
                     }]),
                 None,
             )?
-        };
+        });
 
-        let graph_executor =
-            BasicRenderGraphExecutor::new(device.clone(), pipeline_layout, graphics_queue_index)?;
+        let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
 
         Ok(Device {
             device,
-            pipeline_layout,
-            raster_pipelines: SlotMap::with_key(),
+            pipelines,
             resource_manager,
             transient_resource_manager,
             swapchain_manager,
@@ -251,9 +246,6 @@ impl Device {
 
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
-
-        // self.buffer_transfer_list
-        //     .push((staging_handle, buffer_handle));
 
         self.transfer_list.push(Transfer::CopyBufferToBuffer {
             src: BufferOffset {
@@ -381,13 +373,17 @@ impl Device {
         self.resource_manager.remove_sampler(sampler_handle.0);
     }
 
+    //TODO: use vulkan future and some async pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_compute_pipeline(
         &mut self,
-    ) -> VulkanFuture<Result<ComputePipelineHandle, VulkanError>> {
-        todo!()
+        shader: &ShaderStage,
+    ) -> Result<ComputePipelineHandle, VulkanError> {
+        Ok(ComputePipelineHandle(self.pipelines.compute.insert(
+            ComputePipeline::new(self.device.clone(), self.pipelines.layout, shader)?,
+        )))
     }
     pub fn destroy_compute_pipeline(&mut self, compute_pipeline_handle: ComputePipelineHandle) {
-        todo!()
+        drop(self.pipelines.compute.remove(compute_pipeline_handle.0))
     }
 
     //TODO: allow multiple creation of multiple pipelines at once?
@@ -396,18 +392,12 @@ impl Device {
         &mut self,
         description: &RasterPipelineDescription,
     ) -> Result<RasterPipelineHandle, VulkanError> {
-        let new_pipeline =
-            crate::pipeline::create_pipeline(&self.device.core, self.pipeline_layout, description)?;
-        Ok(RasterPipelineHandle(
-            self.raster_pipelines.insert(new_pipeline),
-        ))
+        Ok(RasterPipelineHandle(self.pipelines.raster.insert(
+            RasterPipeline::new(self.device.clone(), self.pipelines.layout, description)?,
+        )))
     }
     pub fn destroy_raster_pipeline(&mut self, raster_pipeline_handle: RasterPipelineHandle) {
-        if let Some(pipeline) = self.raster_pipelines.remove(raster_pipeline_handle.0) {
-            unsafe {
-                self.device.core.destroy_pipeline(pipeline, None);
-            }
-        }
+        drop(self.pipelines.raster.remove(raster_pipeline_handle.0))
     }
 
     pub fn configure_surface(
@@ -458,7 +448,7 @@ impl Device {
             &mut self.resource_manager,
             &mut self.transient_resource_manager,
             &mut self.swapchain_manager,
-            &self.raster_pipelines,
+            &self.pipelines,
         )?;
 
         self.transfer_list.clear();
@@ -470,14 +460,6 @@ impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device.core.device_wait_idle();
-
-            for (_key, pipeline) in self.raster_pipelines.iter() {
-                self.device.core.destroy_pipeline(*pipeline, None);
-            }
-
-            self.device
-                .core
-                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

@@ -20,6 +20,7 @@ pub struct Editor {
     device: neptune_vulkan::Device,
 
     raster_pipeline: neptune_vulkan::RasterPipelineHandle,
+    fullscreen_copy_pipeline: neptune_vulkan::RasterPipelineHandle,
 
     view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
     scene: GltfScene,
@@ -130,6 +131,33 @@ impl Editor {
             })?
         };
 
+        let fullscreen_copy_pipeline =
+            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
+                vertex: neptune_vulkan::VertexState {
+                    shader: neptune_vulkan::ShaderStage {
+                        code: crate::shader::FULLSCREEN_QUAD_VERT,
+                        entry: "main",
+                    },
+                    layouts: &[],
+                },
+                primitive: neptune_vulkan::PrimitiveState {
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                    cull_mode: vk::CullModeFlags::NONE,
+                },
+                depth_state: None,
+                fragment: Some(neptune_vulkan::FragmentState {
+                    shader: neptune_vulkan::ShaderStage {
+                        code: crate::shader::FULLSCREEN_STORAGE_COPY_FRAG,
+                        entry: "main",
+                    },
+                    targets: &[neptune_vulkan::ColorTargetState {
+                        format: vk::Format::B8G8R8A8_UNORM,
+                        blend: None,
+                        write_mask: vk::ColorComponentFlags::RGBA,
+                    }],
+                }),
+            })?;
+
         let gltf_scene_path = if let Some(path) = &config.gltf_scene_path {
             path.clone()
         } else {
@@ -179,6 +207,7 @@ impl Editor {
             surface_size,
             device,
             raster_pipeline,
+            fullscreen_copy_pipeline,
             view_projection_matrix_buffer,
             scene,
         })
@@ -241,6 +270,16 @@ impl Editor {
             neptune_vulkan::render_graph_builder::RenderGraphBuilder::default();
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
+
+        // let offscreen_image = render_graph_builder.create_transient_image(TransientImageDesc {
+        //     size: TransientImageSize::Relative([1.0; 2], swapchain_image),
+        //     format: vk::Format::R8G8B8A8_UNORM,
+        //     usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+        //         | vk::ImageUsageFlags::TRANSFER_SRC
+        //         | vk::ImageUsageFlags::STORAGE,
+        //     mip_levels: 1,
+        //     memory_location: MemoryLocation::GpuOnly,
+        // });
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
             format: vk::Format::D16_UNORM,
@@ -321,6 +360,29 @@ impl Editor {
         }
 
         render_graph_builder.add_pass(raster_pass.build());
+
+        // render_graph_builder.add_pass(
+        //     neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Fullscreen Quad Pass")
+        //         .add_color_attachment(neptune_vulkan::render_graph_builder::ColorAttachment::new(
+        //             swapchain_image,
+        //         ))
+        //         .add_draw_command(neptune_vulkan::render_graph_builder::RasterDrawCommand {
+        //             pipeline: self.fullscreen_copy_pipeline,
+        //             vertex_buffers: vec![],
+        //             index_buffer: None,
+        //             resources: vec![
+        //                 neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageImage {
+        //                     image: offscreen_image,
+        //                     write: false,
+        //                 },
+        //             ],
+        //             dispatch: neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
+        //                 vertices: 0..3,
+        //                 instances: 0..1,
+        //             },
+        //         })
+        //         .build(),
+        // );
 
         self.device.submit_frame(&render_graph_builder)?;
         Ok(())

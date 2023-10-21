@@ -170,6 +170,7 @@ impl TransientResourceManager {
                 ),
             )
             .expect("TODO: replace this");
+
             self.transient_images.push(image);
         }
     }

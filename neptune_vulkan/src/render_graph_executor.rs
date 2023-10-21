@@ -2,17 +2,21 @@ use crate::buffer::{AshBuffer, Buffer};
 use crate::descriptor_set::GpuBindingIndex;
 use crate::device::{AshDevice, AshQueue};
 use crate::image::{vk_format_get_aspect_flags, AshImage, Image};
+use crate::pipeline::{Pipelines, RasterPipeline};
 use crate::render_graph_builder::{
-    IndexType, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType, ShaderResourceUsage,
-    Transfer,
+    ComputeDispatch, IndexType, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType,
+    ShaderResourceUsage, Transfer,
 };
 use crate::resource_managers::{ResourceManager, TransientResourceManager};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::{
-    BufferHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey, Sampler, SamplerHandle,
+    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
+    Sampler, SamplerHandle,
 };
 use ash::vk;
+use ash::vk::Pipeline;
 use log::info;
+use std::pin::pin;
 use std::sync::Arc;
 
 // Render Graph Executor Evolution
@@ -26,8 +30,6 @@ pub struct BasicRenderGraphExecutor {
     device: Arc<AshDevice>,
     queue: AshQueue,
 
-    pipeline_layout: vk::PipelineLayout,
-
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
 
@@ -36,11 +38,7 @@ pub struct BasicRenderGraphExecutor {
 }
 
 impl BasicRenderGraphExecutor {
-    pub fn new(
-        device: Arc<AshDevice>,
-        pipeline_layout: vk::PipelineLayout,
-        device_queue_index: u32,
-    ) -> ash::prelude::VkResult<Self> {
+    pub fn new(device: Arc<AshDevice>, device_queue_index: u32) -> ash::prelude::VkResult<Self> {
         let queue = device.queues[device_queue_index as usize].clone();
 
         let command_pool = unsafe {
@@ -82,7 +80,6 @@ impl BasicRenderGraphExecutor {
         Ok(Self {
             device,
             queue,
-            pipeline_layout,
             command_pool,
             command_buffer,
             swapchain_semaphores,
@@ -90,14 +87,14 @@ impl BasicRenderGraphExecutor {
         })
     }
 
-    pub fn execute_graph(
+    pub(crate) fn execute_graph(
         &mut self,
         device_transfers: Option<&[Transfer]>,
         render_graph_builder: &RenderGraphBuilder,
         persistent_resource_manager: &mut ResourceManager,
         transient_resource_manager: &mut TransientResourceManager,
         swapchain_manager: &mut SwapchainManager,
-        raster_pipelines: &slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
+        pipelines: &Pipelines,
     ) -> ash::prelude::VkResult<()> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
 
@@ -175,13 +172,12 @@ impl BasicRenderGraphExecutor {
                 vk::PipelineBindPoint::COMPUTE,
                 vk::PipelineBindPoint::GRAPHICS,
             ];
-            let layout = self.pipeline_layout;
             let set = persistent_resource_manager.descriptor_set.get_set();
             for pipeline_bind_point in pipeline_bind_points {
                 self.device.core.cmd_bind_descriptor_sets(
                     self.command_buffer,
                     pipeline_bind_point,
-                    layout,
+                    pipelines.layout,
                     0,
                     &[set],
                     &[],
@@ -233,8 +229,7 @@ impl BasicRenderGraphExecutor {
                 swapchain_images: &swapchain_index_images,
                 transient_images: &transient_resource_manager.transient_images,
                 transient_buffers: &transient_resource_manager.transient_buffers,
-                pipeline_layout: self.pipeline_layout,
-                raster_pipelines,
+                pipelines,
             };
 
             if let Some(transfers) = device_transfers {
@@ -395,7 +390,7 @@ impl Drop for BasicRenderGraphExecutor {
 fn record_render_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
-    resources: &RenderGraphResources,
+    graph_resources: &RenderGraphResources,
     render_pass: &RenderPass,
 ) {
     unsafe {
@@ -423,11 +418,20 @@ fn record_render_pass(
 
     match &render_pass.pass_type {
         RenderPassType::Transfer { transfers } => {
-            record_transfer_pass(device, command_buffer, resources, transfers);
+            record_transfer_pass(device, command_buffer, graph_resources, transfers);
         }
-        RenderPassType::Compute { .. } => {
-            todo!("Compute pass")
-        }
+        RenderPassType::Compute {
+            pipeline,
+            resources,
+            dispatch,
+        } => record_compute_pass(
+            device,
+            command_buffer,
+            graph_resources,
+            *pipeline,
+            resources,
+            dispatch,
+        ),
         RenderPassType::Raster {
             framebuffer,
             draw_commands,
@@ -435,7 +439,7 @@ fn record_render_pass(
             record_raster_pass(
                 device,
                 command_buffer,
-                resources,
+                graph_resources,
                 framebuffer,
                 draw_commands,
             );
@@ -450,7 +454,7 @@ fn record_render_pass(
 fn record_transfer_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
-    resources: &RenderGraphResources,
+    graph_resources: &RenderGraphResources,
     transfers: &[Transfer],
 ) {
     for transfer in transfers.iter() {
@@ -460,8 +464,8 @@ fn record_transfer_pass(
                 dst,
                 copy_size,
             } => {
-                let src_buffer = resources.get_buffer(src.buffer);
-                let dst_buffer = resources.get_buffer(dst.buffer);
+                let src_buffer = graph_resources.get_buffer(src.buffer);
+                let dst_buffer = graph_resources.get_buffer(dst.buffer);
                 unsafe {
                     device.core.cmd_copy_buffer2(
                         command_buffer,
@@ -481,8 +485,8 @@ fn record_transfer_pass(
                 dst,
                 copy_size,
             } => {
-                let src_buffer = resources.get_buffer(src.buffer);
-                let dst_image = resources.get_image(dst.image);
+                let src_buffer = graph_resources.get_buffer(src.buffer);
+                let dst_image = graph_resources.get_image(dst.image);
                 unsafe {
                     device.core.cmd_copy_buffer_to_image2(
                         command_buffer,
@@ -519,8 +523,8 @@ fn record_transfer_pass(
                 dst,
                 copy_size,
             } => {
-                let src_image = resources.get_image(src.image);
-                let dst_buffer = resources.get_buffer(dst.buffer);
+                let src_image = graph_resources.get_image(src.image);
+                let dst_buffer = graph_resources.get_buffer(dst.buffer);
                 unsafe {
                     device.core.cmd_copy_image_to_buffer2(
                         command_buffer,
@@ -557,8 +561,8 @@ fn record_transfer_pass(
                 dst,
                 copy_size,
             } => {
-                let src_image = resources.get_image(src.image);
-                let dst_image = resources.get_image(dst.image);
+                let src_image = graph_resources.get_image(src.image);
+                let dst_image = graph_resources.get_image(dst.image);
 
                 unsafe {
                     device.core.cmd_copy_image2(
@@ -604,10 +608,43 @@ fn record_transfer_pass(
     }
 }
 
+fn record_compute_pass(
+    device: &AshDevice,
+    command_buffer: vk::CommandBuffer,
+    graph_resources: &RenderGraphResources,
+    pipeline: ComputePipelineHandle,
+    resources: &[ShaderResourceUsage],
+    dispatch: &ComputeDispatch,
+) {
+    record_shader_resources(device, command_buffer, graph_resources, resources);
+
+    unsafe {
+        device.core.cmd_bind_pipeline(
+            command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            graph_resources.get_compute_pipeline(pipeline),
+        );
+        match dispatch {
+            ComputeDispatch::Size(size) => {
+                device
+                    .core
+                    .cmd_dispatch(command_buffer, size[0], size[1], size[2]);
+            }
+            ComputeDispatch::Indirect(buffer) => {
+                device.core.cmd_dispatch_indirect(
+                    command_buffer,
+                    graph_resources.get_buffer(buffer.buffer).handle,
+                    buffer.offset as vk::DeviceSize,
+                );
+            }
+        }
+    }
+}
+
 fn record_raster_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
-    resources: &RenderGraphResources,
+    graph_resources: &RenderGraphResources,
     framebuffer: &crate::render_graph_builder::Framebuffer,
     draw_commands: &[crate::render_graph_builder::RasterDrawCommand],
 ) {
@@ -619,7 +656,7 @@ fn record_raster_pass(
         let mut color_attachments = Vec::new();
 
         for color_attachment in framebuffer.color_attachments.iter() {
-            let image = resources.get_image(color_attachment.image);
+            let image = graph_resources.get_image(color_attachment.image);
 
             if let Some(extent) = extent {
                 if extent != image.size {
@@ -652,7 +689,7 @@ fn record_raster_pass(
 
         let depth_stencil_attachment_info: vk::RenderingAttachmentInfo;
         if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
-            let image = resources.get_image(depth_stencil_image.image);
+            let image = graph_resources.get_image(depth_stencil_image.image);
 
             if let Some(extent) = extent {
                 if extent != image.size {
@@ -729,7 +766,7 @@ fn record_raster_pass(
             device.core.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                resources.get_raster_pipeline(draw_call.pipeline),
+                graph_resources.get_raster_pipeline(draw_call.pipeline),
             );
         }
 
@@ -738,7 +775,7 @@ fn record_raster_pass(
             let mut vertex_buffers: Vec<vk::Buffer> =
                 Vec::with_capacity(draw_call.vertex_buffers.len());
             for vertex_buffer in draw_call.vertex_buffers.iter() {
-                vertex_buffers.push(resources.get_buffer(vertex_buffer.buffer).handle);
+                vertex_buffers.push(graph_resources.get_buffer(vertex_buffer.buffer).handle);
             }
 
             let vertex_offset: Vec<vk::DeviceSize> = draw_call
@@ -762,7 +799,7 @@ fn record_raster_pass(
             unsafe {
                 device.core.cmd_bind_index_buffer(
                     command_buffer,
-                    resources.get_buffer(index_buffer.buffer).handle,
+                    graph_resources.get_buffer(index_buffer.buffer).handle,
                     index_buffer.offset as vk::DeviceSize,
                     match index_type {
                         IndexType::U16 => vk::IndexType::UINT16,
@@ -773,45 +810,12 @@ fn record_raster_pass(
         }
 
         //Push Resource
-        unsafe {
-            let mut push_bindings: Vec<GpuBindingIndex> = Vec::new();
-
-            for resource in draw_call.resources.iter() {
-                push_bindings.push(match resource {
-                    ShaderResourceUsage::StorageBuffer { buffer, .. } => resources
-                        .get_buffer(*buffer)
-                        .storage_binding
-                        .expect("Buffer not bound as storage buffer"),
-                    ShaderResourceUsage::StorageImage { image, .. } => resources
-                        .get_image(*image)
-                        .storage_binding
-                        .expect("Image not bound as storage image"),
-                    ShaderResourceUsage::SampledImage(handle) => resources
-                        .get_image(*handle)
-                        .sampled_binding
-                        .expect("Image not bound as sampled image"),
-                    ShaderResourceUsage::Sampler(handle) => resources
-                        .get_sampler(*handle)
-                        .binding
-                        .as_ref()
-                        .expect("Sampler is not bound")
-                        .index(),
-                });
-            }
-
-            let push_data_bytes: Vec<u8> = push_bindings
-                .drain(..)
-                .flat_map(|binding| binding.to_bytes())
-                .collect();
-
-            device.core.cmd_push_constants(
-                command_buffer,
-                resources.get_pipeline_layout(),
-                vk::ShaderStageFlags::ALL,
-                0,
-                &push_data_bytes,
-            );
-        }
+        record_shader_resources(
+            device,
+            command_buffer,
+            graph_resources,
+            &draw_call.resources,
+        );
 
         //Dispatch
         unsafe {
@@ -844,7 +848,7 @@ fn record_raster_pass(
                     stride,
                 } => device.core.cmd_draw_indirect(
                     command_buffer,
-                    resources.get_buffer(buffer.buffer).handle,
+                    graph_resources.get_buffer(buffer.buffer).handle,
                     buffer.offset as vk::DeviceSize,
                     *draw_count,
                     *stride,
@@ -855,7 +859,7 @@ fn record_raster_pass(
                     stride,
                 } => device.core.cmd_draw_indexed_indirect(
                     command_buffer,
-                    resources.get_buffer(buffer.buffer).handle,
+                    graph_resources.get_buffer(buffer.buffer).handle,
                     buffer.offset as vk::DeviceSize,
                     *draw_count,
                     *stride,
@@ -867,6 +871,53 @@ fn record_raster_pass(
     //End Rendering
     unsafe {
         device.core.cmd_end_rendering(command_buffer);
+    }
+}
+
+fn record_shader_resources(
+    device: &AshDevice,
+    command_buffer: vk::CommandBuffer,
+    graph_resources: &RenderGraphResources,
+    resources: &[ShaderResourceUsage],
+) {
+    let mut push_bindings: Vec<GpuBindingIndex> = Vec::with_capacity(resources.len());
+
+    for resource in resources.iter() {
+        push_bindings.push(match resource {
+            ShaderResourceUsage::StorageBuffer { buffer, .. } => graph_resources
+                .get_buffer(*buffer)
+                .storage_binding
+                .expect("Buffer not bound as storage buffer"),
+            ShaderResourceUsage::StorageImage { image, .. } => graph_resources
+                .get_image(*image)
+                .storage_binding
+                .expect("Image not bound as storage image"),
+            ShaderResourceUsage::SampledImage(handle) => graph_resources
+                .get_image(*handle)
+                .sampled_binding
+                .expect("Image not bound as sampled image"),
+            ShaderResourceUsage::Sampler(handle) => graph_resources
+                .get_sampler(*handle)
+                .binding
+                .as_ref()
+                .expect("Sampler is not bound")
+                .index(),
+        });
+    }
+
+    let push_data_bytes: Vec<u8> = push_bindings
+        .drain(..)
+        .flat_map(|binding| binding.to_bytes())
+        .collect();
+
+    unsafe {
+        device.core.cmd_push_constants(
+            command_buffer,
+            graph_resources.get_pipeline_layout(),
+            vk::ShaderStageFlags::ALL,
+            0,
+            &push_data_bytes,
+        );
     }
 }
 
@@ -882,9 +933,7 @@ pub struct RenderGraphResources<'a> {
     pub(crate) swapchain_images: &'a [AcquiredSwapchainImage],
     pub(crate) transient_images: &'a [Image],
     pub(crate) transient_buffers: &'a [Buffer],
-
-    pub(crate) pipeline_layout: vk::PipelineLayout,
-    pub(crate) raster_pipelines: &'a slotmap::SlotMap<RasterPipleineKey, vk::Pipeline>,
+    pub(crate) pipelines: &'a Pipelines,
 }
 
 impl<'a> RenderGraphResources<'a> {
@@ -917,11 +966,15 @@ impl<'a> RenderGraphResources<'a> {
             .expect("Invalid Sampler Key")
     }
 
+    pub(crate) fn get_compute_pipeline(&self, pipeline: ComputePipelineHandle) -> Pipeline {
+        self.pipelines.compute.get(pipeline.0).unwrap().handle
+    }
+
     pub fn get_raster_pipeline(&self, pipeline: RasterPipelineHandle) -> vk::Pipeline {
-        *self.raster_pipelines.get(pipeline.0).unwrap()
+        self.pipelines.raster.get(pipeline.0).unwrap().handle
     }
 
     pub fn get_pipeline_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
+        self.pipelines.layout
     }
 }

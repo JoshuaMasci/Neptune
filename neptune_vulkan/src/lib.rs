@@ -1,4 +1,5 @@
 mod buffer;
+mod compute_pipeline;
 mod debug_utils;
 mod descriptor_set;
 mod device;
