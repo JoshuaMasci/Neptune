@@ -6,16 +6,15 @@ use crate::render_graph_builder::{
     BufferOffset, ImageCopyBuffer, ImageCopyImage, RenderGraphBuilder, Transfer,
 };
 use crate::render_graph_executor::BasicRenderGraphExecutor;
-use crate::resource_managers::{ResourceManager, TransientResourceManager};
+use crate::resource_managers::ResourceManager;
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
-    SamplerHandle, ShaderStage, SurfaceHandle, VulkanError, VulkanFuture,
+    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, SamplerHandle,
+    ShaderStage, SurfaceHandle, VulkanError,
 };
 use ash::vk;
 use log::error;
-use slotmap::SlotMap;
 use std::mem::ManuallyDrop;
 use std::ops::Not;
 use std::sync::{Arc, Mutex};
@@ -149,7 +148,6 @@ pub struct Device {
     device: Arc<AshDevice>,
     pipelines: Pipelines,
     resource_manager: ResourceManager,
-    transient_resource_manager: TransientResourceManager,
     swapchain_manager: SwapchainManager,
 
     transfer_list: Vec<Transfer>,
@@ -175,7 +173,6 @@ impl Device {
         let device =
             AshDevice::new(instance, physical_device, &[graphics_queue_index]).map(Arc::new)?;
         let resource_manager = ResourceManager::new(device.clone());
-        let transient_resource_manager = TransientResourceManager::new(device.clone());
         let swapchain_manager = SwapchainManager::default();
 
         let pipelines = Pipelines::new(device.clone(), unsafe {
@@ -197,7 +194,6 @@ impl Device {
             device,
             pipelines,
             resource_manager,
-            transient_resource_manager,
             swapchain_manager,
             transfer_list: Vec::new(),
             graph_executor,
@@ -446,7 +442,6 @@ impl Device {
             transfers,
             render_graph_builder,
             &mut self.resource_manager,
-            &mut self.transient_resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,
         )?;

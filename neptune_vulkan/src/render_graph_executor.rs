@@ -1,22 +1,21 @@
-use crate::buffer::{AshBuffer, Buffer};
+use crate::buffer::AshBuffer;
 use crate::descriptor_set::GpuBindingIndex;
 use crate::device::{AshDevice, AshQueue};
-use crate::image::{vk_format_get_aspect_flags, AshImage, Image};
-use crate::pipeline::{Pipelines, RasterPipeline};
+use crate::image::{vk_format_get_aspect_flags, AshImage};
+use crate::pipeline::Pipelines;
 use crate::render_graph_builder::{
     ComputeDispatch, IndexType, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType,
     ShaderResourceUsage, Transfer,
 };
-use crate::resource_managers::{ResourceManager, TransientResourceManager};
+use crate::resource_managers::ResourceManager;
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, RasterPipleineKey,
-    Sampler, SamplerHandle,
+    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, Sampler, SamplerHandle,
+    VulkanError,
 };
 use ash::vk;
 use ash::vk::Pipeline;
 use log::info;
-use std::pin::pin;
 use std::sync::Arc;
 
 // Render Graph Executor Evolution
@@ -91,11 +90,10 @@ impl BasicRenderGraphExecutor {
         &mut self,
         device_transfers: Option<&[Transfer]>,
         render_graph_builder: &RenderGraphBuilder,
-        persistent_resource_manager: &mut ResourceManager,
-        transient_resource_manager: &mut TransientResourceManager,
+        resource_manager: &mut ResourceManager,
         swapchain_manager: &mut SwapchainManager,
         pipelines: &Pipelines,
-    ) -> ash::prelude::VkResult<()> {
+    ) -> Result<(), VulkanError> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
 
         unsafe {
@@ -110,7 +108,7 @@ impl BasicRenderGraphExecutor {
                 .unwrap();
         }
 
-        transient_resource_manager.flush();
+        resource_manager.flush_frame();
 
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
 
@@ -172,7 +170,7 @@ impl BasicRenderGraphExecutor {
                 vk::PipelineBindPoint::COMPUTE,
                 vk::PipelineBindPoint::GRAPHICS,
             ];
-            let set = persistent_resource_manager.descriptor_set.get_set();
+            let set = resource_manager.descriptor_set.get_set();
             for pipeline_bind_point in pipeline_bind_points {
                 self.device.core.cmd_bind_descriptor_sets(
                     self.command_buffer,
@@ -218,17 +216,15 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
-            transient_resource_manager.resolve_images(
-                persistent_resource_manager,
+            resource_manager.resolve_transient_buffers(&render_graph_builder.transient_buffers)?;
+            resource_manager.resolve_transient_image(
                 &swapchain_index_images,
                 &render_graph_builder.transient_images,
-            );
-            transient_resource_manager.resolve_buffers(&render_graph_builder.transient_buffers);
+            )?;
+
             let resources = RenderGraphResources {
-                persistent: persistent_resource_manager,
+                persistent: resource_manager,
                 swapchain_images: &swapchain_index_images,
-                transient_images: &transient_resource_manager.transient_images,
-                transient_buffers: &transient_resource_manager.transient_buffers,
                 pipelines,
             };
 
@@ -921,18 +917,9 @@ fn record_shader_resources(
     }
 }
 
-// Render Graph Executor Evolution
-// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling
-// 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
-// 2. Whole graph evaluation with pass reordering and dead code culling
-// 3. Multi-Queue execution
-// 4. Sub resource tracking. Allowing image levels/layers and buffer regions to be transition and accessed in parallel
-
 pub struct RenderGraphResources<'a> {
     pub(crate) persistent: &'a mut ResourceManager,
     pub(crate) swapchain_images: &'a [AcquiredSwapchainImage],
-    pub(crate) transient_images: &'a [Image],
-    pub(crate) transient_buffers: &'a [Buffer],
     pub(crate) pipelines: &'a Pipelines,
 }
 
@@ -944,7 +931,7 @@ impl<'a> RenderGraphResources<'a> {
                 .get_buffer(buffer_key)
                 .expect("render pass tried to access invalid persistent buffer")
                 .get_copy(),
-            BufferHandle::Transient(index) => self.transient_buffers[index].get_copy(),
+            BufferHandle::Transient(index) => self.persistent.transient_buffers[index].get_copy(),
         }
     }
 
@@ -955,7 +942,7 @@ impl<'a> RenderGraphResources<'a> {
                 .get_image(image_key)
                 .expect("Invalid Image Key")
                 .get_copy(),
-            ImageHandle::Transient(index) => self.transient_images[index].get_copy(),
+            ImageHandle::Transient(index) => self.persistent.transient_images[index].get_copy(),
             ImageHandle::Swapchain(index) => self.swapchain_images[index].image,
         }
     }
