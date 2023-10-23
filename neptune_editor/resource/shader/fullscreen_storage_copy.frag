@@ -17,5 +17,7 @@ layout(push_constant) uniform PushConstants
 } push_constants;
 
 void main() {
-    out_frag_color = imageLoad(storage_images[ get_image_index(push_constants.input_image_binding)],  ivec2(gl_FragCoord.xy));
+    vec4 color = imageLoad(storage_images[get_image_index(push_constants.input_image_binding)],  ivec2(gl_FragCoord.xy));
+    float grey_scale = (0.299 * color.x) + (0.587 * color.y) + (0.114 * color.z);
+    out_frag_color = vec4(grey_scale, grey_scale, grey_scale, color.w);
 }

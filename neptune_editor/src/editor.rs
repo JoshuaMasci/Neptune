@@ -271,15 +271,15 @@ impl Editor {
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
 
-        // let offscreen_image = render_graph_builder.create_transient_image(TransientImageDesc {
-        //     size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-        //     format: vk::Format::R8G8B8A8_UNORM,
-        //     usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-        //         | vk::ImageUsageFlags::TRANSFER_SRC
-        //         | vk::ImageUsageFlags::STORAGE,
-        //     mip_levels: 1,
-        //     memory_location: MemoryLocation::GpuOnly,
-        // });
+        let offscreen_image = render_graph_builder.create_transient_image(TransientImageDesc {
+            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
+            format: vk::Format::B8G8R8A8_UNORM,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::STORAGE,
+            mip_levels: 1,
+            memory_location: MemoryLocation::GpuOnly,
+        });
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
             format: vk::Format::D16_UNORM,
@@ -292,7 +292,7 @@ impl Editor {
             neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Gltf Scene")
                 .add_color_attachment(
                     neptune_vulkan::render_graph_builder::ColorAttachment::new_clear(
-                        swapchain_image,
+                        offscreen_image,
                         [0.0, 0.0, 0.0, 1.0],
                     ),
                 )
@@ -361,28 +361,28 @@ impl Editor {
 
         render_graph_builder.add_pass(raster_pass.build());
 
-        // render_graph_builder.add_pass(
-        //     neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Fullscreen Quad Pass")
-        //         .add_color_attachment(neptune_vulkan::render_graph_builder::ColorAttachment::new(
-        //             swapchain_image,
-        //         ))
-        //         .add_draw_command(neptune_vulkan::render_graph_builder::RasterDrawCommand {
-        //             pipeline: self.fullscreen_copy_pipeline,
-        //             vertex_buffers: vec![],
-        //             index_buffer: None,
-        //             resources: vec![
-        //                 neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageImage {
-        //                     image: offscreen_image,
-        //                     write: false,
-        //                 },
-        //             ],
-        //             dispatch: neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
-        //                 vertices: 0..3,
-        //                 instances: 0..1,
-        //             },
-        //         })
-        //         .build(),
-        // );
+        render_graph_builder.add_pass(
+            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Fullscreen Quad Pass")
+                .add_color_attachment(neptune_vulkan::render_graph_builder::ColorAttachment::new(
+                    swapchain_image,
+                ))
+                .add_draw_command(neptune_vulkan::render_graph_builder::RasterDrawCommand {
+                    pipeline: self.fullscreen_copy_pipeline,
+                    vertex_buffers: vec![],
+                    index_buffer: None,
+                    resources: vec![
+                        neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageImage {
+                            image: offscreen_image,
+                            write: false,
+                        },
+                    ],
+                    dispatch: neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
+                        vertices: 0..3,
+                        instances: 0..1,
+                    },
+                })
+                .build(),
+        );
 
         self.device.submit_frame(&render_graph_builder)?;
         Ok(())
