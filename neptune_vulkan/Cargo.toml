@@ -8,7 +8,7 @@ edition = "2021"
 neptune_core = { path = "../neptune_core"}
 
 log = "0.4"
-bitflags = "2.2.1"
+bitflags = "2.4.1"
 slotmap = "1.0.6"
 thiserror = "1.0"
 

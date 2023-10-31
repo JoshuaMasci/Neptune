@@ -3,8 +3,9 @@ use crate::descriptor_set::GpuBindingIndex;
 use crate::device::{AshDevice, AshQueue};
 use crate::image::{vk_format_get_aspect_flags, AshImage};
 use crate::pipeline::Pipelines;
+use crate::render_graph::IndexType;
 use crate::render_graph_builder::{
-    ComputeDispatch, IndexType, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType,
+    ComputeDispatch, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType,
     ShaderResourceUsage, Transfer,
 };
 use crate::resource_managers::ResourceManager;
@@ -19,7 +20,7 @@ use log::info;
 use std::sync::Arc;
 
 // Render Graph Executor Evolution
-// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling
+// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling (DONE!)
 // 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
 // 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
@@ -86,7 +87,7 @@ impl BasicRenderGraphExecutor {
         })
     }
 
-    pub(crate) fn execute_graph(
+    pub(crate) fn submit_frame(
         &mut self,
         device_transfers: Option<&[Transfer]>,
         render_graph_builder: &RenderGraphBuilder,
@@ -166,20 +167,23 @@ impl BasicRenderGraphExecutor {
                 .begin_command_buffer(self.command_buffer, &vk::CommandBufferBeginInfo::builder())
                 .unwrap();
 
-            let pipeline_bind_points = [
-                vk::PipelineBindPoint::COMPUTE,
-                vk::PipelineBindPoint::GRAPHICS,
-            ];
-            let set = resource_manager.descriptor_set.get_set();
-            for pipeline_bind_point in pipeline_bind_points {
-                self.device.core.cmd_bind_descriptor_sets(
-                    self.command_buffer,
-                    pipeline_bind_point,
-                    pipelines.layout,
-                    0,
-                    &[set],
-                    &[],
-                );
+            //Bind descriptor set
+            {
+                let pipeline_bind_points = [
+                    vk::PipelineBindPoint::COMPUTE,
+                    vk::PipelineBindPoint::GRAPHICS,
+                ];
+                let set = resource_manager.descriptor_set.get_set();
+                for pipeline_bind_point in pipeline_bind_points {
+                    self.device.core.cmd_bind_descriptor_sets(
+                        self.command_buffer,
+                        pipeline_bind_point,
+                        pipelines.layout,
+                        0,
+                        &[set],
+                        &[],
+                    );
+                }
             }
 
             // Transition Swapchain to General

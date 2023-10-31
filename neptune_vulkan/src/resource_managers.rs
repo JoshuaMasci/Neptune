@@ -6,7 +6,7 @@ use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
 use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
-use log::{info, warn};
+use log::warn;
 use slotmap::SlotMap;
 use std::sync::Arc;
 

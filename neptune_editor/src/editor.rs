@@ -324,7 +324,7 @@ impl Editor {
                             buffer: index_buffer_ref.buffer,
                             offset: 0,
                         },
-                        neptune_vulkan::render_graph_builder::IndexType::U32,
+                        neptune_vulkan::render_graph::IndexType::U32,
                     ));
 
                     neptune_vulkan::render_graph_builder::RasterDispatch::DrawIndexed {

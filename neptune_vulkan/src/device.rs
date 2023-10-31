@@ -438,7 +438,7 @@ impl Device {
             .not()
             .then_some(self.transfer_list.as_slice());
 
-        self.graph_executor.execute_graph(
+        self.graph_executor.submit_frame(
             transfers,
             render_graph_builder,
             &mut self.resource_manager,

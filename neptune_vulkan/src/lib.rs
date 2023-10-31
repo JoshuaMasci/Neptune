@@ -1,5 +1,4 @@
 mod buffer;
-mod compute_pipeline;
 mod debug_utils;
 mod descriptor_set;
 mod device;
@@ -7,11 +6,13 @@ mod image;
 mod instance;
 mod interface;
 mod pipeline;
-pub mod render_graph_builder;
 mod render_graph_executor;
 mod resource_managers;
 mod sampler;
 mod swapchain;
+
+pub mod render_graph;
+pub mod render_graph_builder;
 
 //Public Types
 pub use ash::vk;
