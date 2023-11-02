@@ -384,7 +384,7 @@ impl Editor {
                 .build(),
         );
 
-        self.device.submit_frame(&render_graph_builder)?;
+        self.device.submit_frame(&render_graph_builder.build())?;
         Ok(())
     }
 }

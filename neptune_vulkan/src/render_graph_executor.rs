@@ -1,21 +1,19 @@
-use crate::buffer::AshBuffer;
 use crate::descriptor_set::GpuBindingIndex;
 use crate::device::{AshDevice, AshQueue};
-use crate::image::{vk_format_get_aspect_flags, AshImage};
+use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
-use crate::render_graph::IndexType;
-use crate::render_graph_builder::{
-    ComputeDispatch, RasterDispatch, RenderGraphBuilder, RenderPass, RenderPassType,
-    ShaderResourceUsage, Transfer,
+use crate::render_graph::{
+    ComputeDispatch, Framebuffer, IndexType, RasterDispatch, RasterDrawCommand, RenderGraph,
+    RenderPass, RenderPassCommand, ShaderResourceUsage, Transfer,
 };
-use crate::resource_managers::ResourceManager;
+
+use crate::resource_managers::{BufferGraphResource, ImageGraphResource, ResourceManager};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, Sampler, SamplerHandle,
-    VulkanError,
+    BufferHandle, BufferKey, ComputePipelineHandle, ImageHandle, ImageKey, RasterPipelineHandle,
+    Sampler, SamplerHandle, VulkanError,
 };
 use ash::vk;
-use ash::vk::Pipeline;
 use log::info;
 use std::sync::Arc;
 
@@ -89,11 +87,11 @@ impl BasicRenderGraphExecutor {
 
     pub(crate) fn submit_frame(
         &mut self,
-        device_transfers: Option<&[Transfer]>,
-        render_graph_builder: &RenderGraphBuilder,
         resource_manager: &mut ResourceManager,
         swapchain_manager: &mut SwapchainManager,
         pipelines: &Pipelines,
+        device_transfers: Option<&[crate::render_graph_builder::Transfer]>, //Still Needs to be the RGB version since it is not part of graph, TODO: maybe submit before (and in an async transfer queue?????)
+        render_graph: &RenderGraph,
     ) -> Result<(), VulkanError> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
 
@@ -114,8 +112,8 @@ impl BasicRenderGraphExecutor {
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
 
         //If we need more semaphores create them
-        if self.swapchain_semaphores.len() < render_graph_builder.swapchain_images.len() {
-            for _ in self.swapchain_semaphores.len()..render_graph_builder.swapchain_images.len() {
+        if self.swapchain_semaphores.len() < render_graph.swapchain_images.len() {
+            for _ in self.swapchain_semaphores.len()..render_graph.swapchain_images.len() {
                 self.swapchain_semaphores.push(unsafe {
                     (
                         self.device
@@ -130,11 +128,11 @@ impl BasicRenderGraphExecutor {
         }
 
         let mut swapchain_index_images: Vec<AcquiredSwapchainImage> =
-            Vec::with_capacity(render_graph_builder.swapchain_images.len());
-        for (surface_handle, swapchain_semaphores) in render_graph_builder
+            Vec::with_capacity(render_graph.swapchain_images.len());
+        for (surface_handle, swapchain_semaphores) in render_graph
             .swapchain_images
             .iter()
-            .map(|surface_handle| {
+            .map(|(surface_handle, index)| {
                 self.device
                     .instance
                     .surface_list
@@ -220,18 +218,7 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
-            resource_manager.resolve_transient_buffers(&render_graph_builder.transient_buffers)?;
-            resource_manager.resolve_transient_image(
-                &swapchain_index_images,
-                &render_graph_builder.transient_images,
-            )?;
-
-            let resources = RenderGraphResources {
-                persistent: resource_manager,
-                swapchain_images: &swapchain_index_images,
-                pipelines,
-            };
-
+            //Move device upload pass out of graph executor
             if let Some(transfers) = device_transfers {
                 if let Some(debug_util) = &self.device.instance.debug_utils {
                     debug_util.cmd_begin_label(
@@ -252,14 +239,31 @@ impl BasicRenderGraphExecutor {
                     .build()]),
                 );
 
-                record_transfer_pass(&self.device, self.command_buffer, &resources, transfers);
+                record_transfer_pass_old(
+                    &self.device,
+                    self.command_buffer,
+                    resource_manager,
+                    transfers,
+                );
 
                 if let Some(debug_util) = &self.device.instance.debug_utils {
                     debug_util.cmd_end_label(self.command_buffer);
                 }
             }
 
-            for render_pass in render_graph_builder.passes.iter() {
+            let mut buffers =
+                resource_manager.get_buffer_resources(&render_graph.buffer_descriptions)?;
+            let mut images = resource_manager
+                .get_image_resources(&swapchain_index_images, &render_graph.image_descriptions)?;
+
+            let resources = RenderGraphResources {
+                buffers: &mut buffers,
+                images: &mut images,
+                persistent: resource_manager,
+                pipelines,
+            };
+
+            for render_pass in render_graph.render_passes.iter() {
                 record_render_pass(&self.device, self.command_buffer, &resources, render_pass);
             }
 
@@ -275,14 +279,26 @@ impl BasicRenderGraphExecutor {
 
                 let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_index_images
                     .iter()
-                    .map(|swapchain_image| {
+                    .enumerate()
+                    .map(|(index, swapchain_image)| {
+                        //Get last swapchain usages
+                        let swapchain_image_resource_index = render_graph.swapchain_images[index].1;
+                        let swapchain_image_resource = &images[swapchain_image_resource_index];
+
+                        //TODO: actually calc based on usage
+                        let last_usage = (
+                            vk::PipelineStageFlags2::ALL_COMMANDS,
+                            vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+                            swapchain_image_resource.layout,
+                        );
+
                         vk::ImageMemoryBarrier2::builder()
                             .image(swapchain_image.image.handle)
-                            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                            .src_stage_mask(last_usage.0)
+                            .src_access_mask(last_usage.1)
                             .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                             .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                            .old_layout(vk::ImageLayout::GENERAL)
+                            .old_layout(last_usage.2)
                             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                             .subresource_range(swapchain_subresource_range)
                             .build()
@@ -393,6 +409,7 @@ fn record_render_pass(
     graph_resources: &RenderGraphResources,
     render_pass: &RenderPass,
 ) {
+    //TODO: write barriers from pass usages
     unsafe {
         device.core.cmd_pipeline_barrier2(
             command_buffer,
@@ -416,33 +433,33 @@ fn record_render_pass(
         );
     }
 
-    match &render_pass.pass_type {
-        RenderPassType::Transfer { transfers } => {
-            record_transfer_pass(device, command_buffer, graph_resources, transfers);
-        }
-        RenderPassType::Compute {
-            pipeline,
-            resources,
-            dispatch,
-        } => record_compute_pass(
-            device,
-            command_buffer,
-            graph_resources,
-            *pipeline,
-            resources,
-            dispatch,
-        ),
-        RenderPassType::Raster {
-            framebuffer,
-            draw_commands,
-        } => {
-            record_raster_pass(
+    if let Some(render_pass_command) = &render_pass.command {
+        match render_pass_command {
+            RenderPassCommand::Transfer { transfers } => {
+                record_transfer_pass(device, command_buffer, graph_resources, transfers);
+            }
+            RenderPassCommand::Compute {
+                pipeline,
+                resources,
+                dispatch,
+            } => record_compute_pass(
+                device,
+                command_buffer,
+                graph_resources,
+                *pipeline,
+                resources,
+                dispatch,
+            ),
+            RenderPassCommand::Raster {
+                framebuffer,
+                draw_commands,
+            } => record_raster_pass(
                 device,
                 command_buffer,
                 graph_resources,
                 framebuffer,
                 draw_commands,
-            );
+            ),
         }
     }
 
@@ -451,21 +468,39 @@ fn record_render_pass(
     }
 }
 
-fn record_transfer_pass(
+//Keep around for device transfers
+fn buffer_handle_to_key(handle: BufferHandle) -> BufferKey {
+    match handle {
+        BufferHandle::Persistent(key) => key,
+        BufferHandle::Transient(_) => panic!("Transient not supported"),
+    }
+}
+fn image_handle_to_key(handle: ImageHandle) -> ImageKey {
+    match handle {
+        ImageHandle::Persistent(key) => key,
+        ImageHandle::Transient(_) => panic!("Transient not supported"),
+        ImageHandle::Swapchain(_) => panic!("Swapchain not supported"),
+    }
+}
+fn record_transfer_pass_old(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
-    graph_resources: &RenderGraphResources,
-    transfers: &[Transfer],
+    graph_resources: &ResourceManager,
+    transfers: &[crate::render_graph_builder::Transfer],
 ) {
     for transfer in transfers.iter() {
         match transfer {
-            Transfer::CopyBufferToBuffer {
+            crate::render_graph_builder::Transfer::CopyBufferToBuffer {
                 src,
                 dst,
                 copy_size,
             } => {
-                let src_buffer = graph_resources.get_buffer(src.buffer);
-                let dst_buffer = graph_resources.get_buffer(dst.buffer);
+                let src_buffer = graph_resources
+                    .get_buffer(buffer_handle_to_key(src.buffer))
+                    .unwrap();
+                let dst_buffer = graph_resources
+                    .get_buffer(buffer_handle_to_key(dst.buffer))
+                    .unwrap();
                 unsafe {
                     device.core.cmd_copy_buffer2(
                         command_buffer,
@@ -480,13 +515,17 @@ fn record_transfer_pass(
                     );
                 }
             }
-            Transfer::CopyBufferToImage {
+            crate::render_graph_builder::Transfer::CopyBufferToImage {
                 src,
                 dst,
                 copy_size,
             } => {
-                let src_buffer = graph_resources.get_buffer(src.buffer);
-                let dst_image = graph_resources.get_image(dst.image);
+                let src_buffer = graph_resources
+                    .get_buffer(buffer_handle_to_key(src.buffer))
+                    .unwrap();
+                let dst_image = graph_resources
+                    .get_image(image_handle_to_key(dst.image))
+                    .unwrap();
                 unsafe {
                     device.core.cmd_copy_buffer_to_image2(
                         command_buffer,
@@ -518,13 +557,17 @@ fn record_transfer_pass(
                     );
                 }
             }
-            Transfer::CopyImageToBuffer {
+            crate::render_graph_builder::Transfer::CopyImageToBuffer {
                 src,
                 dst,
                 copy_size,
             } => {
-                let src_image = graph_resources.get_image(src.image);
-                let dst_buffer = graph_resources.get_buffer(dst.buffer);
+                let src_image = graph_resources
+                    .get_image(image_handle_to_key(src.image))
+                    .unwrap();
+                let dst_buffer = graph_resources
+                    .get_buffer(buffer_handle_to_key(dst.buffer))
+                    .unwrap();
                 unsafe {
                     device.core.cmd_copy_image_to_buffer2(
                         command_buffer,
@@ -556,13 +599,173 @@ fn record_transfer_pass(
                     );
                 }
             }
-            Transfer::CopyImageToImage {
+            crate::render_graph_builder::Transfer::CopyImageToImage {
                 src,
                 dst,
                 copy_size,
             } => {
-                let src_image = graph_resources.get_image(src.image);
-                let dst_image = graph_resources.get_image(dst.image);
+                let src_image = graph_resources
+                    .get_image(image_handle_to_key(src.image))
+                    .unwrap();
+                let dst_image = graph_resources
+                    .get_image(image_handle_to_key(dst.image))
+                    .unwrap();
+                unsafe {
+                    device.core.cmd_copy_image2(
+                        command_buffer,
+                        &vk::CopyImageInfo2::builder()
+                            .src_image(src_image.handle)
+                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .dst_image(dst_image.handle)
+                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .regions(&[vk::ImageCopy2::builder()
+                                .src_offset(vk::Offset3D {
+                                    x: src.offset[0] as i32,
+                                    y: src.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .dst_offset(vk::Offset3D {
+                                    x: dst.offset[0] as i32,
+                                    y: dst.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .src_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .dst_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    )
+                }
+            }
+        }
+    }
+}
+
+fn record_transfer_pass(
+    device: &AshDevice,
+    command_buffer: vk::CommandBuffer,
+    graph_resources: &RenderGraphResources,
+    transfers: &[Transfer],
+) {
+    for transfer in transfers.iter() {
+        match transfer {
+            Transfer::BufferToBuffer {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_buffer = &graph_resources.buffers[src.buffer].buffer;
+                let dst_buffer = &graph_resources.buffers[dst.buffer].buffer;
+                unsafe {
+                    device.core.cmd_copy_buffer2(
+                        command_buffer,
+                        &vk::CopyBufferInfo2::builder()
+                            .src_buffer(src_buffer.handle)
+                            .dst_buffer(dst_buffer.handle)
+                            .regions(&[vk::BufferCopy2::builder()
+                                .src_offset(src.offset as vk::DeviceSize)
+                                .dst_offset(dst.offset as vk::DeviceSize)
+                                .size(*copy_size as vk::DeviceSize)
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::BufferToImage {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_buffer = &graph_resources.buffers[src.buffer].buffer;
+                let dst_image = &graph_resources.images[dst.image].image;
+                unsafe {
+                    device.core.cmd_copy_buffer_to_image2(
+                        command_buffer,
+                        &vk::CopyBufferToImageInfo2::builder()
+                            .src_buffer(src_buffer.handle)
+                            .dst_image(dst_image.handle)
+                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .regions(&[vk::BufferImageCopy2::builder()
+                                .buffer_row_length(src.row_length.unwrap_or_default())
+                                .buffer_image_height(src.row_height.unwrap_or_default())
+                                .buffer_offset(src.offset)
+                                .image_offset(vk::Offset3D {
+                                    x: dst.offset[0] as i32,
+                                    y: dst.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .image_extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .image_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::ImageToBuffer {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_image = &graph_resources.images[src.image].image;
+                let dst_buffer = &graph_resources.buffers[dst.buffer].buffer;
+                unsafe {
+                    device.core.cmd_copy_image_to_buffer2(
+                        command_buffer,
+                        &vk::CopyImageToBufferInfo2::builder()
+                            .src_image(src_image.handle)
+                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                            .dst_buffer(dst_buffer.handle)
+                            .regions(&[vk::BufferImageCopy2::builder()
+                                .buffer_row_length(dst.row_length.unwrap_or_default())
+                                .buffer_image_height(dst.row_height.unwrap_or_default())
+                                .buffer_offset(dst.offset)
+                                .image_offset(vk::Offset3D {
+                                    x: src.offset[0] as i32,
+                                    y: src.offset[1] as i32,
+                                    z: 0,
+                                })
+                                .image_extent(vk::Extent3D {
+                                    width: copy_size[0],
+                                    height: copy_size[1],
+                                    depth: 1,
+                                })
+                                .image_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
+                                    mip_level: 0,
+                                    base_array_layer: 0,
+                                    layer_count: 1,
+                                })
+                                .build()]),
+                    );
+                }
+            }
+            Transfer::ImageToImage {
+                src,
+                dst,
+                copy_size,
+            } => {
+                let src_image = &graph_resources.images[src.image].image;
+                let dst_image = &graph_resources.images[dst.image].image;
 
                 unsafe {
                     device.core.cmd_copy_image2(
@@ -633,7 +836,7 @@ fn record_compute_pass(
             ComputeDispatch::Indirect(buffer) => {
                 device.core.cmd_dispatch_indirect(
                     command_buffer,
-                    graph_resources.get_buffer(buffer.buffer).handle,
+                    graph_resources.buffers[buffer.buffer].buffer.handle,
                     buffer.offset as vk::DeviceSize,
                 );
             }
@@ -645,8 +848,8 @@ fn record_raster_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     graph_resources: &RenderGraphResources,
-    framebuffer: &crate::render_graph_builder::Framebuffer,
-    draw_commands: &[crate::render_graph_builder::RasterDrawCommand],
+    framebuffer: &Framebuffer,
+    draw_commands: &[RasterDrawCommand],
 ) {
     //Begin Rendering
     {
@@ -656,7 +859,7 @@ fn record_raster_pass(
         let mut color_attachments = Vec::new();
 
         for color_attachment in framebuffer.color_attachments.iter() {
-            let image = graph_resources.get_image(color_attachment.image);
+            let image = graph_resources.images[color_attachment.image].image;
 
             if let Some(extent) = extent {
                 if extent != image.size {
@@ -689,7 +892,7 @@ fn record_raster_pass(
 
         let depth_stencil_attachment_info: vk::RenderingAttachmentInfo;
         if let Some(depth_stencil_image) = &framebuffer.depth_stencil_attachment {
-            let image = graph_resources.get_image(depth_stencil_image.image);
+            let image = graph_resources.images[depth_stencil_image.image].image;
 
             if let Some(extent) = extent {
                 if extent != image.size {
@@ -775,7 +978,7 @@ fn record_raster_pass(
             let mut vertex_buffers: Vec<vk::Buffer> =
                 Vec::with_capacity(draw_call.vertex_buffers.len());
             for vertex_buffer in draw_call.vertex_buffers.iter() {
-                vertex_buffers.push(graph_resources.get_buffer(vertex_buffer.buffer).handle);
+                vertex_buffers.push(graph_resources.buffers[vertex_buffer.buffer].buffer.handle);
             }
 
             let vertex_offset: Vec<vk::DeviceSize> = draw_call
@@ -799,7 +1002,7 @@ fn record_raster_pass(
             unsafe {
                 device.core.cmd_bind_index_buffer(
                     command_buffer,
-                    graph_resources.get_buffer(index_buffer.buffer).handle,
+                    graph_resources.buffers[index_buffer.buffer].buffer.handle,
                     index_buffer.offset as vk::DeviceSize,
                     match index_type {
                         IndexType::U16 => vk::IndexType::UINT16,
@@ -848,7 +1051,7 @@ fn record_raster_pass(
                     stride,
                 } => device.core.cmd_draw_indirect(
                     command_buffer,
-                    graph_resources.get_buffer(buffer.buffer).handle,
+                    graph_resources.buffers[buffer.buffer].buffer.handle,
                     buffer.offset as vk::DeviceSize,
                     *draw_count,
                     *stride,
@@ -859,7 +1062,7 @@ fn record_raster_pass(
                     stride,
                 } => device.core.cmd_draw_indexed_indirect(
                     command_buffer,
-                    graph_resources.get_buffer(buffer.buffer).handle,
+                    graph_resources.buffers[buffer.buffer].buffer.handle,
                     buffer.offset as vk::DeviceSize,
                     *draw_count,
                     *stride,
@@ -884,16 +1087,16 @@ fn record_shader_resources(
 
     for resource in resources.iter() {
         push_bindings.push(match resource {
-            ShaderResourceUsage::StorageBuffer { buffer, .. } => graph_resources
-                .get_buffer(*buffer)
+            ShaderResourceUsage::StorageBuffer { buffer, .. } => graph_resources.buffers[*buffer]
+                .buffer
                 .storage_binding
                 .expect("Buffer not bound as storage buffer"),
-            ShaderResourceUsage::StorageImage { image, .. } => graph_resources
-                .get_image(*image)
+            ShaderResourceUsage::StorageImage { image, .. } => graph_resources.images[*image]
+                .image
                 .storage_binding
                 .expect("Image not bound as storage image"),
-            ShaderResourceUsage::SampledImage(handle) => graph_resources
-                .get_image(*handle)
+            ShaderResourceUsage::SampledImage(image) => graph_resources.images[*image]
+                .image
                 .sampled_binding
                 .expect("Image not bound as sampled image"),
             ShaderResourceUsage::Sampler(handle) => graph_resources
@@ -922,42 +1125,20 @@ fn record_shader_resources(
 }
 
 pub struct RenderGraphResources<'a> {
+    pub(crate) buffers: &'a mut [BufferGraphResource],
+    pub(crate) images: &'a mut [ImageGraphResource],
     pub(crate) persistent: &'a mut ResourceManager,
-    pub(crate) swapchain_images: &'a [AcquiredSwapchainImage],
     pub(crate) pipelines: &'a Pipelines,
 }
 
 impl<'a> RenderGraphResources<'a> {
-    pub fn get_buffer(&self, resource: BufferHandle) -> AshBuffer {
-        match resource {
-            BufferHandle::Persistent(buffer_key) => self
-                .persistent
-                .get_buffer(buffer_key)
-                .expect("render pass tried to access invalid persistent buffer")
-                .get_copy(),
-            BufferHandle::Transient(index) => self.persistent.transient_buffers[index].get_copy(),
-        }
-    }
-
-    pub fn get_image(&self, resource: ImageHandle) -> AshImage {
-        match resource {
-            ImageHandle::Persistent(image_key) => self
-                .persistent
-                .get_image(image_key)
-                .expect("Invalid Image Key")
-                .get_copy(),
-            ImageHandle::Transient(index) => self.persistent.transient_images[index].get_copy(),
-            ImageHandle::Swapchain(index) => self.swapchain_images[index].image,
-        }
-    }
-
     pub(crate) fn get_sampler(&self, resource: SamplerHandle) -> Arc<Sampler> {
         self.persistent
             .get_sampler(resource.0)
             .expect("Invalid Sampler Key")
     }
 
-    pub(crate) fn get_compute_pipeline(&self, pipeline: ComputePipelineHandle) -> Pipeline {
+    pub(crate) fn get_compute_pipeline(&self, pipeline: ComputePipelineHandle) -> vk::Pipeline {
         self.pipelines.compute.get(pipeline.0).unwrap().handle
     }
 

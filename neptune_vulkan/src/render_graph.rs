@@ -12,8 +12,9 @@ pub enum QueueType {
     ForceAsyncCompute,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BufferResourceUsage {
+    #[default]
     None,
     TransferRead,
     TransferWrite,
@@ -25,8 +26,9 @@ pub enum BufferResourceUsage {
     StorageWrite,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ImageResourceUsage {
+    #[default]
     None,
     TransferRead,
     TransferWrite,
@@ -39,25 +41,26 @@ pub enum ImageResourceUsage {
 pub type BufferIndex = usize;
 
 #[derive(Debug)]
-pub enum BufferResource {
-    Transient(BufferDescription),
+pub enum BufferResourceDescription {
     Persistent(BufferKey),
+    Transient(BufferDescription),
 }
 
 pub type ImageIndex = usize;
 
 #[derive(Debug)]
-pub enum ImageResource {
-    Transient(TransientImageDesc),
+pub enum ImageResourceDescription {
     Persistent(ImageKey),
-    Swapchain(SurfaceHandle),
+    Transient(TransientImageDesc),
+    Swapchain(usize),
 }
 
 #[derive(Debug, Default)]
 pub struct RenderGraph {
-    pub buffers: Vec<BufferResource>,
-    pub images: Vec<ImageResource>,
-    pub render_pass: Vec<RenderPass>,
+    pub buffer_descriptions: Vec<BufferResourceDescription>,
+    pub image_descriptions: Vec<ImageResourceDescription>,
+    pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
+    pub render_passes: Vec<RenderPass>,
 }
 
 #[derive(Debug)]

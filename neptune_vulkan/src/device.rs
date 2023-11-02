@@ -2,6 +2,7 @@ use crate::buffer::{Buffer, BufferDescription};
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
+use crate::render_graph::RenderGraph;
 use crate::render_graph_builder::{
     BufferOffset, ImageCopyBuffer, ImageCopyImage, RenderGraphBuilder, Transfer,
 };
@@ -428,10 +429,7 @@ impl Device {
         let _ = self.swapchain_manager.swapchains.remove(&surface);
     }
 
-    pub fn submit_frame(
-        &mut self,
-        render_graph_builder: &RenderGraphBuilder,
-    ) -> Result<(), VulkanError> {
+    pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
         let transfers = self
             .transfer_list
             .is_empty()
@@ -439,11 +437,11 @@ impl Device {
             .then_some(self.transfer_list.as_slice());
 
         self.graph_executor.submit_frame(
-            transfers,
-            render_graph_builder,
             &mut self.resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,
+            transfers,
+            render_graph,
         )?;
 
         self.transfer_list.clear();

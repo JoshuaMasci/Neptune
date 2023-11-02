@@ -1,7 +1,7 @@
 use crate::image::TransientImageDesc;
 use crate::render_graph::{
-    BufferIndex, BufferResource, BufferResourceUsage, ImageIndex, ImageResource,
-    ImageResourceUsage, IndexType, QueueType, RenderGraph,
+    BufferIndex, BufferResourceDescription, BufferResourceUsage, ImageIndex,
+    ImageResourceDescription, ImageResourceUsage, IndexType, QueueType, RenderGraph,
 };
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
@@ -606,11 +606,11 @@ impl RenderGraphIntermediate {
         if let Some(index) = self.buffer_index_map.get(&handle) {
             *index
         } else {
-            let index = self.render_graph.buffers.len() as BufferIndex;
-            self.render_graph.buffers.push(match handle {
-                BufferHandle::Persistent(key) => BufferResource::Persistent(key),
+            let index = self.render_graph.buffer_descriptions.len() as BufferIndex;
+            self.render_graph.buffer_descriptions.push(match handle {
+                BufferHandle::Persistent(key) => BufferResourceDescription::Persistent(key),
                 BufferHandle::Transient(index) => {
-                    BufferResource::Transient(self.transient_buffers[index].clone())
+                    BufferResourceDescription::Transient(self.transient_buffers[index].clone())
                 }
             });
             self.buffer_index_map.insert(handle, index);
@@ -622,14 +622,17 @@ impl RenderGraphIntermediate {
         if let Some(index) = self.image_index_map.get(&handle) {
             *index
         } else {
-            let index = self.render_graph.images.len() as ImageIndex;
-            self.render_graph.images.push(match handle {
-                ImageHandle::Persistent(key) => ImageResource::Persistent(key),
+            let index = self.render_graph.image_descriptions.len() as ImageIndex;
+            self.render_graph.image_descriptions.push(match handle {
+                ImageHandle::Persistent(key) => ImageResourceDescription::Persistent(key),
                 ImageHandle::Transient(index) => {
-                    ImageResource::Transient(self.transient_images[index].clone())
+                    ImageResourceDescription::Transient(self.transient_images[index].clone())
                 }
                 ImageHandle::Swapchain(index) => {
-                    ImageResource::Swapchain(self.swapchain_images[index])
+                    self.render_graph
+                        .swapchain_images
+                        .push((self.swapchain_images[index], index));
+                    ImageResourceDescription::Swapchain(index)
                 }
             });
             self.image_index_map.insert(handle, index);
@@ -700,7 +703,7 @@ impl RenderGraphIntermediate {
         };
 
         self.render_graph
-            .render_pass
+            .render_passes
             .push(crate::render_graph::RenderPass {
                 label_name: pass.label_name,
                 label_color: pass.label_color,

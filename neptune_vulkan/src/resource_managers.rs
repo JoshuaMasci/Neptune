@@ -1,7 +1,10 @@
-use crate::buffer::{Buffer, BufferDescription};
+use crate::buffer::{AshBuffer, Buffer};
 use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
-use crate::image::{Image, ImageDescription2D, TransientImageDesc, TransientImageSize};
+use crate::image::{AshImage, Image, TransientImageSize};
+use crate::render_graph::{
+    BufferResourceDescription, BufferResourceUsage, ImageResourceDescription, ImageResourceUsage,
+};
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
 use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
@@ -10,22 +13,33 @@ use log::warn;
 use slotmap::SlotMap;
 use std::sync::Arc;
 
-pub struct AshBufferResource {
+pub struct BufferResource {
     buffer: Buffer,
 }
 
-pub struct AshImageHandle {
+pub struct BufferGraphResource {
+    pub buffer: AshBuffer,
+    last_usage: BufferResourceUsage,
+}
+
+pub struct ImageResource {
     image: Image,
+}
+
+pub struct ImageGraphResource {
+    pub image: AshImage,
+    pub last_usage: ImageResourceUsage,
+    pub layout: vk::ImageLayout,
 }
 
 pub struct ResourceManager {
     #[allow(unused)]
     device: Arc<AshDevice>,
 
-    buffers: SlotMap<BufferKey, AshBufferResource>,
+    buffers: SlotMap<BufferKey, BufferResource>,
     freed_buffers: Vec<BufferKey>,
 
-    images: SlotMap<ImageKey, AshImageHandle>,
+    images: SlotMap<ImageKey, ImageResource>,
     freed_images: Vec<ImageKey>,
 
     samplers: SlotMap<SamplerKey, Arc<Sampler>>,
@@ -93,7 +107,7 @@ impl ResourceManager {
             buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
         }
 
-        self.buffers.insert(AshBufferResource { buffer })
+        self.buffers.insert(BufferResource { buffer })
     }
     pub fn get_buffer(&self, key: BufferKey) -> Option<&Buffer> {
         self.buffers.get(key).map(|resource| &resource.buffer)
@@ -112,7 +126,7 @@ impl ResourceManager {
             image.sampled_binding = Some(self.descriptor_set.bind_sampled_image(&image));
         }
 
-        self.images.insert(AshImageHandle { image })
+        self.images.insert(ImageResource { image })
     }
     pub fn get_image(&self, key: ImageKey) -> Option<&Image> {
         self.images.get(key).map(|resource| &resource.image)
@@ -135,58 +149,107 @@ impl ResourceManager {
         }
     }
 
-    //Transient resources
-    pub fn resolve_transient_buffers(
+    //Graph Functions
+
+    //TODO: take in vector to reuse memory?
+    /// Get the buffer resources and update the last usages
+    pub fn get_buffer_resources(
         &mut self,
-        transient_image_descriptions: &[BufferDescription],
-    ) -> Result<(), VulkanError> {
-        for buffer_description in transient_image_descriptions {
-            let mut buffer =
-                Buffer::new(self.device.clone(), "Transient Buffer", buffer_description)?;
-
-            if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
-                buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
-            }
-
-            self.transient_buffers.push(buffer);
+        buffers: &[BufferResourceDescription],
+    ) -> Result<Vec<BufferGraphResource>, VulkanError> {
+        let mut buffer_resources = Vec::with_capacity(buffers.len());
+        for buffer_description in buffers {
+            buffer_resources.push(match buffer_description {
+                BufferResourceDescription::Persistent(key) => {
+                    let buffer = &self.buffers[*key];
+                    //TODO: get usages with multiple frames in flight
+                    //TODO: write last usages + queue
+                    BufferGraphResource {
+                        buffer: buffer.buffer.get_copy(),
+                        last_usage: BufferResourceUsage::None,
+                    }
+                }
+                BufferResourceDescription::Transient(buffer_description) => {
+                    let mut buffer =
+                        Buffer::new(self.device.clone(), "Transient Buffer", buffer_description)?;
+                    if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+                        buffer.storage_binding =
+                            Some(self.descriptor_set.bind_storage_buffer(&buffer));
+                    }
+                    let resource = BufferGraphResource {
+                        buffer: buffer.get_copy(),
+                        last_usage: BufferResourceUsage::None, //Never used before
+                    };
+                    self.transient_buffers.push(buffer);
+                    resource
+                }
+            });
         }
 
-        Ok(())
+        Ok(buffer_resources)
     }
-    pub fn resolve_transient_image(
+
+    //TODO: take in vector to reuse memory?
+    /// Get the image resources and update the last usages
+    pub fn get_image_resources(
         &mut self,
         swapchain_images: &[AcquiredSwapchainImage],
-        transient_image_descriptions: &[TransientImageDesc],
-    ) -> Result<(), VulkanError> {
-        for image_description in transient_image_descriptions {
-            let image_extent = get_transient_image_size(
-                image_description.size.clone(),
-                self,
-                swapchain_images,
-                transient_image_descriptions,
-            );
+        images: &[ImageResourceDescription],
+    ) -> Result<Vec<ImageGraphResource>, VulkanError> {
+        let mut image_resources = Vec::with_capacity(images.len());
+        for image_description in images {
+            image_resources.push(match image_description {
+                ImageResourceDescription::Persistent(key) => {
+                    let image = &self.images[*key];
+                    //TODO: get usages with multiple frames in flight
+                    //TODO: write last usages + queue + layout
+                    ImageGraphResource {
+                        image: image.image.get_copy(),
+                        last_usage: ImageResourceUsage::None,
+                        layout: vk::ImageLayout::UNDEFINED,
+                    }
+                }
+                ImageResourceDescription::Transient(transient_image_description) => {
+                    let image_size = get_transient_image_size(
+                        transient_image_description.size.clone(),
+                        self,
+                        swapchain_images,
+                    );
+                    let image_description = transient_image_description
+                        .to_image_description([image_size.width, image_size.height]);
+                    let mut image =
+                        Image::new_2d(self.device.clone(), "Transient Image", &image_description)?;
 
-            let mut image = Image::new_2d(
-                self.device.clone(),
-                "Transient Image",
-                &ImageDescription2D::from_transient(
-                    [image_extent.width, image_extent.height],
-                    image_description,
-                ),
-            )?;
+                    if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
+                        image.storage_binding =
+                            Some(self.descriptor_set.bind_storage_image(&image));
+                    }
 
-            if image.usage.contains(vk::ImageUsageFlags::STORAGE) {
-                image.storage_binding = Some(self.descriptor_set.bind_storage_image(&image));
-            }
+                    if image.usage.contains(vk::ImageUsageFlags::SAMPLED) {
+                        image.sampled_binding =
+                            Some(self.descriptor_set.bind_sampled_image(&image));
+                    }
 
-            if image.usage.contains(vk::ImageUsageFlags::SAMPLED) {
-                image.sampled_binding = Some(self.descriptor_set.bind_sampled_image(&image));
-            }
-
-            self.transient_images.push(image);
+                    let resource = ImageGraphResource {
+                        image: image.get_copy(),
+                        last_usage: ImageResourceUsage::None, //Never used before
+                        layout: vk::ImageLayout::UNDEFINED,
+                    };
+                    self.transient_images.push(image);
+                    resource
+                }
+                ImageResourceDescription::Swapchain(index) => {
+                    //Swapchain always starts out unused
+                    ImageGraphResource {
+                        image: swapchain_images[*index].image,
+                        last_usage: ImageResourceUsage::None,
+                        layout: vk::ImageLayout::UNDEFINED,
+                    }
+                }
+            });
         }
 
-        Ok(())
+        Ok(image_resources)
     }
 }
 
@@ -194,7 +257,6 @@ fn get_transient_image_size(
     size: TransientImageSize,
     persistent: &ResourceManager,
     swapchain_images: &[AcquiredSwapchainImage],
-    transient_image_descriptions: &[TransientImageDesc],
 ) -> vk::Extent2D {
     match size {
         TransientImageSize::Exact(extent) => extent,
@@ -203,12 +265,14 @@ fn get_transient_image_size(
                 ImageHandle::Persistent(image_key) => {
                     persistent.get_image(image_key).as_ref().unwrap().size
                 }
-                ImageHandle::Transient(index) => get_transient_image_size(
-                    transient_image_descriptions[index].size.clone(),
-                    persistent,
-                    swapchain_images,
-                    transient_image_descriptions,
-                ),
+                ImageHandle::Transient(index) => {
+                    todo!("Need to switch index to a ImageIndex");
+                    //     get_transient_image_size(
+                    //     transient_image_descriptions[index].size.clone(),
+                    //     persistent,
+                    //     swapchain_images,
+                    // )
+                }
                 ImageHandle::Swapchain(index) => swapchain_images[index].image.size,
             };
             extent.width = ((extent.width as f32) * scale[0]) as u32;

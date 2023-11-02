@@ -32,6 +32,18 @@ pub struct TransientImageDesc {
     pub memory_location: gpu_allocator::MemoryLocation,
 }
 
+impl TransientImageDesc {
+    pub(crate) fn to_image_description(&self, resolved_size: [u32; 2]) -> ImageDescription2D {
+        ImageDescription2D {
+            size: resolved_size,
+            format: self.format,
+            usage: self.usage,
+            mip_levels: self.mip_levels,
+            location: self.memory_location,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImageDescription2D {
     pub size: [u32; 2],
@@ -39,18 +51,6 @@ pub struct ImageDescription2D {
     pub usage: vk::ImageUsageFlags,
     pub mip_levels: u32,
     pub location: gpu_allocator::MemoryLocation,
-}
-
-impl ImageDescription2D {
-    pub(crate) fn from_transient(resolved_size: [u32; 2], desc: &TransientImageDesc) -> Self {
-        Self {
-            size: resolved_size,
-            format: desc.format,
-            usage: desc.usage,
-            mip_levels: desc.mip_levels,
-            location: desc.memory_location,
-        }
-    }
 }
 
 pub struct Image {
