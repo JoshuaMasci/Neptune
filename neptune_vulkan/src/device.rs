@@ -3,13 +3,12 @@ use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
 use crate::render_graph::RenderGraph;
-use crate::render_graph_builder::{
-    BufferOffset, ImageCopyBuffer, ImageCopyImage, RenderGraphBuilder, Transfer,
-};
+use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage, Transfer};
 use crate::render_graph_executor::BasicRenderGraphExecutor;
 use crate::resource_managers::ResourceManager;
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
+use crate::transfer_queue::TransferQueue;
 use crate::{
     BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, SamplerHandle,
     ShaderStage, SurfaceHandle, VulkanError,
@@ -17,7 +16,6 @@ use crate::{
 use ash::vk;
 use log::error;
 use std::mem::ManuallyDrop;
-use std::ops::Not;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
@@ -151,7 +149,7 @@ pub struct Device {
     resource_manager: ResourceManager,
     swapchain_manager: SwapchainManager,
 
-    transfer_list: Vec<Transfer>,
+    transfer_queue: TransferQueue,
     graph_executor: BasicRenderGraphExecutor,
 }
 
@@ -189,6 +187,11 @@ impl Device {
             )?
         });
 
+        let transfer_queue = TransferQueue::new(
+            device.clone(),
+            graphics_queue_index,
+            settings.frames_in_flight as u32,
+        )?;
         let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
 
         Ok(Device {
@@ -196,7 +199,7 @@ impl Device {
             pipelines,
             resource_manager,
             swapchain_manager,
-            transfer_list: Vec::new(),
+            transfer_queue,
             graph_executor,
         })
     }
@@ -223,6 +226,7 @@ impl Device {
     pub fn update_data_to_buffer(
         &mut self,
         buffer_handle: BufferHandle,
+        buffer_offset: u32,
         data: &[u8],
     ) -> Result<(), VulkanError> {
         let mut staging_buffer = Buffer::new(
@@ -244,17 +248,18 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.transfer_list.push(Transfer::CopyBufferToBuffer {
-            src: BufferOffset {
-                buffer: staging_handle,
-                offset: 0,
-            },
-            dst: BufferOffset {
-                buffer: buffer_handle,
-                offset: 0,
-            },
-            copy_size: data.len() as u64,
-        });
+        self.transfer_queue
+            .add_transfer(Transfer::CopyBufferToBuffer {
+                src: BufferOffset {
+                    buffer: staging_handle,
+                    offset: 0,
+                },
+                dst: BufferOffset {
+                    buffer: buffer_handle,
+                    offset: buffer_offset as usize,
+                },
+                copy_size: data.len() as u64,
+            });
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -276,7 +281,7 @@ impl Device {
                 location,
             },
         )?;
-        self.update_data_to_buffer(buffer, data)?;
+        self.update_data_to_buffer(buffer, 0, data)?;
         Ok(buffer)
     }
 
@@ -296,9 +301,6 @@ impl Device {
             ImageHandle::Persistent(key) => self.resource_manager.remove_image(key),
             ImageHandle::Transient(index) => {
                 error!("Transient image {index} cannot be destroyed, this shouldn't happen")
-            }
-            ImageHandle::Swapchain(index) => {
-                error!("Swapchain image {index} cannot be destroyed, this shouldn't happen")
             }
         }
     }
@@ -327,19 +329,20 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.transfer_list.push(Transfer::CopyBufferToImage {
-            src: ImageCopyBuffer {
-                buffer: staging_handle,
-                offset: 0,
-                row_length: None,
-                row_height: None,
-            },
-            dst: ImageCopyImage {
-                image: image_handle,
-                offset: [0, 0],
-            },
-            copy_size: image_size,
-        });
+        self.transfer_queue
+            .add_transfer(Transfer::CopyBufferToImage {
+                src: ImageCopyBuffer {
+                    buffer: staging_handle,
+                    offset: 0,
+                    row_length: None,
+                    row_height: None,
+                },
+                dst: ImageCopyImage {
+                    image: image_handle,
+                    offset: [0, 0],
+                },
+                copy_size: image_size,
+            });
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -430,21 +433,15 @@ impl Device {
     }
 
     pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        let transfers = self
-            .transfer_list
-            .is_empty()
-            .not()
-            .then_some(self.transfer_list.as_slice());
+        self.transfer_queue
+            .submit_transfers(&mut self.resource_manager)?;
 
         self.graph_executor.submit_frame(
             &mut self.resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,
-            transfers,
             render_graph,
         )?;
-
-        self.transfer_list.clear();
         Ok(())
     }
 }

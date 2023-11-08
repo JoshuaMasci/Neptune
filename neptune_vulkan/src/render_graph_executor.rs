@@ -3,16 +3,13 @@ use crate::device::{AshDevice, AshQueue};
 use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
 use crate::render_graph::{
-    ComputeDispatch, Framebuffer, IndexType, RasterDispatch, RasterDrawCommand, RenderGraph,
+    ComputeDispatch, DrawCommandDispatch, Framebuffer, IndexType, RasterDrawCommand, RenderGraph,
     RenderPass, RenderPassCommand, ShaderResourceUsage, Transfer,
 };
 
-use crate::resource_managers::{BufferGraphResource, ImageGraphResource, ResourceManager};
+use crate::resource_managers::{BufferTempResource, ImageTempResource, ResourceManager};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
-use crate::{
-    BufferHandle, BufferKey, ComputePipelineHandle, ImageHandle, ImageKey, RasterPipelineHandle,
-    Sampler, SamplerHandle, VulkanError,
-};
+use crate::{ComputePipelineHandle, RasterPipelineHandle, Sampler, SamplerHandle, VulkanError};
 use ash::vk;
 use log::info;
 use std::sync::Arc;
@@ -90,7 +87,6 @@ impl BasicRenderGraphExecutor {
         resource_manager: &mut ResourceManager,
         swapchain_manager: &mut SwapchainManager,
         pipelines: &Pipelines,
-        device_transfers: Option<&[crate::render_graph_builder::Transfer]>, //Still Needs to be the RGB version since it is not part of graph, TODO: maybe submit before (and in an async transfer queue?????)
         render_graph: &RenderGraph,
     ) -> Result<(), VulkanError> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
@@ -132,7 +128,7 @@ impl BasicRenderGraphExecutor {
         for (surface_handle, swapchain_semaphores) in render_graph
             .swapchain_images
             .iter()
-            .map(|(surface_handle, index)| {
+            .map(|(surface_handle, _index)| {
                 self.device
                     .instance
                     .surface_list
@@ -218,43 +214,10 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
-            //Move device upload pass out of graph executor
-            if let Some(transfers) = device_transfers {
-                if let Some(debug_util) = &self.device.instance.debug_utils {
-                    debug_util.cmd_begin_label(
-                        self.command_buffer,
-                        "Device Upload Pass",
-                        [0.5, 0.0, 0.5, 1.0],
-                    );
-                }
-
-                self.device.core.cmd_pipeline_barrier2(
-                    self.command_buffer,
-                    &vk::DependencyInfo::builder().memory_barriers(&[vk::MemoryBarrier2::builder(
-                    )
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .build()]),
-                );
-
-                record_transfer_pass_old(
-                    &self.device,
-                    self.command_buffer,
-                    resource_manager,
-                    transfers,
-                );
-
-                if let Some(debug_util) = &self.device.instance.debug_utils {
-                    debug_util.cmd_end_label(self.command_buffer);
-                }
-            }
-
             let mut buffers =
-                resource_manager.get_buffer_resources(&render_graph.buffer_descriptions)?;
+                resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
             let mut images = resource_manager
-                .get_image_resources(&swapchain_index_images, &render_graph.image_descriptions)?;
+                .get_image_resources(&swapchain_index_images, &render_graph.image_resources)?;
 
             let resources = RenderGraphResources {
                 buffers: &mut buffers,
@@ -283,23 +246,18 @@ impl BasicRenderGraphExecutor {
                     .map(|(index, swapchain_image)| {
                         //Get last swapchain usages
                         let swapchain_image_resource_index = render_graph.swapchain_images[index].1;
-                        let swapchain_image_resource = &images[swapchain_image_resource_index];
-
-                        //TODO: actually calc based on usage
-                        let last_usage = (
-                            vk::PipelineStageFlags2::ALL_COMMANDS,
-                            vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
-                            swapchain_image_resource.layout,
-                        );
+                        let src_swapchain_barrier = &images[swapchain_image_resource_index]
+                            .last_usage
+                            .get_barrier_flags(true); //Swapchain is always a color image
 
                         vk::ImageMemoryBarrier2::builder()
                             .image(swapchain_image.image.handle)
-                            .src_stage_mask(last_usage.0)
-                            .src_access_mask(last_usage.1)
+                            .old_layout(src_swapchain_barrier.layout)
+                            .src_stage_mask(src_swapchain_barrier.stage_mask)
+                            .src_access_mask(src_swapchain_barrier.access_flags)
+                            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                             .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                             .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                            .old_layout(last_usage.2)
-                            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                             .subresource_range(swapchain_subresource_range)
                             .build()
                     })
@@ -379,6 +337,16 @@ impl BasicRenderGraphExecutor {
                         .wait_semaphores(&wait_semaphores),
                 );
             }
+
+            //Write out last usages
+            // render_graph
+            //     .buffer_descriptions
+            //     .iter()
+            //     .zip(buffers.iter())
+            //     .filter(|(description, _)| description.is_persistent())
+            //     .for_each(|(description, graph_resource)| {
+            //         let key = description.as_persistent().unwrap();
+            //     });
         }
 
         Ok(())
@@ -465,192 +433,6 @@ fn record_render_pass(
 
     if let Some(debug_util) = &device.instance.debug_utils {
         debug_util.cmd_end_label(command_buffer);
-    }
-}
-
-//Keep around for device transfers
-fn buffer_handle_to_key(handle: BufferHandle) -> BufferKey {
-    match handle {
-        BufferHandle::Persistent(key) => key,
-        BufferHandle::Transient(_) => panic!("Transient not supported"),
-    }
-}
-fn image_handle_to_key(handle: ImageHandle) -> ImageKey {
-    match handle {
-        ImageHandle::Persistent(key) => key,
-        ImageHandle::Transient(_) => panic!("Transient not supported"),
-        ImageHandle::Swapchain(_) => panic!("Swapchain not supported"),
-    }
-}
-fn record_transfer_pass_old(
-    device: &AshDevice,
-    command_buffer: vk::CommandBuffer,
-    graph_resources: &ResourceManager,
-    transfers: &[crate::render_graph_builder::Transfer],
-) {
-    for transfer in transfers.iter() {
-        match transfer {
-            crate::render_graph_builder::Transfer::CopyBufferToBuffer {
-                src,
-                dst,
-                copy_size,
-            } => {
-                let src_buffer = graph_resources
-                    .get_buffer(buffer_handle_to_key(src.buffer))
-                    .unwrap();
-                let dst_buffer = graph_resources
-                    .get_buffer(buffer_handle_to_key(dst.buffer))
-                    .unwrap();
-                unsafe {
-                    device.core.cmd_copy_buffer2(
-                        command_buffer,
-                        &vk::CopyBufferInfo2::builder()
-                            .src_buffer(src_buffer.handle)
-                            .dst_buffer(dst_buffer.handle)
-                            .regions(&[vk::BufferCopy2::builder()
-                                .src_offset(src.offset as vk::DeviceSize)
-                                .dst_offset(dst.offset as vk::DeviceSize)
-                                .size(*copy_size as vk::DeviceSize)
-                                .build()]),
-                    );
-                }
-            }
-            crate::render_graph_builder::Transfer::CopyBufferToImage {
-                src,
-                dst,
-                copy_size,
-            } => {
-                let src_buffer = graph_resources
-                    .get_buffer(buffer_handle_to_key(src.buffer))
-                    .unwrap();
-                let dst_image = graph_resources
-                    .get_image(image_handle_to_key(dst.image))
-                    .unwrap();
-                unsafe {
-                    device.core.cmd_copy_buffer_to_image2(
-                        command_buffer,
-                        &vk::CopyBufferToImageInfo2::builder()
-                            .src_buffer(src_buffer.handle)
-                            .dst_image(dst_image.handle)
-                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                            .regions(&[vk::BufferImageCopy2::builder()
-                                .buffer_row_length(src.row_length.unwrap_or_default())
-                                .buffer_image_height(src.row_height.unwrap_or_default())
-                                .buffer_offset(src.offset)
-                                .image_offset(vk::Offset3D {
-                                    x: dst.offset[0] as i32,
-                                    y: dst.offset[1] as i32,
-                                    z: 0,
-                                })
-                                .image_extent(vk::Extent3D {
-                                    width: copy_size[0],
-                                    height: copy_size[1],
-                                    depth: 1,
-                                })
-                                .image_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
-                                    mip_level: 0,
-                                    base_array_layer: 0,
-                                    layer_count: 1,
-                                })
-                                .build()]),
-                    );
-                }
-            }
-            crate::render_graph_builder::Transfer::CopyImageToBuffer {
-                src,
-                dst,
-                copy_size,
-            } => {
-                let src_image = graph_resources
-                    .get_image(image_handle_to_key(src.image))
-                    .unwrap();
-                let dst_buffer = graph_resources
-                    .get_buffer(buffer_handle_to_key(dst.buffer))
-                    .unwrap();
-                unsafe {
-                    device.core.cmd_copy_image_to_buffer2(
-                        command_buffer,
-                        &vk::CopyImageToBufferInfo2::builder()
-                            .src_image(src_image.handle)
-                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                            .dst_buffer(dst_buffer.handle)
-                            .regions(&[vk::BufferImageCopy2::builder()
-                                .buffer_row_length(dst.row_length.unwrap_or_default())
-                                .buffer_image_height(dst.row_height.unwrap_or_default())
-                                .buffer_offset(dst.offset)
-                                .image_offset(vk::Offset3D {
-                                    x: src.offset[0] as i32,
-                                    y: src.offset[1] as i32,
-                                    z: 0,
-                                })
-                                .image_extent(vk::Extent3D {
-                                    width: copy_size[0],
-                                    height: copy_size[1],
-                                    depth: 1,
-                                })
-                                .image_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
-                                    mip_level: 0,
-                                    base_array_layer: 0,
-                                    layer_count: 1,
-                                })
-                                .build()]),
-                    );
-                }
-            }
-            crate::render_graph_builder::Transfer::CopyImageToImage {
-                src,
-                dst,
-                copy_size,
-            } => {
-                let src_image = graph_resources
-                    .get_image(image_handle_to_key(src.image))
-                    .unwrap();
-                let dst_image = graph_resources
-                    .get_image(image_handle_to_key(dst.image))
-                    .unwrap();
-                unsafe {
-                    device.core.cmd_copy_image2(
-                        command_buffer,
-                        &vk::CopyImageInfo2::builder()
-                            .src_image(src_image.handle)
-                            .src_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                            .dst_image(dst_image.handle)
-                            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                            .regions(&[vk::ImageCopy2::builder()
-                                .src_offset(vk::Offset3D {
-                                    x: src.offset[0] as i32,
-                                    y: src.offset[1] as i32,
-                                    z: 0,
-                                })
-                                .dst_offset(vk::Offset3D {
-                                    x: dst.offset[0] as i32,
-                                    y: dst.offset[1] as i32,
-                                    z: 0,
-                                })
-                                .extent(vk::Extent3D {
-                                    width: copy_size[0],
-                                    height: copy_size[1],
-                                    depth: 1,
-                                })
-                                .src_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk_format_get_aspect_flags(src_image.format),
-                                    mip_level: 0,
-                                    base_array_layer: 0,
-                                    layer_count: 1,
-                                })
-                                .dst_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk_format_get_aspect_flags(dst_image.format),
-                                    mip_level: 0,
-                                    base_array_layer: 0,
-                                    layer_count: 1,
-                                })
-                                .build()]),
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -997,21 +779,6 @@ fn record_raster_pass(
             }
         }
 
-        //Bind Index Buffer
-        if let Some((index_buffer, index_type)) = draw_call.index_buffer {
-            unsafe {
-                device.core.cmd_bind_index_buffer(
-                    command_buffer,
-                    graph_resources.buffers[index_buffer.buffer].buffer.handle,
-                    index_buffer.offset as vk::DeviceSize,
-                    match index_type {
-                        IndexType::U16 => vk::IndexType::UINT16,
-                        IndexType::U32 => vk::IndexType::UINT32,
-                    },
-                );
-            }
-        }
-
         //Push Resource
         record_shader_resources(
             device,
@@ -1023,7 +790,7 @@ fn record_raster_pass(
         //Dispatch
         unsafe {
             match &draw_call.dispatch {
-                RasterDispatch::Draw {
+                DrawCommandDispatch::Draw {
                     vertices,
                     instances,
                 } => device.core.cmd_draw(
@@ -1033,20 +800,34 @@ fn record_raster_pass(
                     vertices.start,
                     instances.start,
                 ),
-                RasterDispatch::DrawIndexed {
+                DrawCommandDispatch::DrawIndexed {
                     base_vertex,
                     indices,
                     instances,
-                } => device.core.cmd_draw_indexed(
-                    command_buffer,
-                    indices.len() as u32,
-                    instances.len() as u32,
-                    indices.start,
-                    *base_vertex,
-                    instances.start,
-                ),
-                RasterDispatch::DrawIndirect {
-                    buffer,
+                    index_buffer,
+                    index_type,
+                } => {
+                    device.core.cmd_bind_index_buffer(
+                        command_buffer,
+                        graph_resources.buffers[index_buffer.buffer].buffer.handle,
+                        index_buffer.offset as vk::DeviceSize,
+                        match index_type {
+                            IndexType::U16 => vk::IndexType::UINT16,
+                            IndexType::U32 => vk::IndexType::UINT32,
+                        },
+                    );
+
+                    device.core.cmd_draw_indexed(
+                        command_buffer,
+                        indices.len() as u32,
+                        instances.len() as u32,
+                        indices.start,
+                        *base_vertex,
+                        instances.start,
+                    );
+                }
+                DrawCommandDispatch::DrawIndirect {
+                    indirect_buffer: buffer,
                     draw_count,
                     stride,
                 } => device.core.cmd_draw_indirect(
@@ -1056,17 +837,30 @@ fn record_raster_pass(
                     *draw_count,
                     *stride,
                 ),
-                RasterDispatch::DrawIndirectIndexed {
-                    buffer,
+                DrawCommandDispatch::DrawIndirectIndexed {
+                    indirect_buffer: buffer,
                     draw_count,
                     stride,
-                } => device.core.cmd_draw_indexed_indirect(
-                    command_buffer,
-                    graph_resources.buffers[buffer.buffer].buffer.handle,
-                    buffer.offset as vk::DeviceSize,
-                    *draw_count,
-                    *stride,
-                ),
+                    index_buffer,
+                    index_type,
+                } => {
+                    device.core.cmd_bind_index_buffer(
+                        command_buffer,
+                        graph_resources.buffers[index_buffer.buffer].buffer.handle,
+                        index_buffer.offset as vk::DeviceSize,
+                        match index_type {
+                            IndexType::U16 => vk::IndexType::UINT16,
+                            IndexType::U32 => vk::IndexType::UINT32,
+                        },
+                    );
+                    device.core.cmd_draw_indexed_indirect(
+                        command_buffer,
+                        graph_resources.buffers[buffer.buffer].buffer.handle,
+                        buffer.offset as vk::DeviceSize,
+                        *draw_count,
+                        *stride,
+                    );
+                }
             }
         }
     }
@@ -1125,8 +919,8 @@ fn record_shader_resources(
 }
 
 pub struct RenderGraphResources<'a> {
-    pub(crate) buffers: &'a mut [BufferGraphResource],
-    pub(crate) images: &'a mut [ImageGraphResource],
+    pub(crate) buffers: &'a mut [BufferTempResource],
+    pub(crate) images: &'a mut [ImageTempResource],
     pub(crate) persistent: &'a mut ResourceManager,
     pub(crate) pipelines: &'a Pipelines,
 }

@@ -3,33 +3,188 @@ use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
 use crate::image::{AshImage, Image, TransientImageSize};
 use crate::render_graph::{
-    BufferResourceDescription, BufferResourceUsage, ImageResourceDescription, ImageResourceUsage,
+    BufferGraphResource, BufferResourceDescription, ImageGraphResource, ImageResourceDescription,
 };
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
 use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
-use log::warn;
+use log::{error, warn};
 use slotmap::SlotMap;
 use std::sync::Arc;
 
-pub struct BufferResource {
-    buffer: Buffer,
+#[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Queue {
+    #[default]
+    Graphics,
 }
 
-pub struct BufferGraphResource {
+#[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
+pub struct BufferBarrierFlags {
+    pub stage_mask: vk::PipelineStageFlags2,
+    pub access_flags: vk::AccessFlags2,
+}
+
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BufferResourceAccess {
+    #[default]
+    None,
+    TransferRead,
+    TransferWrite,
+    VertexRead,
+    IndexRead,
+    IndirectRead,
+    UniformRead,
+    StorageRead,
+    StorageWrite,
+}
+
+impl BufferResourceAccess {
+    pub fn get_barrier_flags(&self) -> BufferBarrierFlags {
+        let shader_all: vk::PipelineStageFlags2 = vk::PipelineStageFlags2::VERTEX_SHADER
+            | vk::PipelineStageFlags2::FRAGMENT_SHADER
+            | vk::PipelineStageFlags2::COMPUTE_SHADER
+            | vk::PipelineStageFlags2::TASK_SHADER_EXT
+            | vk::PipelineStageFlags2::MESH_SHADER_EXT
+            | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
+
+        match self {
+            Self::None => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::NONE,
+                access_flags: vk::AccessFlags2::NONE,
+            },
+            Self::TransferRead => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                access_flags: vk::AccessFlags2::MEMORY_READ,
+            },
+            Self::TransferWrite => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                access_flags: vk::AccessFlags2::MEMORY_WRITE,
+            },
+            Self::VertexRead => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::VERTEX_INPUT,
+                access_flags: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+            },
+            Self::IndexRead => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::VERTEX_INPUT,
+                access_flags: vk::AccessFlags2::INDEX_READ,
+            },
+            Self::IndirectRead => BufferBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT,
+                access_flags: vk::AccessFlags2::INDIRECT_COMMAND_READ,
+            },
+            Self::UniformRead => BufferBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::UNIFORM_READ,
+            },
+            Self::StorageRead => BufferBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::SHADER_STORAGE_READ,
+            },
+            Self::StorageWrite => BufferBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::SHADER_WRITE,
+            },
+        }
+    }
+}
+
+#[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
+pub struct ImageBarrierFlags {
+    pub stage_mask: vk::PipelineStageFlags2,
+    pub access_flags: vk::AccessFlags2,
+    pub layout: vk::ImageLayout,
+}
+
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ImageResourceAccess {
+    #[default]
+    None,
+    TransferRead,
+    TransferWrite,
+    AttachmentWrite,
+    SampledRead,
+    StorageRead,
+    StorageWrite,
+}
+
+impl ImageResourceAccess {
+    pub fn get_barrier_flags(&self, is_color_image: bool) -> ImageBarrierFlags {
+        let shader_all: vk::PipelineStageFlags2 = vk::PipelineStageFlags2::VERTEX_SHADER
+            | vk::PipelineStageFlags2::FRAGMENT_SHADER
+            | vk::PipelineStageFlags2::COMPUTE_SHADER
+            | vk::PipelineStageFlags2::TASK_SHADER_EXT
+            | vk::PipelineStageFlags2::MESH_SHADER_EXT
+            | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
+
+        match self {
+            Self::None => ImageBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::NONE,
+                access_flags: vk::AccessFlags2::NONE,
+                layout: vk::ImageLayout::UNDEFINED,
+            },
+            Self::TransferRead => ImageBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                access_flags: vk::AccessFlags2::TRANSFER_READ,
+                layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            },
+            Self::TransferWrite => ImageBarrierFlags {
+                stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                access_flags: vk::AccessFlags2::TRANSFER_WRITE,
+                layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            },
+            Self::AttachmentWrite => {
+                if is_color_image {
+                    ImageBarrierFlags {
+                        stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                        access_flags: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    }
+                } else {
+                    ImageBarrierFlags {
+                        stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                            | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+                        access_flags: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
+                    }
+                }
+            }
+            Self::SampledRead => ImageBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::SHADER_READ,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            },
+            Self::StorageRead => ImageBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::SHADER_READ,
+                layout: vk::ImageLayout::GENERAL,
+            },
+            Self::StorageWrite => ImageBarrierFlags {
+                stage_mask: shader_all,
+                access_flags: vk::AccessFlags2::SHADER_WRITE,
+                layout: vk::ImageLayout::GENERAL,
+            },
+        }
+    }
+}
+
+pub struct BufferResource {
+    pub buffer: Buffer,
+    pub last_access: BufferResourceAccess,
+}
+
+pub struct BufferTempResource {
     pub buffer: AshBuffer,
-    last_usage: BufferResourceUsage,
+    pub last_access: BufferResourceAccess,
 }
 
 pub struct ImageResource {
     image: Image,
 }
 
-pub struct ImageGraphResource {
+pub struct ImageTempResource {
     pub image: AshImage,
-    pub last_usage: ImageResourceUsage,
-    pub layout: vk::ImageLayout,
+    pub last_usage: ImageResourceAccess,
 }
 
 pub struct ResourceManager {
@@ -107,11 +262,27 @@ impl ResourceManager {
             buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
         }
 
-        self.buffers.insert(BufferResource { buffer })
+        self.buffers.insert(BufferResource {
+            buffer,
+            last_access: Default::default(),
+        })
     }
     pub fn get_buffer(&self, key: BufferKey) -> Option<&Buffer> {
         self.buffers.get(key).map(|resource| &resource.buffer)
     }
+    pub fn get_and_update_buffer_resource(
+        &mut self,
+        key: BufferKey,
+        new_last_access: BufferResourceAccess,
+    ) -> Option<BufferTempResource> {
+        self.buffers
+            .get_mut(key)
+            .map(|resource| BufferTempResource {
+                buffer: resource.buffer.get_copy(),
+                last_access: std::mem::replace(&mut resource.last_access, new_last_access),
+            })
+    }
+
     pub fn remove_buffer(&mut self, key: BufferKey) {
         self.freed_buffers.push(key);
     }
@@ -150,23 +321,22 @@ impl ResourceManager {
     }
 
     //Graph Functions
-
     //TODO: take in vector to reuse memory?
     /// Get the buffer resources and update the last usages
     pub fn get_buffer_resources(
         &mut self,
-        buffers: &[BufferResourceDescription],
-    ) -> Result<Vec<BufferGraphResource>, VulkanError> {
+        buffers: &[BufferGraphResource],
+    ) -> Result<Vec<BufferTempResource>, VulkanError> {
         let mut buffer_resources = Vec::with_capacity(buffers.len());
-        for buffer_description in buffers {
-            buffer_resources.push(match buffer_description {
+        for buffer in buffers {
+            buffer_resources.push(match &buffer.description {
                 BufferResourceDescription::Persistent(key) => {
                     let buffer = &self.buffers[*key];
                     //TODO: get usages with multiple frames in flight
                     //TODO: write last usages + queue
-                    BufferGraphResource {
+                    BufferTempResource {
                         buffer: buffer.buffer.get_copy(),
-                        last_usage: BufferResourceUsage::None,
+                        last_access: buffer.last_access,
                     }
                 }
                 BufferResourceDescription::Transient(buffer_description) => {
@@ -176,9 +346,9 @@ impl ResourceManager {
                         buffer.storage_binding =
                             Some(self.descriptor_set.bind_storage_buffer(&buffer));
                     }
-                    let resource = BufferGraphResource {
+                    let resource = BufferTempResource {
                         buffer: buffer.get_copy(),
-                        last_usage: BufferResourceUsage::None, //Never used before
+                        last_access: BufferResourceAccess::None, //Never used before
                     };
                     self.transient_buffers.push(buffer);
                     resource
@@ -194,25 +364,25 @@ impl ResourceManager {
     pub fn get_image_resources(
         &mut self,
         swapchain_images: &[AcquiredSwapchainImage],
-        images: &[ImageResourceDescription],
-    ) -> Result<Vec<ImageGraphResource>, VulkanError> {
+        images: &[ImageGraphResource],
+    ) -> Result<Vec<ImageTempResource>, VulkanError> {
         let mut image_resources = Vec::with_capacity(images.len());
-        for image_description in images {
-            image_resources.push(match image_description {
+        for image in images {
+            image_resources.push(match &image.description {
                 ImageResourceDescription::Persistent(key) => {
                     let image = &self.images[*key];
                     //TODO: get usages with multiple frames in flight
                     //TODO: write last usages + queue + layout
-                    ImageGraphResource {
+                    ImageTempResource {
                         image: image.image.get_copy(),
-                        last_usage: ImageResourceUsage::None,
-                        layout: vk::ImageLayout::UNDEFINED,
+                        last_usage: ImageResourceAccess::None,
                     }
                 }
                 ImageResourceDescription::Transient(transient_image_description) => {
                     let image_size = get_transient_image_size(
                         transient_image_description.size.clone(),
                         self,
+                        images,
                         swapchain_images,
                     );
                     let image_description = transient_image_description
@@ -230,20 +400,18 @@ impl ResourceManager {
                             Some(self.descriptor_set.bind_sampled_image(&image));
                     }
 
-                    let resource = ImageGraphResource {
+                    let resource = ImageTempResource {
                         image: image.get_copy(),
-                        last_usage: ImageResourceUsage::None, //Never used before
-                        layout: vk::ImageLayout::UNDEFINED,
+                        last_usage: ImageResourceAccess::None, //Never used before
                     };
                     self.transient_images.push(image);
                     resource
                 }
                 ImageResourceDescription::Swapchain(index) => {
                     //Swapchain always starts out unused
-                    ImageGraphResource {
+                    ImageTempResource {
                         image: swapchain_images[*index].image,
-                        last_usage: ImageResourceUsage::None,
-                        layout: vk::ImageLayout::UNDEFINED,
+                        last_usage: ImageResourceAccess::None,
                     }
                 }
             });
@@ -256,6 +424,7 @@ impl ResourceManager {
 fn get_transient_image_size(
     size: TransientImageSize,
     persistent: &ResourceManager,
+    images: &[ImageGraphResource],
     swapchain_images: &[AcquiredSwapchainImage],
 ) -> vk::Extent2D {
     match size {
@@ -265,15 +434,21 @@ fn get_transient_image_size(
                 ImageHandle::Persistent(image_key) => {
                     persistent.get_image(image_key).as_ref().unwrap().size
                 }
-                ImageHandle::Transient(index) => {
-                    todo!("Need to switch index to a ImageIndex");
-                    //     get_transient_image_size(
-                    //     transient_image_descriptions[index].size.clone(),
-                    //     persistent,
-                    //     swapchain_images,
-                    // )
-                }
-                ImageHandle::Swapchain(index) => swapchain_images[index].image.size,
+                ImageHandle::Transient(index) => match &images[index].description {
+                    ImageResourceDescription::Persistent(image_key) => {
+                        error!("Found a Persistent image when looking up a transient image size, this shouldn't happened (but I won't crash)");
+                        persistent.get_image(*image_key).as_ref().unwrap().size
+                    }
+                    ImageResourceDescription::Transient(desc) => get_transient_image_size(
+                        desc.size.clone(),
+                        persistent,
+                        images,
+                        swapchain_images,
+                    ),
+                    ImageResourceDescription::Swapchain(swapchain_index) => {
+                        swapchain_images[*swapchain_index].image.size
+                    }
+                },
             };
             extent.width = ((extent.width as f32) * scale[0]) as u32;
             extent.height = ((extent.height as f32) * scale[1]) as u32;

@@ -13,11 +13,13 @@ mod swapchain;
 
 pub mod render_graph;
 pub mod render_graph_builder;
+mod transfer_queue;
 
 //Public Types
 pub use ash::vk;
 pub use gpu_allocator;
 
+use crate::render_graph::BufferIndex;
 pub use buffer::BufferDescription;
 pub use device::{Device, DeviceSettings};
 pub use image::{ImageDescription2D, TransientImageDesc, TransientImageSize};
@@ -38,20 +40,19 @@ slotmap::new_key_type! {
     pub struct RasterPipleineKey;
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct SurfaceHandle(SurfaceKey);
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum BufferHandle {
     Persistent(BufferKey),
-    Transient(usize),
+    Transient(BufferIndex),
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ImageHandle {
     Persistent(ImageKey),
     Transient(usize),
-    Swapchain(usize),
 }
 
 #[derive(Copy, Clone, Debug)]

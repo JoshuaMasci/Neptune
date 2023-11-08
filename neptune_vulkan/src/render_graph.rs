@@ -1,3 +1,4 @@
+use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{
     BufferDescription, BufferKey, ComputePipelineHandle, ImageKey, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle, TransientImageDesc,
@@ -12,38 +13,34 @@ pub enum QueueType {
     ForceAsyncCompute,
 }
 
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum BufferResourceUsage {
-    #[default]
-    None,
-    TransferRead,
-    TransferWrite,
-    VertexRead,
-    IndexRead,
-    IndirectRead,
-    UniformRead,
-    StorageRead,
-    StorageWrite,
-}
-
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ImageResourceUsage {
-    #[default]
-    None,
-    TransferRead,
-    TransferWrite,
-    AttachmentWrite,
-    SampledRead,
-    StorageRead,
-    StorageWrite,
-}
-
 pub type BufferIndex = usize;
 
 #[derive(Debug)]
 pub enum BufferResourceDescription {
     Persistent(BufferKey),
     Transient(BufferDescription),
+}
+
+impl BufferResourceDescription {
+    pub fn is_persistent(&self) -> bool {
+        match self {
+            BufferResourceDescription::Persistent(_) => true,
+            BufferResourceDescription::Transient(_) => false,
+        }
+    }
+
+    pub fn as_persistent(&self) -> Option<BufferKey> {
+        match self {
+            BufferResourceDescription::Persistent(key) => Some(*key),
+            BufferResourceDescription::Transient(_) => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BufferGraphResource {
+    pub description: BufferResourceDescription,
+    pub last_access: BufferResourceAccess,
 }
 
 pub type ImageIndex = usize;
@@ -55,10 +52,16 @@ pub enum ImageResourceDescription {
     Swapchain(usize),
 }
 
+#[derive(Debug)]
+pub struct ImageGraphResource {
+    pub description: ImageResourceDescription,
+    pub last_access: ImageResourceAccess,
+}
+
 #[derive(Debug, Default)]
 pub struct RenderGraph {
-    pub buffer_descriptions: Vec<BufferResourceDescription>,
-    pub image_descriptions: Vec<ImageResourceDescription>,
+    pub buffer_resources: Vec<BufferGraphResource>,
+    pub image_resources: Vec<ImageGraphResource>,
     pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
     pub render_passes: Vec<RenderPass>,
 }
@@ -68,8 +71,8 @@ pub struct RenderPass {
     pub label_name: String,
     pub label_color: [f32; 4],
     pub queue: QueueType,
-    pub buffer_usages: Vec<(BufferIndex, BufferResourceUsage)>,
-    pub image_usages: Vec<(ImageIndex, ImageResourceUsage)>,
+    pub buffer_usages: Vec<(BufferIndex, BufferResourceAccess)>,
+    pub image_usages: Vec<(ImageIndex, ImageResourceAccess)>,
     pub command: Option<RenderPassCommand>,
 }
 
@@ -177,7 +180,7 @@ pub struct Framebuffer {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum RasterDispatch {
+pub enum DrawCommandDispatch {
     Draw {
         vertices: Range<u32>,
         instances: Range<u32>,
@@ -186,16 +189,20 @@ pub enum RasterDispatch {
         base_vertex: i32,
         indices: Range<u32>,
         instances: Range<u32>,
+        index_buffer: BufferOffset,
+        index_type: IndexType,
     },
     DrawIndirect {
-        buffer: BufferOffset,
+        indirect_buffer: BufferOffset,
         draw_count: u32,
         stride: u32,
     },
     DrawIndirectIndexed {
-        buffer: BufferOffset,
+        indirect_buffer: BufferOffset,
         draw_count: u32,
         stride: u32,
+        index_buffer: BufferOffset,
+        index_type: IndexType,
     },
 }
 
@@ -203,7 +210,6 @@ pub enum RasterDispatch {
 pub struct RasterDrawCommand {
     pub pipeline: RasterPipelineHandle,
     pub vertex_buffers: Vec<BufferOffset>,
-    pub index_buffer: Option<(BufferOffset, IndexType)>,
     pub resources: Vec<ShaderResourceUsage>,
-    pub dispatch: RasterDispatch,
+    pub dispatch: DrawCommandDispatch,
 }

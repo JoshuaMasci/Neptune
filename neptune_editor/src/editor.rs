@@ -2,7 +2,9 @@ use crate::gltf_loader::{load_samplers, GltfSamplers};
 use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::{vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize};
+use neptune_vulkan::{
+    render_graph_builder, vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize,
+};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 #[derive(clap::Parser)]
@@ -288,101 +290,59 @@ impl Editor {
             memory_location: MemoryLocation::GpuOnly,
         });
 
-        let mut raster_pass =
-            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Gltf Scene")
-                .add_color_attachment(
-                    neptune_vulkan::render_graph_builder::ColorAttachment::new_clear(
-                        offscreen_image,
-                        [0.0, 0.0, 0.0, 1.0],
-                    ),
-                )
-                .add_depth_stencil_attachment(
-                    neptune_vulkan::render_graph_builder::DepthStencilAttachment::new_clear(
-                        depth_image,
-                        (1.0, 0),
-                    ),
-                );
+        let mut raster_pass_builder =
+            render_graph_builder::RasterPassBuilder::new(&mut render_graph_builder, "Gltf Scene")
+                .add_color_attachment(offscreen_image, Some([0.0, 0.0, 0.0, 1.0]))
+                .add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
 
         for mesh in self.scene.meshes.iter() {
             for primitive in mesh.primitives.iter() {
-                let pipeline = self.raster_pipeline;
-                let vertex_buffers = vec![
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: primitive.position_buffer,
-                        offset: 0,
-                    },
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: primitive.attributes_buffer,
-                        offset: 0,
-                    },
-                ];
+                let draw_command_builder = render_graph_builder::DrawCommandBuilder::new(
+                    &mut raster_pass_builder,
+                    self.raster_pipeline,
+                )
+                .add_vertex_buffer(render_graph_builder::BufferOffset {
+                    buffer: primitive.position_buffer,
+                    offset: 0,
+                })
+                .add_vertex_buffer(render_graph_builder::BufferOffset {
+                    buffer: primitive.attributes_buffer,
+                    offset: 0,
+                })
+                .read_buffer(self.view_projection_matrix_buffer)
+                .read_sampler(self.scene.samplers.default)
+                .read_sampled_image(self.scene.images[0]);
 
-                let mut index_buffer = None;
-                let dispatch = if let Some(index_buffer_ref) = &primitive.index_buffer {
-                    index_buffer = Some((
-                        neptune_vulkan::render_graph_builder::BufferOffset {
+                if let Some(index_buffer_ref) = &primitive.index_buffer {
+                    draw_command_builder.draw_indexed(
+                        0,
+                        0..index_buffer_ref.count,
+                        0..1,
+                        render_graph_builder::BufferOffset {
                             buffer: index_buffer_ref.buffer,
                             offset: 0,
                         },
                         neptune_vulkan::render_graph::IndexType::U32,
-                    ));
-
-                    neptune_vulkan::render_graph_builder::RasterDispatch::DrawIndexed {
-                        base_vertex: 0,
-                        indices: 0..index_buffer_ref.count,
-                        instances: 0..1,
-                    }
+                    );
                 } else {
-                    neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
-                        vertices: 0..primitive.vertex_count as u32,
-                        instances: 0..1,
-                    }
-                };
-
-                raster_pass = raster_pass.add_draw_command(
-                    neptune_vulkan::render_graph_builder::RasterDrawCommand {
-                        pipeline,
-                        vertex_buffers,
-                        index_buffer,
-                        resources: vec![
-                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageBuffer { buffer: self.view_projection_matrix_buffer, write: false },
-                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::Sampler(
-                                self.scene.samplers.default,
-                            ),
-                            neptune_vulkan::render_graph_builder::ShaderResourceUsage::SampledImage(
-                                self.scene.images[0],
-                            ),
-                        ],
-                        dispatch,
-                    },
-                );
+                    draw_command_builder.draw(0..primitive.vertex_count as u32, 0..1);
+                }
             }
         }
+        raster_pass_builder.build();
 
-        render_graph_builder.add_pass(raster_pass.build());
-
-        render_graph_builder.add_pass(
-            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Fullscreen Quad Pass")
-                .add_color_attachment(neptune_vulkan::render_graph_builder::ColorAttachment::new(
-                    swapchain_image,
-                ))
-                .add_draw_command(neptune_vulkan::render_graph_builder::RasterDrawCommand {
-                    pipeline: self.fullscreen_copy_pipeline,
-                    vertex_buffers: vec![],
-                    index_buffer: None,
-                    resources: vec![
-                        neptune_vulkan::render_graph_builder::ShaderResourceUsage::StorageImage {
-                            image: offscreen_image,
-                            write: false,
-                        },
-                    ],
-                    dispatch: neptune_vulkan::render_graph_builder::RasterDispatch::Draw {
-                        vertices: 0..3,
-                        instances: 0..1,
-                    },
-                })
-                .build(),
-        );
+        let mut raster_pass_builder = render_graph_builder::RasterPassBuilder::new(
+            &mut render_graph_builder,
+            "Fullscreen Quad Pass",
+        )
+        .add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]));
+        render_graph_builder::DrawCommandBuilder::new(
+            &mut raster_pass_builder,
+            self.fullscreen_copy_pipeline,
+        )
+        .read_storage_image(offscreen_image)
+        .draw(0..3, 0..1);
+        raster_pass_builder.build();
 
         self.device.submit_frame(&render_graph_builder.build())?;
         Ok(())

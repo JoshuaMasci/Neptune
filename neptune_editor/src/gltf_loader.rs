@@ -313,6 +313,6 @@ fn create_index_buffer(
             location: MemoryLocation::GpuOnly,
         },
     )?;
-    device.update_data_to_buffer(buffer, data_bytes)?;
+    device.update_data_to_buffer(buffer, 0, data_bytes)?;
     Ok(buffer)
 }
