@@ -247,7 +247,7 @@ impl BasicRenderGraphExecutor {
                         //Get last swapchain usages
                         let swapchain_image_resource_index = render_graph.swapchain_images[index].1;
                         let src_swapchain_barrier = &images[swapchain_image_resource_index]
-                            .last_usage
+                            .last_access
                             .get_barrier_flags(true); //Swapchain is always a color image
 
                         vk::ImageMemoryBarrier2::builder()

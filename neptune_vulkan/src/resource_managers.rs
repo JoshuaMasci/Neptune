@@ -179,12 +179,13 @@ pub struct BufferTempResource {
 }
 
 pub struct ImageResource {
-    image: Image,
+    pub image: Image,
+    pub last_access: ImageResourceAccess,
 }
 
 pub struct ImageTempResource {
     pub image: AshImage,
-    pub last_usage: ImageResourceAccess,
+    pub last_access: ImageResourceAccess,
 }
 
 pub struct ResourceManager {
@@ -297,7 +298,10 @@ impl ResourceManager {
             image.sampled_binding = Some(self.descriptor_set.bind_sampled_image(&image));
         }
 
-        self.images.insert(ImageResource { image })
+        self.images.insert(ImageResource {
+            image,
+            last_access: ImageResourceAccess::None,
+        })
     }
     pub fn get_image(&self, key: ImageKey) -> Option<&Image> {
         self.images.get(key).map(|resource| &resource.image)
@@ -325,18 +329,21 @@ impl ResourceManager {
     /// Get the buffer resources and update the last usages
     pub fn get_buffer_resources(
         &mut self,
-        buffers: &[BufferGraphResource],
+        graph_buffers: &[BufferGraphResource],
     ) -> Result<Vec<BufferTempResource>, VulkanError> {
-        let mut buffer_resources = Vec::with_capacity(buffers.len());
-        for buffer in buffers {
-            buffer_resources.push(match &buffer.description {
+        let mut buffer_resources = Vec::with_capacity(graph_buffers.len());
+        for graph_buffer in graph_buffers {
+            buffer_resources.push(match &graph_buffer.description {
                 BufferResourceDescription::Persistent(key) => {
-                    let buffer = &self.buffers[*key];
+                    let buffer = &mut self.buffers[*key];
                     //TODO: get usages with multiple frames in flight
                     //TODO: write last usages + queue
                     BufferTempResource {
                         buffer: buffer.buffer.get_copy(),
-                        last_access: buffer.last_access,
+                        last_access: std::mem::replace(
+                            &mut buffer.last_access,
+                            graph_buffer.last_access,
+                        ),
                     }
                 }
                 BufferResourceDescription::Transient(buffer_description) => {
@@ -364,25 +371,28 @@ impl ResourceManager {
     pub fn get_image_resources(
         &mut self,
         swapchain_images: &[AcquiredSwapchainImage],
-        images: &[ImageGraphResource],
+        graph_images: &[ImageGraphResource],
     ) -> Result<Vec<ImageTempResource>, VulkanError> {
-        let mut image_resources = Vec::with_capacity(images.len());
-        for image in images {
-            image_resources.push(match &image.description {
+        let mut image_resources = Vec::with_capacity(graph_images.len());
+        for graph_image in graph_images {
+            image_resources.push(match &graph_image.description {
                 ImageResourceDescription::Persistent(key) => {
-                    let image = &self.images[*key];
+                    let image = &mut self.images[*key];
                     //TODO: get usages with multiple frames in flight
                     //TODO: write last usages + queue + layout
                     ImageTempResource {
                         image: image.image.get_copy(),
-                        last_usage: ImageResourceAccess::None,
+                        last_access: std::mem::replace(
+                            &mut image.last_access,
+                            graph_image.last_access,
+                        ),
                     }
                 }
                 ImageResourceDescription::Transient(transient_image_description) => {
                     let image_size = get_transient_image_size(
                         transient_image_description.size.clone(),
                         self,
-                        images,
+                        graph_images,
                         swapchain_images,
                     );
                     let image_description = transient_image_description
@@ -402,7 +412,7 @@ impl ResourceManager {
 
                     let resource = ImageTempResource {
                         image: image.get_copy(),
-                        last_usage: ImageResourceAccess::None, //Never used before
+                        last_access: ImageResourceAccess::None, //Never used before
                     };
                     self.transient_images.push(image);
                     resource
@@ -411,7 +421,7 @@ impl ResourceManager {
                     //Swapchain always starts out unused
                     ImageTempResource {
                         image: swapchain_images[*index].image,
-                        last_usage: ImageResourceAccess::None,
+                        last_access: ImageResourceAccess::None,
                     }
                 }
             });
