@@ -205,3 +205,13 @@ pub struct AshImage {
     pub storage_binding: Option<GpuBindingIndex>,
     pub sampled_binding: Option<GpuBindingIndex>,
 }
+
+impl AshImage {
+    pub fn is_color(&self) -> bool {
+        vk_format_get_aspect_flags(self.format) == vk::ImageAspectFlags::COLOR
+    }
+
+    pub fn get_aspect_flags(&self) -> vk::ImageAspectFlags {
+        vk_format_get_aspect_flags(self.format)
+    }
+}

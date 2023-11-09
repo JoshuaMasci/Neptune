@@ -1,6 +1,6 @@
 use crate::image::TransientImageDesc;
 use crate::render_graph::{
-    BufferIndex, BufferGraphResource, BufferResourceDescription, ImageIndex, ImageGraphResource,
+    BufferGraphResource, BufferIndex, BufferResourceDescription, ImageGraphResource, ImageIndex,
     ImageResourceDescription, IndexType, QueueType, RenderGraph, RenderPassCommand,
 };
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
@@ -8,7 +8,6 @@ use crate::{
     BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle,
 };
-use log::info;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -189,8 +188,8 @@ impl<'a> Drop for TransferPassBuilder2<'a> {
                 label_name: std::mem::take(&mut self.name),
                 label_color: self.color,
                 queue: self.queue,
-                buffer_usages: std::mem::take(&mut self.buffer_usages),
-                image_usages: std::mem::take(&mut self.image_usages),
+                buffer_access: std::mem::take(&mut self.buffer_usages),
+                image_access: std::mem::take(&mut self.image_usages),
                 command: Some(RenderPassCommand::Transfer {
                     transfers: std::mem::take(&mut self.transfers),
                 }),
@@ -343,8 +342,8 @@ impl<'a> Drop for ComputePassBuilder<'a> {
                 label_name: std::mem::take(&mut self.name),
                 label_color: self.color,
                 queue: self.queue,
-                buffer_usages: std::mem::take(&mut self.buffer_usages),
-                image_usages: std::mem::take(&mut self.image_usages),
+                buffer_access: std::mem::take(&mut self.buffer_usages),
+                image_access: std::mem::take(&mut self.image_usages),
                 command: Some(crate::render_graph::RenderPassCommand::Compute {
                     pipeline: self.pipeline,
                     resources: std::mem::take(&mut self.resources),
@@ -428,8 +427,8 @@ impl<'a> Drop for RasterPassBuilder<'a> {
                 label_name: std::mem::take(&mut self.name),
                 label_color: self.color,
                 queue: QueueType::Graphics,
-                buffer_usages: std::mem::take(&mut self.buffer_usages),
-                image_usages: std::mem::take(&mut self.image_usages),
+                buffer_access: std::mem::take(&mut self.buffer_usages),
+                image_access: std::mem::take(&mut self.image_usages),
                 command: Some(RenderPassCommand::Raster {
                     framebuffer: std::mem::take(&mut self.framebuffer),
                     draw_commands: std::mem::take(&mut self.draw_commands),
@@ -685,10 +684,12 @@ pub struct RenderGraphBuilder {
 impl RenderGraphBuilder {
     pub fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle {
         let index = self.render_graph.buffer_resources.len() as BufferIndex;
-        self.render_graph.buffer_resources.push(BufferGraphResource {
-            description: BufferResourceDescription::Transient(desc),
-            last_access: BufferResourceAccess::None,
-        });
+        self.render_graph
+            .buffer_resources
+            .push(BufferGraphResource {
+                description: BufferResourceDescription::Transient(desc),
+                last_access: BufferResourceAccess::None,
+            });
         let handle = BufferHandle::Transient(index);
         self.buffer_index_map.insert(handle, index);
         handle
@@ -730,10 +731,12 @@ impl RenderGraphBuilder {
             None => {
                 if let BufferHandle::Persistent(buffer_key) = buffer_handle {
                     let index = self.render_graph.buffer_resources.len() as BufferIndex;
-                    self.render_graph.buffer_resources.push(BufferGraphResource {
-                        description: BufferResourceDescription::Persistent(buffer_key),
-                        last_access: BufferResourceAccess::None,
-                    });
+                    self.render_graph
+                        .buffer_resources
+                        .push(BufferGraphResource {
+                            description: BufferResourceDescription::Persistent(buffer_key),
+                            last_access: BufferResourceAccess::None,
+                        });
                     self.buffer_index_map.insert(buffer_handle, index);
                     index
                 } else {

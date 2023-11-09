@@ -22,7 +22,7 @@ pub enum Queue {
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
 pub struct BufferBarrierFlags {
     pub stage_mask: vk::PipelineStageFlags2,
-    pub access_flags: vk::AccessFlags2,
+    pub access_mask: vk::AccessFlags2,
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,49 +41,50 @@ pub enum BufferResourceAccess {
 
 impl BufferResourceAccess {
     pub fn get_barrier_flags(&self) -> BufferBarrierFlags {
+        //TODO: select shader flags based on pass type or pipeline?
         let shader_all: vk::PipelineStageFlags2 = vk::PipelineStageFlags2::VERTEX_SHADER
             | vk::PipelineStageFlags2::FRAGMENT_SHADER
-            | vk::PipelineStageFlags2::COMPUTE_SHADER
-            | vk::PipelineStageFlags2::TASK_SHADER_EXT
-            | vk::PipelineStageFlags2::MESH_SHADER_EXT
-            | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
+            | vk::PipelineStageFlags2::COMPUTE_SHADER;
+        // | vk::PipelineStageFlags2::TASK_SHADER_EXT
+        // | vk::PipelineStageFlags2::MESH_SHADER_EXT
+        // | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
 
         match self {
             Self::None => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::NONE,
-                access_flags: vk::AccessFlags2::NONE,
+                access_mask: vk::AccessFlags2::NONE,
             },
             Self::TransferRead => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::TRANSFER,
-                access_flags: vk::AccessFlags2::MEMORY_READ,
+                access_mask: vk::AccessFlags2::MEMORY_READ,
             },
             Self::TransferWrite => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::TRANSFER,
-                access_flags: vk::AccessFlags2::MEMORY_WRITE,
+                access_mask: vk::AccessFlags2::MEMORY_WRITE,
             },
             Self::VertexRead => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::VERTEX_INPUT,
-                access_flags: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+                access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
             },
             Self::IndexRead => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::VERTEX_INPUT,
-                access_flags: vk::AccessFlags2::INDEX_READ,
+                access_mask: vk::AccessFlags2::INDEX_READ,
             },
             Self::IndirectRead => BufferBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT,
-                access_flags: vk::AccessFlags2::INDIRECT_COMMAND_READ,
+                access_mask: vk::AccessFlags2::INDIRECT_COMMAND_READ,
             },
             Self::UniformRead => BufferBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::UNIFORM_READ,
+                access_mask: vk::AccessFlags2::UNIFORM_READ,
             },
             Self::StorageRead => BufferBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::SHADER_STORAGE_READ,
+                access_mask: vk::AccessFlags2::SHADER_STORAGE_READ,
             },
             Self::StorageWrite => BufferBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::SHADER_WRITE,
+                access_mask: vk::AccessFlags2::SHADER_WRITE,
             },
         }
     }
@@ -92,7 +93,7 @@ impl BufferResourceAccess {
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
 pub struct ImageBarrierFlags {
     pub stage_mask: vk::PipelineStageFlags2,
-    pub access_flags: vk::AccessFlags2,
+    pub access_mask: vk::AccessFlags2,
     pub layout: vk::ImageLayout,
 }
 
@@ -110,58 +111,59 @@ pub enum ImageResourceAccess {
 
 impl ImageResourceAccess {
     pub fn get_barrier_flags(&self, is_color_image: bool) -> ImageBarrierFlags {
+        //TODO: select shader flags based on pass type or pipeline?
         let shader_all: vk::PipelineStageFlags2 = vk::PipelineStageFlags2::VERTEX_SHADER
             | vk::PipelineStageFlags2::FRAGMENT_SHADER
-            | vk::PipelineStageFlags2::COMPUTE_SHADER
-            | vk::PipelineStageFlags2::TASK_SHADER_EXT
-            | vk::PipelineStageFlags2::MESH_SHADER_EXT
-            | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
+            | vk::PipelineStageFlags2::COMPUTE_SHADER;
+        // | vk::PipelineStageFlags2::TASK_SHADER_EXT
+        // | vk::PipelineStageFlags2::MESH_SHADER_EXT
+        // | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
 
         match self {
             Self::None => ImageBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::NONE,
-                access_flags: vk::AccessFlags2::NONE,
+                access_mask: vk::AccessFlags2::NONE,
                 layout: vk::ImageLayout::UNDEFINED,
             },
             Self::TransferRead => ImageBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::TRANSFER,
-                access_flags: vk::AccessFlags2::TRANSFER_READ,
+                access_mask: vk::AccessFlags2::TRANSFER_READ,
                 layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             },
             Self::TransferWrite => ImageBarrierFlags {
                 stage_mask: vk::PipelineStageFlags2::TRANSFER,
-                access_flags: vk::AccessFlags2::TRANSFER_WRITE,
+                access_mask: vk::AccessFlags2::TRANSFER_WRITE,
                 layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             },
             Self::AttachmentWrite => {
                 if is_color_image {
                     ImageBarrierFlags {
                         stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                        access_flags: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                        access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
                         layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     }
                 } else {
                     ImageBarrierFlags {
                         stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
                             | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-                        access_flags: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                        access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
                         layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
                     }
                 }
             }
             Self::SampledRead => ImageBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::SHADER_READ,
+                access_mask: vk::AccessFlags2::SHADER_READ,
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             },
             Self::StorageRead => ImageBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::SHADER_READ,
+                access_mask: vk::AccessFlags2::SHADER_READ,
                 layout: vk::ImageLayout::GENERAL,
             },
             Self::StorageWrite => ImageBarrierFlags {
                 stage_mask: shader_all,
-                access_flags: vk::AccessFlags2::SHADER_WRITE,
+                access_mask: vk::AccessFlags2::SHADER_WRITE,
                 layout: vk::ImageLayout::GENERAL,
             },
         }

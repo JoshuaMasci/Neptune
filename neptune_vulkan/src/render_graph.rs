@@ -71,8 +71,8 @@ pub struct RenderPass {
     pub label_name: String,
     pub label_color: [f32; 4],
     pub queue: QueueType,
-    pub buffer_usages: Vec<(BufferIndex, BufferResourceAccess)>,
-    pub image_usages: Vec<(ImageIndex, ImageResourceAccess)>,
+    pub buffer_access: Vec<(BufferIndex, BufferResourceAccess)>,
+    pub image_access: Vec<(ImageIndex, ImageResourceAccess)>,
     pub command: Option<RenderPassCommand>,
 }
 
