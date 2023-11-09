@@ -1,20 +1,27 @@
 [package]
 name = "neptune_editor"
 version = "0.1.0"
-authors = ["Joshua_Masci <iamshortman@gmail.com>"]
+authors = ["Joshua_Masci <joshuamasci1@gmail.com>"]
 edition = "2021"
 
 [build-dependencies]
 shaderc = "0.8.0"
 
 [dependencies]
-neptune_graphics = { path = "../neptune_graphics"}
+neptune_core = { path = "../neptune_core"}
+neptune_vulkan = { path = "../neptune_vulkan" }
 
 log = "0.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5.0"
+anyhow = "1.0.72"
+serde = "1.0.183"
+memoffset = "0.9.0"
+glam = "0.24.0"
 
-winit = "0.27.5"
-imgui = "0.11.0"
-imgui-winit-support = "0.11.0"
+raw-window-handle = "0.5.0"
+winit = "0.28.3"
 
-image = "0.24.2"
+gltf = {version =  "1.2.0", features = ["utils"] }
+clap = { version = "4.4.0", features = ["derive"] }
+rfd = "0.11.4"
+

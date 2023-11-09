@@ -1,7 +1,9 @@
 [package]
 name = "neptune_core"
 version = "0.1.0"
-authors = ["Joshua_Masci <iamshortman@gmail.com>"]
+authors = ["Joshua_Masci <joshuamasci1@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+log = "0.4"
+serde = "1.0.183"

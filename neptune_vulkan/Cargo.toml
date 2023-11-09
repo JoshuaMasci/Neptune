@@ -1,0 +1,18 @@
+[package]
+name = "neptune_vulkan"
+version = "0.1.0"
+authors = ["Joshua_Masci <joshuamasci1@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+neptune_core = { path = "../neptune_core"}
+
+log = "0.4"
+bitflags = "2.4.1"
+slotmap = "1.0.6"
+thiserror = "1.0"
+
+raw-window-handle = "0.5.0"
+ash = "0.37"
+ash-window = "0.12.0"
+gpu-allocator = "0.22.0"
