@@ -13,7 +13,7 @@ mod swapchain;
 
 pub mod render_graph;
 pub mod render_graph_builder;
-mod transfer_queue;
+mod upload_queue;
 
 //Public Types
 pub use ash::vk;
@@ -49,10 +49,28 @@ pub enum BufferHandle {
     Transient(BufferIndex),
 }
 
+impl BufferHandle {
+    pub(crate) fn as_key(&self) -> BufferKey {
+        match self {
+            BufferHandle::Persistent(key) => *key,
+            BufferHandle::Transient(_) => panic!("Cannot get a BufferKey from a transient buffer"),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ImageHandle {
     Persistent(ImageKey),
     Transient(usize),
+}
+
+impl ImageHandle {
+    pub(crate) fn as_key(&self) -> ImageKey {
+        match self {
+            ImageHandle::Persistent(key) => *key,
+            ImageHandle::Transient(_) => panic!("Cannot get a ImageKey from a transient image"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

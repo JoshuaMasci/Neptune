@@ -8,7 +8,7 @@ use crate::render_graph_executor::BasicRenderGraphExecutor;
 use crate::resource_managers::ResourceManager;
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
-use crate::transfer_queue::TransferQueue;
+use crate::upload_queue::UploadQueue;
 use crate::{
     BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, SamplerHandle,
     ShaderStage, SurfaceHandle, VulkanError,
@@ -149,7 +149,7 @@ pub struct Device {
     resource_manager: ResourceManager,
     swapchain_manager: SwapchainManager,
 
-    transfer_queue: TransferQueue,
+    upload_queue: UploadQueue,
     graph_executor: BasicRenderGraphExecutor,
 }
 
@@ -187,11 +187,7 @@ impl Device {
             )?
         });
 
-        let transfer_queue = TransferQueue::new(
-            device.clone(),
-            graphics_queue_index,
-            settings.frames_in_flight as u32,
-        )?;
+        let transfer_queue = UploadQueue::default();
         let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
 
         Ok(Device {
@@ -199,7 +195,7 @@ impl Device {
             pipelines,
             resource_manager,
             swapchain_manager,
-            transfer_queue,
+            upload_queue: transfer_queue,
             graph_executor,
         })
     }
@@ -248,18 +244,17 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.transfer_queue
-            .add_transfer(Transfer::CopyBufferToBuffer {
-                src: BufferOffset {
-                    buffer: staging_handle,
-                    offset: 0,
-                },
-                dst: BufferOffset {
-                    buffer: buffer_handle,
-                    offset: buffer_offset as usize,
-                },
-                copy_size: data.len() as u64,
-            });
+        self.upload_queue.add_buffer_upload(
+            BufferOffset {
+                buffer: staging_handle,
+                offset: 0,
+            },
+            BufferOffset {
+                buffer: buffer_handle,
+                offset: buffer_offset as usize,
+            },
+            data.len(),
+        );
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -329,20 +324,19 @@ impl Device {
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
 
-        self.transfer_queue
-            .add_transfer(Transfer::CopyBufferToImage {
-                src: ImageCopyBuffer {
-                    buffer: staging_handle,
-                    offset: 0,
-                    row_length: None,
-                    row_height: None,
-                },
-                dst: ImageCopyImage {
-                    image: image_handle,
-                    offset: [0, 0],
-                },
-                copy_size: image_size,
-            });
+        self.upload_queue.add_image_upload(
+            ImageCopyBuffer {
+                buffer: staging_handle,
+                offset: 0,
+                row_length: None,
+                row_height: None,
+            },
+            ImageCopyImage {
+                image: image_handle,
+                offset: [0, 0],
+            },
+            image_size,
+        );
 
         //Destroy stating buffer once frame is done
         self.destroy_buffer(staging_handle);
@@ -433,13 +427,11 @@ impl Device {
     }
 
     pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        self.transfer_queue
-            .submit_transfers(&mut self.resource_manager)?;
-
         self.graph_executor.submit_frame(
             &mut self.resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,
+            self.upload_queue.get_pass(),
             render_graph,
         )?;
         Ok(())

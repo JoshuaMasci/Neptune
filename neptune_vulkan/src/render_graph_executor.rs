@@ -12,6 +12,7 @@ use crate::resource_managers::{
     ResourceManager,
 };
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
+use crate::upload_queue::UploadPass;
 use crate::{ComputePipelineHandle, RasterPipelineHandle, Sampler, SamplerHandle, VulkanError};
 use ash::vk;
 use log::info;
@@ -90,6 +91,7 @@ impl BasicRenderGraphExecutor {
         resource_manager: &mut ResourceManager,
         swapchain_manager: &mut SwapchainManager,
         pipelines: &Pipelines,
+        upload_pass: Option<UploadPass>,
         render_graph: &RenderGraph,
     ) -> Result<(), VulkanError> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
@@ -163,6 +165,27 @@ impl BasicRenderGraphExecutor {
                 .core
                 .begin_command_buffer(self.command_buffer, &vk::CommandBufferBeginInfo::builder())
                 .unwrap();
+
+            // Device Upload Pass
+            // Treat it like a mini render-graph so I can reuse the upload code
+            if let Some(upload_pass) = upload_pass {
+                let mut buffers =
+                    resource_manager.get_buffer_resources(&upload_pass.buffer_resources)?;
+                let mut images =
+                    resource_manager.get_image_resources(&[], &upload_pass.image_resources)?;
+                let mut resources = RenderGraphResources {
+                    buffers: &mut buffers,
+                    images: &mut images,
+                    persistent: resource_manager,
+                    pipelines,
+                };
+                record_render_pass(
+                    &self.device,
+                    self.command_buffer,
+                    &mut resources,
+                    &upload_pass.pass,
+                );
+            }
 
             //Bind descriptor set
             {
