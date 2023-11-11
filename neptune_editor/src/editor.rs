@@ -1,6 +1,8 @@
-use crate::gltf_loader::{load_samplers, GltfSamplers};
+use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
+use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
+use glam::Mat4;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{
     render_graph_builder, vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize,
@@ -25,6 +27,7 @@ pub struct Editor {
     fullscreen_copy_pipeline: neptune_vulkan::RasterPipelineHandle,
 
     view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
+    model_matrices_buffer: neptune_vulkan::BufferHandle,
     scene: GltfScene,
 }
 
@@ -203,6 +206,25 @@ impl Editor {
             )?
         };
 
+        let model_matrices_buffer = {
+            let model_matrices_data: Vec<Mat4> =
+                scene.mesh_nodes.iter().map(|node| node.transform).collect();
+            let model_matrices_slice = model_matrices_data.as_slice();
+            let model_matrices_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    model_matrices_slice.as_ptr() as *const u8,
+                    std::mem::size_of_val(model_matrices_slice),
+                )
+            };
+
+            device.create_buffer_init(
+                "model_matrices_buffer",
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                MemoryLocation::GpuOnly,
+                model_matrices_bytes,
+            )?
+        };
+
         Ok(Self {
             instance,
             surface_handle,
@@ -211,6 +233,7 @@ impl Editor {
             raster_pipeline,
             fullscreen_copy_pipeline,
             view_projection_matrix_buffer,
+            model_matrices_buffer,
             scene,
         })
     }
@@ -268,20 +291,10 @@ impl Editor {
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
-        let mut render_graph_builder =
-            neptune_vulkan::render_graph_builder::RenderGraphBuilder::default();
+        let mut render_graph_builder = render_graph_builder::RenderGraphBuilder::default();
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
 
-        let offscreen_image = render_graph_builder.create_transient_image(TransientImageDesc {
-            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: vk::Format::B8G8R8A8_UNORM,
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-                | vk::ImageUsageFlags::TRANSFER_SRC
-                | vk::ImageUsageFlags::STORAGE,
-            mip_levels: 1,
-            memory_location: MemoryLocation::GpuOnly,
-        });
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
             format: vk::Format::D16_UNORM,
@@ -292,11 +305,21 @@ impl Editor {
 
         let mut raster_pass_builder =
             render_graph_builder::RasterPassBuilder::new(&mut render_graph_builder, "Gltf Scene")
-                .add_color_attachment(offscreen_image, Some([0.0, 0.0, 0.0, 1.0]))
+                .add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]))
                 .add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
 
-        for mesh in self.scene.meshes.iter() {
-            for primitive in mesh.primitives.iter() {
+        for (index, node) in self.scene.mesh_nodes.iter().enumerate() {
+            let mesh = &self.scene.meshes[node.mesh_index];
+            for (primitive, material_index) in
+                mesh.primitives.iter().zip(node.primitive_materials.iter())
+            {
+                let (base_color_texture, base_color_sampler) = self.scene.materials
+                    [*material_index]
+                    .base_color_texture
+                    .as_ref()
+                    .map(|tex| (tex.image, tex.sampler))
+                    .unwrap_or((self.scene.images[0], self.scene.samplers.default));
+
                 let draw_command_builder = render_graph_builder::DrawCommandBuilder::new(
                     &mut raster_pass_builder,
                     self.raster_pipeline,
@@ -310,14 +333,17 @@ impl Editor {
                     offset: 0,
                 })
                 .read_buffer(self.view_projection_matrix_buffer)
-                .read_sampler(self.scene.samplers.default)
-                .read_sampled_image(self.scene.images[0]);
+                .read_buffer(self.model_matrices_buffer)
+                .read_sampler(base_color_sampler)
+                .read_sampled_image(base_color_texture);
+
+                let instance_range = (index as u32)..(index as u32 + 1);
 
                 if let Some(index_buffer_ref) = &primitive.index_buffer {
                     draw_command_builder.draw_indexed(
                         0,
                         0..index_buffer_ref.count,
-                        0..1,
+                        instance_range,
                         render_graph_builder::BufferOffset {
                             buffer: index_buffer_ref.buffer,
                             offset: 0,
@@ -325,23 +351,10 @@ impl Editor {
                         neptune_vulkan::render_graph::IndexType::U32,
                     );
                 } else {
-                    draw_command_builder.draw(0..primitive.vertex_count as u32, 0..1);
+                    draw_command_builder.draw(0..primitive.vertex_count as u32, instance_range);
                 }
             }
         }
-        raster_pass_builder.build();
-
-        let mut raster_pass_builder = render_graph_builder::RasterPassBuilder::new(
-            &mut render_graph_builder,
-            "Fullscreen Quad Pass",
-        )
-        .add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]));
-        render_graph_builder::DrawCommandBuilder::new(
-            &mut raster_pass_builder,
-            self.fullscreen_copy_pipeline,
-        )
-        .read_storage_image(offscreen_image)
-        .draw(0..3, 0..1);
         raster_pass_builder.build();
 
         self.device.submit_frame(&render_graph_builder.build())?;
@@ -360,6 +373,15 @@ struct GltfScene {
     meshes: Vec<Mesh>,
     images: Vec<ImageHandle>,
     samplers: GltfSamplers,
+    materials: Vec<Material>,
+
+    mesh_nodes: Vec<GltfNode>,
+}
+
+struct GltfNode {
+    transform: Mat4,
+    mesh_index: usize,
+    primitive_materials: Vec<usize>,
 }
 
 fn load_gltf_scene<P: AsRef<std::path::Path>>(
@@ -383,9 +405,39 @@ fn load_gltf_scene<P: AsRef<std::path::Path>>(
 
     let samplers = load_samplers(device, &gltf_doc)?;
 
+    let materials = load_materials(&gltf_doc, &images, &samplers);
+
+    let mut mesh_nodes = Vec::new();
+
+    for root_node in gltf_doc.default_scene().unwrap().nodes() {
+        gltf_node(Mat4::IDENTITY, &mut mesh_nodes, &root_node);
+    }
+
     Ok(GltfScene {
         meshes,
         images,
         samplers,
+        materials,
+        mesh_nodes,
     })
+}
+
+fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf::Node) {
+    let local_transform: Mat4 = Mat4::from_cols_array_2d(&node.transform().matrix());
+    let world_transform = parent_transform * local_transform;
+
+    if let Some(mesh) = node.mesh() {
+        mesh_nodes.push(GltfNode {
+            transform: world_transform,
+            mesh_index: mesh.index(),
+            primitive_materials: mesh
+                .primitives()
+                .map(|primitive| primitive.material().index().unwrap())
+                .collect(),
+        });
+    }
+
+    for child in node.children() {
+        gltf_node(world_transform, mesh_nodes, &child);
+    }
 }

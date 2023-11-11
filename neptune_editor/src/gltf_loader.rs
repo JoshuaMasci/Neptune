@@ -1,9 +1,11 @@
+use crate::material::{Material, MaterialTexture};
 use crate::mesh::{
     BoundingBox, IndexBuffer, Mesh, Primitive, VertexAttributes, VertexSkinningAttributes,
 };
 use anyhow::anyhow;
-use glam::{Vec3, Vec4};
+use glam::{Vec2, Vec3, Vec4};
 use gltf::image::Format;
+use gltf::material::NormalTexture;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle, SamplerHandle};
@@ -315,4 +317,78 @@ fn create_index_buffer(
     )?;
     device.update_data_to_buffer(buffer, 0, data_bytes)?;
     Ok(buffer)
+}
+
+pub fn load_materials(
+    gltf_doc: &gltf::Document,
+    images: &[ImageHandle],
+    samplers: &GltfSamplers,
+) -> Vec<Material> {
+    gltf_doc
+        .materials()
+        .map(|gltf_material| Material {
+            name: gltf_material
+                .name()
+                .unwrap_or("Unammed Material")
+                .to_string(),
+            base_color: gltf_material
+                .pbr_metallic_roughness()
+                .base_color_factor()
+                .into(),
+            metallic_roughness_factor: Vec2::new(
+                gltf_material.pbr_metallic_roughness().metallic_factor(),
+                gltf_material.pbr_metallic_roughness().roughness_factor(),
+            ),
+            emissive_color: gltf_material.emissive_factor().into(),
+            base_color_texture: gltf_material
+                .pbr_metallic_roughness()
+                .base_color_texture()
+                .map(|info| {
+                    load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+                }),
+            metallic_roughness_texture: gltf_material
+                .pbr_metallic_roughness()
+                .metallic_roughness_texture()
+                .map(|info| {
+                    load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+                }),
+            normal_texture: gltf_material.normal_texture().map(|info| {
+                // assert_eq!(
+                //     info.scale(),
+                //     1.0,
+                //     "Normal Texture has a non-one scale, unsure of what todo here"
+                // );
+                load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+            }),
+            occlusion_texture: gltf_material.occlusion_texture().map(|info| {
+                (
+                    load_material_texture(&info.texture(), info.tex_coord(), images, samplers),
+                    info.strength(),
+                )
+            }),
+            emissive_texture: gltf_material.emissive_texture().map(|info| {
+                load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+            }),
+        })
+        .collect()
+}
+
+fn load_material_texture(
+    texture: &gltf::Texture,
+    uv_index: u32,
+    images: &[ImageHandle],
+    samplers: &GltfSamplers,
+) -> MaterialTexture {
+    let image = images[texture.source().index()];
+    let sampler = if let Some(sampler_index) = texture.sampler().index() {
+        samplers.samplers[sampler_index]
+    } else {
+        samplers.default
+    };
+
+    MaterialTexture {
+        image,
+        sampler,
+        uv_index,
+    }
 }

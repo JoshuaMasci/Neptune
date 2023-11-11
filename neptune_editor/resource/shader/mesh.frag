@@ -33,6 +33,7 @@ vec4 sample_image(SampledImageBinding image_binding, SamplerBinding sampler_bind
 layout(push_constant) uniform PushConstants
 {
     uint view_projection_matrix_index;
+    uint model_matrices_index;
     SamplerBinding image_sampler;
     SampledImageBinding albedo_texture;
 } push_constants;

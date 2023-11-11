@@ -16,13 +16,19 @@ layout(std140, set = 0, binding = 0) readonly buffer Some{
 	mat4 view_projection_matrix;
 } Matrices[];
 
+layout(std140, set = 0, binding = 0) readonly buffer Some1{
+	mat4 model_matrices[];
+} ModelMatrices[];
+
 layout(push_constant) uniform PushConstants
 {
     uint view_projection_matrix_index;
+    uint model_matrices_index;
 } push_constants;
 
 void main() {
-    mat4 model_matrix = mat4(1.0);
+    mat4 model_matrix = ModelMatrices[push_constants.model_matrices_index].model_matrices[gl_InstanceIndex];
+    //mat4 model_matrix = mat4(1.0);
     mat4 mvp_matrix = Matrices[push_constants.view_projection_matrix_index].view_projection_matrix * model_matrix;
     gl_Position = mvp_matrix * vec4(position, 1.0);
 

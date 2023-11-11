@@ -1,5 +1,6 @@
 mod editor;
 mod gltf_loader;
+mod material;
 mod mesh;
 mod shader;
 
