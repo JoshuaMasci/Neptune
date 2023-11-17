@@ -3,6 +3,7 @@ use crate::{
     BufferDescription, BufferKey, ComputePipelineHandle, ImageKey, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle, TransientImageDesc,
 };
+use ash::vk;
 use std::ops::Range;
 
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
@@ -10,7 +11,7 @@ pub enum QueueType {
     #[default]
     Graphics,
     PreferAsyncCompute,
-    ForceAsyncCompute,
+    PreferAsyncTransfer,
 }
 
 pub type BufferIndex = usize;
@@ -56,40 +57,6 @@ pub enum ImageResourceDescription {
 pub struct ImageGraphResource {
     pub description: ImageResourceDescription,
     pub last_access: ImageResourceAccess,
-}
-
-#[derive(Debug, Default)]
-pub struct RenderGraph {
-    pub buffer_resources: Vec<BufferGraphResource>,
-    pub image_resources: Vec<ImageGraphResource>,
-    pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
-    pub render_passes: Vec<RenderPass>,
-}
-
-#[derive(Debug)]
-pub struct RenderPass {
-    pub label_name: String,
-    pub label_color: [f32; 4],
-    pub queue: QueueType,
-    pub buffer_access: Vec<(BufferIndex, BufferResourceAccess)>,
-    pub image_access: Vec<(ImageIndex, ImageResourceAccess)>,
-    pub command: Option<RenderPassCommand>,
-}
-
-#[derive(Debug)]
-pub enum RenderPassCommand {
-    Transfer {
-        transfers: Vec<Transfer>,
-    },
-    Compute {
-        pipeline: ComputePipelineHandle,
-        resources: Vec<ShaderResourceUsage>,
-        dispatch: ComputeDispatch,
-    },
-    Raster {
-        framebuffer: Framebuffer,
-        draw_commands: Vec<RasterDrawCommand>,
-    },
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -212,4 +179,172 @@ pub struct RasterDrawCommand {
     pub vertex_buffers: Vec<BufferOffset>,
     pub resources: Vec<ShaderResourceUsage>,
     pub dispatch: DrawCommandDispatch,
+}
+
+#[derive(Debug)]
+pub enum RenderPassCommand {
+    Transfer {
+        transfers: Vec<Transfer>,
+    },
+    Compute {
+        pipeline: ComputePipelineHandle,
+        resources: Vec<ShaderResourceUsage>,
+        dispatch: ComputeDispatch,
+    },
+    Raster {
+        framebuffer: Framebuffer,
+        draw_commands: Vec<RasterDrawCommand>,
+    },
+}
+
+#[derive(Debug)]
+pub struct RenderPass {
+    pub label_name: String,
+    pub label_color: [f32; 4],
+    pub queue: QueueType,
+    pub buffer_access: Vec<(BufferIndex, BufferResourceAccess)>,
+    pub image_access: Vec<(ImageIndex, ImageResourceAccess)>,
+    pub command: Option<RenderPassCommand>,
+}
+
+#[derive(Debug, Default)]
+pub struct RenderGraph {
+    pub buffer_resources: Vec<BufferGraphResource>,
+    pub image_resources: Vec<ImageGraphResource>,
+    pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
+    pub render_passes: Vec<RenderPass>,
+}
+
+// Compiled Graph Struct
+// Will be the result of the RenderGraphBuilder, all sync requirements and command buffer lists are precalculate
+// Frame executor will only have to resolve resource, sync primitives, command buffer recording, submission, present.
+
+// TODO: Determine the best pre and/or post frame ownership barriers
+
+#[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Queue {
+    #[default]
+    Graphics,
+    Compute,
+    Transfer,
+}
+
+#[derive(Debug)]
+pub struct RenderPass2 {
+    pub label_name: String,
+    pub label_color: [f32; 4],
+    pub command: Option<RenderPassCommand>,
+}
+
+#[derive(Debug, Default)]
+pub enum BufferBarrierSource {
+    #[default]
+    /// Retrieve usage from a previous frame
+    FirstUsage,
+
+    /// Precalculated usage from the graph
+    Precalculated {
+        src_stage_mask: vk::PipelineStageFlags2,
+        src_access_mask: vk::AccessFlags2,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct BufferBarrier {
+    pub index: BufferIndex,
+    pub src: BufferBarrierSource,
+    pub dst_stage_mask: vk::PipelineStageFlags2,
+    pub dst_access_mask: vk::AccessFlags2,
+}
+
+#[derive(Debug, Default)]
+pub enum ImageBarrierSource {
+    #[default]
+    /// Retrieve usage from a previous frame
+    FirstUsage,
+
+    /// Precalculated usage from the graph
+    Precalculated {
+        src_layout: vk::ImageLayout,
+        src_stage_mask: vk::PipelineStageFlags2,
+        src_access_mask: vk::AccessFlags2,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct ImageBarrier {
+    pub index: ImageIndex,
+    pub src: ImageBarrierSource,
+    pub dst_layout: vk::ImageLayout,
+    pub dst_stage_mask: vk::PipelineStageFlags2,
+    pub dst_access_mask: vk::AccessFlags2,
+}
+
+#[derive(Debug, Default)]
+pub struct RenderPassSet {
+    pub memory_barriers: Vec<vk::MemoryBarrier2>,
+    pub buffer_barriers: Vec<BufferBarrier>,
+    pub image_barriers: Vec<ImageBarrier>,
+
+    pub render_passes: Vec<RenderPass2>,
+}
+
+#[derive(Debug, Default)]
+pub struct BufferOwnershipTransfer {
+    pub index: BufferIndex,
+    pub access_flags: vk::AccessFlags2,
+}
+
+#[derive(Debug, Default)]
+pub struct ImageOwnershipTransfer {
+    pub index: BufferIndex,
+    pub access_flags: vk::AccessFlags2,
+}
+
+#[derive(Debug, Default)]
+pub struct CommandBufferDependency {
+    /// The index of the command buffer
+    pub index: usize,
+
+    /// The wait or signal stage of the semaphore
+    pub stage_mask: vk::PipelineStageFlags2,
+
+    /// The buffers to send or receive
+    pub buffer_ownership_transfer: Vec<BufferOwnershipTransfer>,
+
+    /// The images to send or receive
+    pub image_ownership_transfer: Vec<ImageOwnershipTransfer>,
+}
+
+#[derive(Debug, Default)]
+pub struct CommandBuffer {
+    /// Queue that the command buffer is submitted to
+    pub queue: Queue,
+
+    /// List of vkAcquireNextImageKHR waits that this command buffer is dependant on
+    pub swapchain_dependencies: Vec<(usize, vk::PipelineStageFlags2)>,
+
+    /// List of other command buffers that this command buffer is dependant on, primarily for resource queue ownership transfers
+    pub command_buffer_wait_dependencies: Vec<CommandBufferDependency>,
+
+    pub render_pass_sets: Vec<RenderPassSet>,
+
+    /// List of other command buffers that depend on this command buffer, primarily for resource queue ownership transfers
+    pub command_buffer_signal_dependencies: Vec<CommandBufferDependency>,
+}
+
+#[derive(Debug, Default)]
+pub struct CompiledRenderGraph {
+    //TODO: Update this to contain first and last usages with queue
+    /// List of buffers used by this graph
+    pub buffer_resources: Vec<BufferGraphResource>,
+
+    //TODO: Update this to contain first and last usages with queue
+    /// List of images used by this graph
+    pub image_resources: Vec<ImageGraphResource>,
+
+    /// List of swapchains and swapchain images used by this graph
+    pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
+
+    pub command_buffers: Vec<CommandBuffer>,
 }

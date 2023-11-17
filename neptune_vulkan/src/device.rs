@@ -3,7 +3,7 @@ use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
 use crate::render_graph::RenderGraph;
-use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage, Transfer};
+use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage};
 use crate::render_graph_executor::BasicRenderGraphExecutor;
 use crate::resource_managers::ResourceManager;
 use crate::sampler::{Sampler, SamplerDescription};
