@@ -4,7 +4,7 @@ mod descriptor_set;
 mod device;
 mod image;
 mod instance;
-mod interface;
+mod physical_device;
 mod pipeline;
 mod render_graph_executor;
 mod resource_managers;
@@ -20,10 +20,12 @@ pub use ash::vk;
 pub use gpu_allocator;
 
 use crate::render_graph::BufferIndex;
+
 pub use buffer::BufferDescription;
 pub use device::{Device, DeviceSettings};
 pub use image::{ImageDescription2D, TransientImageDesc, TransientImageSize};
 pub use instance::{AppInfo, Instance};
+pub use physical_device::*;
 pub use pipeline::{
     ColorTargetState, DepthState, FragmentState, FramebufferDesc, PrimitiveState,
     RasterPipelineDescription, ShaderStage, VertexAttribute, VertexBufferLayout, VertexState,

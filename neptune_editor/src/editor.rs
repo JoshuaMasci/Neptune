@@ -43,34 +43,48 @@ impl Editor {
             instance.create_surface(window.raw_display_handle(), window.raw_window_handle())?;
 
         let physical_device = instance
-            .select_physical_device(|physical_device| {
-                if let Some(graphics_queue_index) = physical_device
-                    .get_queue_family_properties()
-                    .iter()
-                    .enumerate()
-                    .find(|(_index, queue_properties)| {
-                        queue_properties.queue_flags.contains(
-                            vk::QueueFlags::GRAPHICS
-                                | vk::QueueFlags::COMPUTE
-                                | vk::QueueFlags::TRANSFER,
-                        )
-                    })
-                    .map(|(index, _queue_properties)| index)
+            .select_physical_device(Some(surface_handle), |physical_device| {
+                //Must support graphics and be an known gpu type
+                if !physical_device.supports_graphics()
+                    || physical_device.info.device_type
+                        == neptune_vulkan::PhysicalDeviceType::Unknown
                 {
-                    if physical_device.get_surface_support(graphics_queue_index, surface_handle) {
-                        match physical_device.get_properties().device_type {
-                            vk::PhysicalDeviceType::DISCRETE_GPU => Some(100),
-                            vk::PhysicalDeviceType::INTEGRATED_GPU => Some(50),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                    return 0;
                 }
+
+                const DISCRETE_DEVICE_ADJUSTMENT: usize = 100;
+                const MAX_MEMORY_CONSIDERATION: usize = 50;
+                const BYTES_TO_GIGABYTES: usize = 1024 * 1024 * 1024;
+                const ASYNC_COMPUTE: usize = 25;
+                const ASYNC_TRANSFER: usize = 25;
+
+                let mut score = 0;
+
+                // Preferred Discrete GPU's
+                if physical_device.info.device_type == neptune_vulkan::PhysicalDeviceType::Discrete
+                {
+                    score += DISCRETE_DEVICE_ADJUSTMENT;
+                }
+
+                // Prefer async compute support
+                if physical_device.supports_async_compute() {
+                    score += ASYNC_COMPUTE;
+                }
+
+                // Prefer async transfer support
+                if physical_device.supports_async_transfer() {
+                    score += ASYNC_TRANSFER;
+                }
+
+                // Prefer more memory
+                score += (physical_device.memory.device_local_bytes / BYTES_TO_GIGABYTES)
+                    .max(MAX_MEMORY_CONSIDERATION);
+
+                score
             })
             .expect("Failed to find a suitable Vulkan device");
+
+        info!("Selected Device: {:#?}", physical_device);
 
         let mut device = physical_device
             .create_device(&DeviceSettings {
@@ -176,14 +190,14 @@ impl Editor {
         let scene = load_gltf_scene(&mut device, &gltf_scene_path)?;
 
         let view_projection_matrix_buffer = {
-            let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
+            let mut projection_matrix = Mat4::perspective_infinite_lh(
                 45.0f32.to_radians(),
                 surface_size[0] as f32 / surface_size[1] as f32,
                 0.01,
             );
             projection_matrix.y_axis.y *= -1.0;
 
-            let view_matrix = glam::Mat4::look_to_lh(
+            let view_matrix = Mat4::look_to_lh(
                 glam::Vec3::new(0.0, 0.0, -1.0),
                 glam::Vec3::Z,
                 glam::Vec3::Y,
@@ -257,14 +271,14 @@ impl Editor {
         self.device
             .destroy_buffer(self.view_projection_matrix_buffer);
         self.view_projection_matrix_buffer = {
-            let mut projection_matrix = glam::Mat4::perspective_infinite_lh(
+            let mut projection_matrix = Mat4::perspective_infinite_lh(
                 45.0f32.to_radians(),
                 self.surface_size[0] as f32 / self.surface_size[1] as f32,
                 0.01,
             );
             projection_matrix.y_axis.y *= -1.0;
 
-            let view_matrix = glam::Mat4::look_to_lh(
+            let view_matrix = Mat4::look_to_lh(
                 glam::Vec3::new(0.0, 0.0, -1.0),
                 glam::Vec3::Z,
                 glam::Vec3::Y,

@@ -1,5 +1,5 @@
 use crate::debug_utils::DebugUtils;
-use crate::interface::PhysicalDevice;
+use crate::physical_device::PhysicalDevice;
 use crate::{SurfaceHandle, SurfaceKey, VulkanError};
 use ash::prelude::VkResult;
 use ash::vk;
@@ -191,9 +191,7 @@ impl Instance {
             .expect("Failed to enumerate physical devices")
             .iter()
             .enumerate()
-            .map(|(index, &physical_device)| {
-                PhysicalDevice::new(instance.clone(), index, physical_device)
-            })
+            .map(|(index, &physical_device)| PhysicalDevice::new(instance.clone(), physical_device))
             .collect();
 
         Ok(Self {
@@ -223,17 +221,22 @@ impl Instance {
 
     pub fn select_physical_device(
         &self,
-        score_function: impl Fn(&PhysicalDevice) -> Option<usize>,
+        surface: Option<SurfaceHandle>,
+        score_function: impl Fn(&PhysicalDevice) -> usize,
     ) -> Option<PhysicalDevice> {
-        let highest_scored_device_index: Option<usize> = self
+        let highest_scored_device_index: Option<(&PhysicalDevice, usize)> = self
             .physical_devices
             .iter()
-            .map(|physical_device| (physical_device.get_index(), score_function(physical_device)))
-            .filter(|(_index, score)| score.is_some())
-            .max_by_key(|(_index, score)| score.unwrap())
-            .map(|(index, _score)| index);
-        highest_scored_device_index
-            .and_then(|device_index| self.physical_devices.get(device_index))
-            .cloned()
+            .filter(|physical_device| {
+                if let Some(surface) = surface {
+                    physical_device.supports_surface(surface)
+                } else {
+                    true
+                }
+            })
+            .map(|physical_device| (physical_device, score_function(physical_device)))
+            .filter(|(_physical_device, score)| *score != 0)
+            .max_by_key(|(_physical_device, score)| *score);
+        highest_scored_device_index.map(|(physical_device, _score)| physical_device.clone())
     }
 }
