@@ -166,16 +166,16 @@ pub struct PhysicalDeviceMemoryInfo {
 #[derive(Clone)]
 pub struct PhysicalDevice {
     pub(crate) instance: Arc<AshInstance>,
-    pub(crate) physical_device: vk::PhysicalDevice,
+    pub(crate) handle: vk::PhysicalDevice,
 
     //TODO: supported extensions list (Raytracing + Mesh Shading)
     //TODO: support 2 transfer queues?
     pub info: PhysicalDeviceInfo,
     pub driver: PhysicalDeviceDriverInfo,
     pub memory: PhysicalDeviceMemoryInfo,
-    graphics_queue_family_index: Option<u32>,
-    compute_queue_family_index: Option<u32>,
-    transfer_queue_family_index: Option<u32>,
+    pub(crate) graphics_queue_family_index: Option<u32>,
+    pub(crate) compute_queue_family_index: Option<u32>,
+    pub(crate) transfer_queue_family_index: Option<u32>,
 }
 
 impl PhysicalDevice {
@@ -260,7 +260,7 @@ impl PhysicalDevice {
 
         Self {
             instance,
-            physical_device,
+            handle: physical_device,
             info,
             driver,
             memory,
@@ -287,7 +287,7 @@ impl PhysicalDevice {
             if let Some(surface) = self.instance.surface_list.get(surface_handle.0) {
                 unsafe {
                     match self.instance.surface.get_physical_device_surface_support(
-                        self.physical_device,
+                        self.handle,
                         graphics_queue_family_index,
                         surface,
                     ) {
@@ -307,13 +307,14 @@ impl PhysicalDevice {
     }
 
     pub fn create_device(self, settings: &DeviceSettings) -> Result<Device, VulkanError> {
-        Device::new(self.instance.clone(), self.physical_device, settings)
+        Device::new(self.instance.clone(), self, settings)
     }
 }
 
 impl Debug for PhysicalDevice {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PhysicalDevice")
+            .field("handle", &self.handle)
             .field("info", &self.info)
             .field("driver", &self.driver)
             .field("memory", &self.memory)

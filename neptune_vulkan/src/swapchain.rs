@@ -1,5 +1,7 @@
 use crate::device::AshDevice;
 use crate::image::AshImage;
+use crate::instance::AshInstance;
+use crate::SurfaceHandle;
 use ash::vk;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -112,9 +114,14 @@ pub struct Swapchain {
 impl Swapchain {
     pub fn new(
         device: Arc<AshDevice>,
-        surface: vk::SurfaceKHR,
+        surface_handle: SurfaceHandle,
         settings: &SurfaceSettings,
     ) -> ash::prelude::VkResult<Self> {
+        let surface = match device.instance.surface_list.get(surface_handle.0) {
+            None => return Err(vk::Result::ERROR_SURFACE_LOST_KHR),
+            Some(surface) => surface,
+        };
+
         let mut new_self = Self {
             device,
             surface,
@@ -193,6 +200,7 @@ impl Swapchain {
     }
 }
 
+#[derive(Clone)]
 pub struct AcquiredSwapchainImage {
     pub swapchain_handle: vk::SwapchainKHR,
     pub image_index: u32,
@@ -228,12 +236,19 @@ fn get_swapchain_extent_transform_count(
     }
 }
 
-#[derive(Default)]
 pub struct SwapchainManager {
+    instance: Arc<AshInstance>,
     pub swapchains: HashMap<vk::SurfaceKHR, Swapchain>,
 }
 
 impl SwapchainManager {
+    pub fn new(instance: Arc<AshInstance>) -> Self {
+        Self {
+            instance,
+            swapchains: HashMap::new(),
+        }
+    }
+
     pub fn add(&mut self, swapchain: Swapchain) {
         let surface = swapchain.surface;
         assert!(
@@ -243,7 +258,18 @@ impl SwapchainManager {
         );
     }
 
-    pub fn get(&mut self, surface: vk::SurfaceKHR) -> Option<&mut Swapchain> {
-        self.swapchains.get_mut(&surface)
+    pub fn get(&mut self, surface_handle: SurfaceHandle) -> Option<&mut Swapchain> {
+        self.instance
+            .surface_list
+            .get(surface_handle.0)
+            .and_then(|surface| self.swapchains.get_mut(&surface))
+    }
+
+    pub fn remove(&mut self, surface_handle: SurfaceHandle) {
+        let _ = self
+            .instance
+            .surface_list
+            .get(surface_handle.0)
+            .map(|surface| self.swapchains.remove(&surface));
     }
 }

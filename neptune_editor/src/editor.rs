@@ -4,6 +4,7 @@ use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
 use glam::Mat4;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
+use neptune_vulkan::render_graph::{CompiledRenderGraph, ImageResourceDescription};
 use neptune_vulkan::{
     render_graph_builder, vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize,
 };
@@ -372,6 +373,13 @@ impl Editor {
         raster_pass_builder.build();
 
         self.device.submit_frame(&render_graph_builder.build())?;
+        Ok(())
+    }
+
+    fn render2(&mut self) -> anyhow::Result<()> {
+        let mut render_graph = CompiledRenderGraph::default();
+
+        self.device.submit_graph(&render_graph)?;
         Ok(())
     }
 }

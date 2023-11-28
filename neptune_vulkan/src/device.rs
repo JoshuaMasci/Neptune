@@ -1,8 +1,9 @@
 use crate::buffer::{Buffer, BufferDescription};
+use crate::compiled_render_graph_executor::CompiledRenderGraphExecutor;
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
-use crate::render_graph::RenderGraph;
+use crate::render_graph::{CompiledRenderGraph, RenderGraph};
 use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage};
 use crate::render_graph_executor::BasicRenderGraphExecutor;
 use crate::resource_managers::ResourceManager;
@@ -10,15 +11,15 @@ use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::upload_queue::UploadQueue;
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle, SamplerHandle,
-    ShaderStage, SurfaceHandle, VulkanError,
+    BufferHandle, ComputePipelineHandle, ImageHandle, PhysicalDevice, RasterPipelineHandle,
+    SamplerHandle, ShaderStage, SurfaceHandle, VulkanError,
 };
 use ash::vk;
 use log::error;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct AshQueue {
     pub family_index: u32,
     pub handle: vk::Queue,
@@ -33,7 +34,9 @@ pub struct AshRaytracing {
 pub struct AshDevice {
     pub instance: Arc<AshInstance>,
     pub physical: vk::PhysicalDevice,
-    pub queues: Vec<AshQueue>,
+    pub graphics_queue: Option<AshQueue>,
+    pub compute_queue: Option<AshQueue>,
+    pub transfer_queue: Option<AshQueue>,
     pub core: ash::Device,
     pub swapchain: ash::extensions::khr::Swapchain,
     pub mesh_shading: Option<ash::extensions::ext::MeshShader>,
@@ -44,18 +47,34 @@ pub struct AshDevice {
 impl AshDevice {
     pub fn new(
         instance: Arc<AshInstance>,
-        physical_device: vk::PhysicalDevice,
-        queues_indices: &[u32],
+        physical_device: &PhysicalDevice,
     ) -> Result<Self, VulkanError> {
-        let queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = queues_indices
-            .iter()
-            .map(|family_index| {
+        let mut queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = Vec::with_capacity(3);
+
+        if let Some(queue_family_index) = physical_device.graphics_queue_family_index {
+            queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(*family_index)
+                    .queue_family_index(queue_family_index)
                     .queue_priorities(&[1.0])
-                    .build()
-            })
-            .collect();
+                    .build(),
+            );
+        }
+        if let Some(queue_family_index) = physical_device.compute_queue_family_index {
+            queue_create_infos.push(
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(queue_family_index)
+                    .queue_priorities(&[1.0])
+                    .build(),
+            );
+        }
+        if let Some(queue_family_index) = physical_device.transfer_queue_family_index {
+            queue_create_infos.push(
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(queue_family_index)
+                    .queue_priorities(&[1.0])
+                    .build(),
+            );
+        }
 
         let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
@@ -78,7 +97,7 @@ impl AshDevice {
 
         let core = unsafe {
             instance.core.create_device(
-                physical_device,
+                physical_device.handle,
                 &vk::DeviceCreateInfo::builder()
                     .queue_create_infos(&queue_create_infos)
                     .enabled_extension_names(&device_extension_names_raw)
@@ -95,23 +114,38 @@ impl AshDevice {
         let queue_family_properties = unsafe {
             instance
                 .core
-                .get_physical_device_queue_family_properties(physical_device)
+                .get_physical_device_queue_family_properties(physical_device.handle)
         };
 
-        let queues = queues_indices
-            .iter()
-            .map(|&family_index| AshQueue {
+        let graphics_queue = physical_device
+            .graphics_queue_family_index
+            .map(|family_index| AshQueue {
                 family_index,
                 handle: unsafe { core.get_device_queue(family_index, 0) },
                 flags: queue_family_properties[family_index as usize].queue_flags,
-            })
-            .collect();
+            });
+
+        let compute_queue = physical_device
+            .graphics_queue_family_index
+            .map(|family_index| AshQueue {
+                family_index,
+                handle: unsafe { core.get_device_queue(family_index, 0) },
+                flags: queue_family_properties[family_index as usize].queue_flags,
+            });
+
+        let transfer_queue = physical_device
+            .graphics_queue_family_index
+            .map(|family_index| AshQueue {
+                family_index,
+                handle: unsafe { core.get_device_queue(family_index, 0) },
+                flags: queue_family_properties[family_index as usize].queue_flags,
+            });
 
         let allocator = ManuallyDrop::new(Mutex::new(gpu_allocator::vulkan::Allocator::new(
             &gpu_allocator::vulkan::AllocatorCreateDesc {
                 instance: instance.core.clone(),
                 device: core.clone(),
-                physical_device,
+                physical_device: physical_device.handle,
                 debug_settings: gpu_allocator::AllocatorDebugSettings::default(),
                 buffer_device_address: true,
             },
@@ -119,8 +153,10 @@ impl AshDevice {
 
         Ok(Self {
             instance,
-            physical: physical_device,
-            queues,
+            physical: physical_device.handle,
+            graphics_queue,
+            compute_queue,
+            transfer_queue,
             core,
             swapchain,
             mesh_shading: None,
@@ -151,28 +187,28 @@ pub struct Device {
 
     upload_queue: UploadQueue,
     graph_executor: BasicRenderGraphExecutor,
+    graph_executor2: CompiledRenderGraphExecutor,
 }
 
 impl Device {
     pub fn new(
         instance: Arc<AshInstance>,
-        physical_device: vk::PhysicalDevice,
+        physical_device: PhysicalDevice,
         settings: &DeviceSettings,
     ) -> Result<Device, VulkanError> {
         let push_constant_size = unsafe {
             instance
                 .core
-                .get_physical_device_properties(physical_device)
+                .get_physical_device_properties(physical_device.handle)
         }
         .limits
         .max_push_constants_size;
 
         let graphics_queue_index = 0;
 
-        let device =
-            AshDevice::new(instance, physical_device, &[graphics_queue_index]).map(Arc::new)?;
+        let device = AshDevice::new(instance, &physical_device).map(Arc::new)?;
         let resource_manager = ResourceManager::new(device.clone());
-        let swapchain_manager = SwapchainManager::default();
+        let swapchain_manager = SwapchainManager::new(device.instance.clone());
 
         let pipelines = Pipelines::new(device.clone(), unsafe {
             device.core.create_pipeline_layout(
@@ -187,16 +223,19 @@ impl Device {
             )?
         });
 
-        let transfer_queue = UploadQueue::default();
-        let graph_executor = BasicRenderGraphExecutor::new(device.clone(), graphics_queue_index)?;
+        let upload_queue = UploadQueue::default();
+        let graph_executor = BasicRenderGraphExecutor::new(device.clone())?;
+        let graph_executor2 =
+            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
 
         Ok(Device {
             device,
             pipelines,
             resource_manager,
             swapchain_manager,
-            upload_queue: transfer_queue,
+            upload_queue,
             graph_executor,
+            graph_executor2,
         })
     }
 
@@ -399,35 +438,35 @@ impl Device {
         surface_handle: SurfaceHandle,
         settings: &SurfaceSettings,
     ) -> Result<(), VulkanError> {
-        let surface = self
-            .device
-            .instance
-            .surface_list
-            .get(surface_handle.0)
-            .unwrap();
-
-        if let Some(swapchain) = self.swapchain_manager.get(surface) {
+        if let Some(swapchain) = self.swapchain_manager.get(surface_handle) {
             swapchain.update_settings(settings)?;
         } else {
-            self.swapchain_manager
-                .add(Swapchain::new(self.device.clone(), surface, settings)?);
+            self.swapchain_manager.add(Swapchain::new(
+                self.device.clone(),
+                surface_handle,
+                settings,
+            )?);
         }
 
         Ok(())
     }
     pub fn release_surface(&mut self, surface_handle: SurfaceHandle) {
-        let surface = self
-            .device
-            .instance
-            .surface_list
-            .get(surface_handle.0)
-            .unwrap();
-
-        let _ = self.swapchain_manager.swapchains.remove(&surface);
+        self.swapchain_manager.remove(surface_handle);
     }
 
     pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
         self.graph_executor.submit_frame(
+            &mut self.resource_manager,
+            &mut self.swapchain_manager,
+            &self.pipelines,
+            self.upload_queue.get_pass(),
+            render_graph,
+        )?;
+        Ok(())
+    }
+
+    pub fn submit_graph(&mut self, render_graph: &CompiledRenderGraph) -> Result<(), VulkanError> {
+        self.graph_executor2.submit_frame(
             &mut self.resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,

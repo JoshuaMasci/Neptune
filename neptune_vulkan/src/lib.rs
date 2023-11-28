@@ -11,6 +11,7 @@ mod resource_managers;
 mod sampler;
 mod swapchain;
 
+mod compiled_render_graph_executor;
 pub mod render_graph;
 pub mod render_graph_builder;
 mod upload_queue;

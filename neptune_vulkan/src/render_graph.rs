@@ -301,19 +301,28 @@ pub struct ImageOwnershipTransfer {
     pub access_flags: vk::AccessFlags2,
 }
 
-#[derive(Debug, Default)]
-pub struct CommandBufferDependency {
-    /// The index of the command buffer
-    pub index: usize,
+#[derive(Debug)]
+pub enum CommandBufferDependency {
+    CommandBuffer {
+        /// The index of the command buffer
+        command_buffer_index: usize,
 
-    /// The wait or signal stage of the semaphore
-    pub stage_mask: vk::PipelineStageFlags2,
+        /// The index of the dependency, used for sync primitive lookup
+        dependency_index: usize,
 
-    /// The buffers to send or receive
-    pub buffer_ownership_transfer: Vec<BufferOwnershipTransfer>,
+        /// The wait or signal stage of the semaphore
+        stage_mask: vk::PipelineStageFlags2,
 
-    /// The images to send or receive
-    pub image_ownership_transfer: Vec<ImageOwnershipTransfer>,
+        /// The buffers to send or receive
+        buffer_ownership_transfer: Vec<BufferOwnershipTransfer>,
+
+        /// The images to send or receive
+        image_ownership_transfer: Vec<ImageOwnershipTransfer>,
+    },
+    Swapchain {
+        index: usize,
+        stage_mask: vk::PipelineStageFlags2,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -321,15 +330,12 @@ pub struct CommandBuffer {
     /// Queue that the command buffer is submitted to
     pub queue: Queue,
 
-    /// List of vkAcquireNextImageKHR waits that this command buffer is dependant on
-    pub swapchain_dependencies: Vec<(usize, vk::PipelineStageFlags2)>,
-
-    /// List of other command buffers that this command buffer is dependant on, primarily for resource queue ownership transfers
+    /// List of command buffers / swapchains that this command buffer is dependant on
     pub command_buffer_wait_dependencies: Vec<CommandBufferDependency>,
 
     pub render_pass_sets: Vec<RenderPassSet>,
 
-    /// List of other command buffers that depend on this command buffer, primarily for resource queue ownership transfers
+    /// List of command buffers / swapchains that depend on this command buffer
     pub command_buffer_signal_dependencies: Vec<CommandBufferDependency>,
 }
 

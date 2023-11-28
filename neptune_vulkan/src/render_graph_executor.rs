@@ -37,8 +37,8 @@ pub struct BasicRenderGraphExecutor {
 }
 
 impl BasicRenderGraphExecutor {
-    pub fn new(device: Arc<AshDevice>, device_queue_index: u32) -> ash::prelude::VkResult<Self> {
-        let queue = device.queues[device_queue_index as usize].clone();
+    pub fn new(device: Arc<AshDevice>) -> ash::prelude::VkResult<Self> {
+        let queue = device.graphics_queue.expect("Requires a graphics queue");
 
         let command_pool = unsafe {
             device.core.create_command_pool(
@@ -130,21 +130,13 @@ impl BasicRenderGraphExecutor {
 
         let mut swapchain_index_images: Vec<AcquiredSwapchainImage> =
             Vec::with_capacity(render_graph.swapchain_images.len());
-        for (surface_handle, swapchain_semaphores) in render_graph
+        for ((surface_handle, _), swapchain_semaphores) in render_graph
             .swapchain_images
             .iter()
-            .map(|(surface_handle, _index)| {
-                self.device
-                    .instance
-                    .surface_list
-                    .get(surface_handle.0)
-                    .expect("Failed to find surface")
-            })
             .zip(self.swapchain_semaphores.iter())
         {
             let swapchain = swapchain_manager
-                .swapchains
-                .get_mut(&surface_handle)
+                .get(*surface_handle)
                 .expect("Failed to find swapchain");
 
             let mut swapchain_result: ash::prelude::VkResult<(AcquiredSwapchainImage, bool)> =
@@ -302,10 +294,7 @@ impl BasicRenderGraphExecutor {
                 );
             }
 
-            self.device
-                .core
-                .end_command_buffer(self.command_buffer)
-                .unwrap();
+            self.device.core.end_command_buffer(self.command_buffer)?;
 
             let command_buffer_info = &[vk::CommandBufferSubmitInfo::builder()
                 .command_buffer(self.command_buffer)
