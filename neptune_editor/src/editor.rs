@@ -87,9 +87,11 @@ impl Editor {
 
         info!("Selected Device: {:#?}", physical_device);
 
+        const FRAME_IN_FLIGHT_COUNT: u32 = 3;
+
         let mut device = physical_device
             .create_device(&DeviceSettings {
-                frames_in_flight: 3,
+                frames_in_flight: FRAME_IN_FLIGHT_COUNT,
             })
             .expect("Failed to initialize vulkan device");
 
@@ -99,7 +101,7 @@ impl Editor {
         device.configure_surface(
             surface_handle,
             &neptune_vulkan::SurfaceSettings {
-                image_count: 3,
+                image_count: FRAME_IN_FLIGHT_COUNT,
                 format: vk::SurfaceFormatKHR {
                     format: vk::Format::B8G8R8A8_UNORM,
                     color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
@@ -376,9 +378,19 @@ impl Editor {
         Ok(())
     }
 
-    fn render2(&mut self) -> anyhow::Result<()> {
-        let mut render_graph = CompiledRenderGraph::default();
+    pub fn render2(&mut self) -> anyhow::Result<()> {
+        let mut render_graph_builder =
+            neptune_vulkan::render_graph_builder2::RenderGraphBuilder::default();
 
+        let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
+        render_graph_builder.add_raster_pass(
+            "Swapchain Pass".to_string(),
+            [1.0; 4],
+            &[(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]))],
+            None,
+        );
+
+        let render_graph = render_graph_builder.build();
         self.device.submit_graph(&render_graph)?;
         Ok(())
     }

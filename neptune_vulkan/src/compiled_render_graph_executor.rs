@@ -3,8 +3,6 @@ use crate::pipeline::Pipelines;
 use crate::render_graph::{
     CommandBuffer, CommandBufferDependency, CompiledRenderGraph, ImageIndex,
 };
-
-use crate::instance::SurfaceList;
 use crate::render_graph_executor::RenderGraphResources;
 use crate::resource_managers::ResourceManager;
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
@@ -181,6 +179,10 @@ impl AshFencePool {
     }
 
     pub fn wait_for_all(&self, timeout_ns: u64) -> ash::prelude::VkResult<()> {
+        if self.next_index == 0 {
+            return Ok(());
+        }
+
         unsafe {
             self.device
                 .core
@@ -189,6 +191,10 @@ impl AshFencePool {
     }
 
     pub fn reset(&mut self) -> ash::prelude::VkResult<()> {
+        if self.next_index == 0 {
+            return Ok(());
+        }
+
         unsafe {
             self.device
                 .core
@@ -290,6 +296,7 @@ impl CompiledRenderGraphExecutor {
         self.frame_index = (self.frame_index + 1) % self.frame_contexts.len();
 
         let frame_context = &mut self.frame_contexts[self.frame_index];
+
         frame_context.wait_and_reset(TIMEOUT_NS)?;
         resource_manager.flush_frame();
 
@@ -310,12 +317,14 @@ impl CompiledRenderGraphExecutor {
         let mut buffers = resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
         let mut images = resource_manager
             .get_image_resources(&acquired_swapchain_images, &render_graph.image_resources)?;
-        let mut resources = RenderGraphResources {
-            buffers: &mut buffers,
-            images: &mut images,
-            persistent: resource_manager,
-            pipelines,
-        };
+        // let mut resources = RenderGraphResources {
+        //     buffers: &mut buffers,
+        //     images: &mut images,
+        //     persistent: resource_manager,
+        //     pipelines,
+        // };
+
+        let submit_queue = self.device.graphics_queue.unwrap().handle;
 
         for (command_buffer_index, graph_command_buffer) in
             render_graph.command_buffers.iter().enumerate()
@@ -456,14 +465,14 @@ impl CompiledRenderGraphExecutor {
                     .collect();
 
                 // If the command buffer has no signal dependencies on other command buffers, that means it is a root node and should use a fence instead
-                let command_buffer_done_fence = if command_buffer_dependency != 0 {
+                let command_buffer_done_fence = if command_buffer_dependency == 0 {
                     frame_context.fence_pool.get()?
                 } else {
                     vk::Fence::null()
                 };
 
                 self.device.core.queue_submit2(
-                    self.device.graphics_queue.unwrap().handle,
+                    submit_queue,
                     &[vk::SubmitInfo2::builder()
                         .command_buffer_infos(&command_buffer_info)
                         .wait_semaphore_infos(&wait_semaphore_infos)
@@ -471,6 +480,27 @@ impl CompiledRenderGraphExecutor {
                         .build()],
                     command_buffer_done_fence,
                 )?;
+            }
+        }
+
+        //Submit Swapchains
+        if !acquired_swapchains.is_empty() {
+            let mut swapchains = Vec::with_capacity(acquired_swapchains.len());
+            let mut swapchain_indies = Vec::with_capacity(acquired_swapchains.len());
+            let mut wait_semaphores = Vec::with_capacity(acquired_swapchains.len());
+            for acquired_swapchain in acquired_swapchains.iter() {
+                swapchains.push(acquired_swapchain.image.swapchain_handle);
+                swapchain_indies.push(acquired_swapchain.image.image_index);
+                wait_semaphores.push(acquired_swapchain.present_ready_semaphore);
+            }
+            unsafe {
+                let _ = self.device.swapchain.queue_present(
+                    submit_queue,
+                    &vk::PresentInfoKHR::builder()
+                        .swapchains(&swapchains)
+                        .image_indices(&swapchain_indies)
+                        .wait_semaphores(&wait_semaphores),
+                );
             }
         }
 
@@ -502,7 +532,7 @@ fn acquire_swapchain_images(
 ) -> ash::prelude::VkResult<Vec<AcquiredSwapchain>> {
     let mut acquire_swapchains = Vec::with_capacity(swapchain_images.len());
 
-    for (surface, image_index) in swapchain_images.iter() {
+    for (surface, _image_index) in swapchain_images.iter() {
         let swapchain = swapchain_manager
             .get(*surface)
             .expect("Failed to find swapchain");

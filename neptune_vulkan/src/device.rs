@@ -176,7 +176,7 @@ impl Drop for AshDevice {
 }
 
 pub struct DeviceSettings {
-    pub frames_in_flight: usize,
+    pub frames_in_flight: u32,
 }
 
 pub struct Device {
@@ -226,7 +226,7 @@ impl Device {
         let upload_queue = UploadQueue::default();
         let graph_executor = BasicRenderGraphExecutor::new(device.clone())?;
         let graph_executor2 =
-            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
+            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight as usize)?;
 
         Ok(Device {
             device,
