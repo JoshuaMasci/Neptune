@@ -1,7 +1,8 @@
 use crate::render_graph::{
-    BufferGraphResource, BufferIndex, BufferResourceDescription, ColorAttachment, CommandBuffer,
-    CommandBufferDependency, CompiledRenderGraph, DepthStencilAttachment, Framebuffer,
-    ImageGraphResource, ImageIndex, ImageResourceDescription, QueueType, RenderPassCommand,
+    BufferBarrier, BufferGraphResource, BufferIndex, BufferResourceDescription, ColorAttachment,
+    CommandBuffer, CommandBufferDependency, CompiledRenderGraph, DepthStencilAttachment,
+    Framebuffer, ImageBarrier, ImageBarrierSource, ImageGraphResource, ImageIndex,
+    ImageResourceDescription, QueueType, RenderPassCommand,
 };
 use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage};
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
@@ -12,11 +13,25 @@ use crate::{
 use ash::vk;
 use std::collections::HashMap;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct RenderGraphBuilder {
     render_graph: CompiledRenderGraph,
     buffer_index_map: HashMap<BufferHandle, BufferIndex>,
     image_index_map: HashMap<ImageHandle, ImageIndex>,
+}
+
+impl Default for RenderGraphBuilder {
+    fn default() -> Self {
+        let render_graph = CompiledRenderGraph {
+            command_buffers: vec![CommandBuffer::default()],
+            ..Default::default()
+        };
+        Self {
+            render_graph,
+            buffer_index_map: Default::default(),
+            image_index_map: Default::default(),
+        }
+    }
 }
 
 impl RenderGraphBuilder {
@@ -37,7 +52,8 @@ impl RenderGraphBuilder {
         let index = self.render_graph.image_resources.len() as ImageIndex;
         self.render_graph.image_resources.push(ImageGraphResource {
             description: ImageResourceDescription::Transient(desc),
-            last_access: ImageResourceAccess::None,
+            first_access: None,
+            last_access: None,
         });
         let handle = ImageHandle::Transient(index);
         self.image_index_map.insert(handle, index);
@@ -52,7 +68,8 @@ impl RenderGraphBuilder {
             .push((surface_handle, index));
         self.render_graph.image_resources.push(ImageGraphResource {
             description: ImageResourceDescription::Swapchain(swapchain_index),
-            last_access: ImageResourceAccess::None,
+            first_access: None,
+            last_access: None,
         });
         let handle = ImageHandle::Transient(index);
         self.image_index_map.insert(handle, index);
@@ -128,12 +145,6 @@ impl RenderGraphBuilder {
             render_passes: vec![pass],
         };
 
-        if self.render_graph.command_buffers.is_empty() {
-            self.render_graph
-                .command_buffers
-                .push(CommandBuffer::default());
-        }
-
         self.render_graph.command_buffers[0]
             .render_pass_sets
             .push(pass_set);
@@ -157,71 +168,126 @@ impl RenderGraphBuilder {
         color_attachments: &[(ImageHandle, Option<[f32; 4]>)],
         depth_stencil_attachment: Option<(ImageHandle, Option<(f32, u32)>)>,
     ) {
-        let pass = crate::render_graph::RenderPass2 {
-            label_name: name,
-            label_color: color,
-            command: Some(RenderPassCommand::Raster {
-                framebuffer: Framebuffer {
-                    color_attachments: color_attachments
-                        .iter()
-                        .map(|(image, clear)| ColorAttachment {
-                            image: self.get_image_index(*image),
+        let mut image_usages = Vec::new();
+
+        let raster_command = RenderPassCommand::Raster {
+            framebuffer: Framebuffer {
+                color_attachments: color_attachments
+                    .iter()
+                    .map(|(image, clear)| {
+                        let image_index = self.get_image_index(*image);
+                        image_usages.push((image_index, ImageResourceAccess::AttachmentWrite));
+                        ColorAttachment {
+                            image: image_index,
                             clear: *clear,
-                        })
-                        .collect(),
-                    depth_stencil_attachment: depth_stencil_attachment.map(|(image, clear)| {
-                        DepthStencilAttachment {
-                            image: self.get_image_index(image),
-                            clear,
                         }
-                    }),
-                },
-                draw_commands: vec![],
-            }),
+                    })
+                    .collect(),
+                depth_stencil_attachment: depth_stencil_attachment.map(|(image, clear)| {
+                    let image_index = self.get_image_index(image);
+                    image_usages.push((image_index, ImageResourceAccess::AttachmentWrite));
+                    DepthStencilAttachment {
+                        image: image_index,
+                        clear,
+                    }
+                }),
+            },
+            draw_commands: Vec::new(),
         };
 
-        let pass_set = crate::render_graph::RenderPassSet {
-            memory_barriers: vec![vk::MemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-                .build()],
-            buffer_barriers: vec![],
-            image_barriers: vec![],
-            render_passes: vec![pass],
-        };
-
-        if self.render_graph.command_buffers.is_empty() {
-            self.render_graph
-                .command_buffers
-                .push(CommandBuffer::default());
-        }
-
-        self.render_graph.command_buffers[0]
-            .render_pass_sets
-            .push(pass_set);
+        self.add_render_pass(name, color, &[], &image_usages, Some(raster_command));
     }
 
     pub fn build(mut self) -> CompiledRenderGraph {
         if let Some(command_buffer) = self.render_graph.command_buffers.get_mut(0) {
-            for swapchain_index in 0..self.render_graph.swapchain_images.len() {
+            for (swapchain_index, (_, image_index)) in
+                self.render_graph.swapchain_images.iter().enumerate()
+            {
                 command_buffer.command_buffer_wait_dependencies.push(
                     CommandBufferDependency::Swapchain {
                         index: swapchain_index,
-                        stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
+                        access: self.render_graph.image_resources[*image_index]
+                            .first_access
+                            .unwrap_or(ImageResourceAccess::None),
                     },
                 );
                 command_buffer.command_buffer_signal_dependencies.push(
                     CommandBufferDependency::Swapchain {
                         index: swapchain_index,
-                        stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
+                        access: self.render_graph.image_resources[*image_index]
+                            .last_access
+                            .unwrap_or(ImageResourceAccess::None),
                     },
                 );
             }
         }
 
         self.render_graph
+    }
+
+    fn add_render_pass(
+        &mut self,
+        label_name: String,
+        label_color: [f32; 4],
+        buffer_usages: &[(BufferIndex, BufferResourceAccess)],
+        image_usages: &[(ImageIndex, ImageResourceAccess)],
+        command: Option<RenderPassCommand>,
+    ) {
+        let buffer_barriers = self.create_buffer_barriers(buffer_usages);
+        let image_barriers = self.create_image_barriers(image_usages);
+        self.render_graph.command_buffers[0].render_pass_sets.push(
+            crate::render_graph::RenderPassSet {
+                memory_barriers: vec![vk::MemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .build()],
+                buffer_barriers,
+                image_barriers,
+                render_passes: vec![crate::render_graph::RenderPass2 {
+                    label_name,
+                    label_color,
+                    command,
+                }],
+            },
+        );
+    }
+
+    fn create_buffer_barriers(
+        &mut self,
+        buffer_usages: &[(BufferIndex, BufferResourceAccess)],
+    ) -> Vec<BufferBarrier> {
+        //Unused since this uses global barriers
+        let _ = buffer_usages;
+        Vec::new()
+    }
+
+    fn create_image_barriers(
+        &mut self,
+        image_usages: &[(ImageIndex, ImageResourceAccess)],
+    ) -> Vec<ImageBarrier> {
+        image_usages
+            .iter()
+            .map(|(image_index, dst_access)| {
+                //Update first access if it doesn't exist
+                let _ = self.render_graph.image_resources[*image_index]
+                    .first_access
+                    .get_or_insert(*dst_access);
+                let src = match self.render_graph.image_resources[*image_index]
+                    .last_access
+                    .replace(*dst_access)
+                {
+                    None => ImageBarrierSource::FirstUsage,
+                    Some(access) => ImageBarrierSource::Precalculated(access),
+                };
+                ImageBarrier {
+                    index: *image_index,
+                    src,
+                    dst: *dst_access,
+                }
+            })
+            .collect()
     }
 
     fn get_buffer_index(&mut self, buffer_handle: BufferHandle) -> BufferIndex {
@@ -275,7 +341,8 @@ impl RenderGraphBuilder {
                     let index = self.render_graph.image_resources.len() as ImageIndex;
                     self.render_graph.image_resources.push(ImageGraphResource {
                         description: ImageResourceDescription::Persistent(image_key),
-                        last_access: ImageResourceAccess::None,
+                        first_access: None,
+                        last_access: None,
                     });
                     self.image_index_map.insert(image_handle, index);
                     index

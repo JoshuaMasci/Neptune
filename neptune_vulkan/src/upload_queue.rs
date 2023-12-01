@@ -37,7 +37,8 @@ impl UploadQueue {
         let index = self.image_resources.len();
         self.image_resources.push(ImageGraphResource {
             description: ImageResourceDescription::Persistent(image.as_key()),
-            last_access: access,
+            first_access: None,
+            last_access: Some(access),
         });
         self.image_access.push((index, access));
         index

@@ -1,4 +1,6 @@
-use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
+use crate::resource_managers::{
+    BufferBarrierFlags, BufferResourceAccess, ImageBarrierFlags, ImageResourceAccess,
+};
 use crate::{
     BufferDescription, BufferKey, ComputePipelineHandle, ImageKey, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle, TransientImageDesc,
@@ -56,7 +58,8 @@ pub enum ImageResourceDescription {
 #[derive(Debug)]
 pub struct ImageGraphResource {
     pub description: ImageResourceDescription,
-    pub last_access: ImageResourceAccess,
+    pub first_access: Option<ImageResourceAccess>,
+    pub last_access: Option<ImageResourceAccess>,
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -221,6 +224,12 @@ pub struct RenderGraph {
 
 // TODO: Determine the best pre and/or post frame ownership barriers
 
+// Graph Builders:
+// 1. Debug = Single Queue + Serial + Image Transitions + Global Memory Barriers
+// 2. Basic = Single Queue + Pass Promoting + Image/Buffer Transitions
+// 3. Graph = Single Queue + Topological Sort + Image/Buffer Transitions
+// 4. GraphMultiQueue = Multiple Queues + Topological Sort + Image/Buffer Transitions
+
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Queue {
     #[default]
@@ -243,18 +252,14 @@ pub enum BufferBarrierSource {
     FirstUsage,
 
     /// Precalculated usage from the graph
-    Precalculated {
-        src_stage_mask: vk::PipelineStageFlags2,
-        src_access_mask: vk::AccessFlags2,
-    },
+    Precalculated(BufferResourceAccess),
 }
 
 #[derive(Debug, Default)]
 pub struct BufferBarrier {
     pub index: BufferIndex,
     pub src: BufferBarrierSource,
-    pub dst_stage_mask: vk::PipelineStageFlags2,
-    pub dst_access_mask: vk::AccessFlags2,
+    pub dst: BufferResourceAccess,
 }
 
 #[derive(Debug, Default)]
@@ -264,20 +269,14 @@ pub enum ImageBarrierSource {
     FirstUsage,
 
     /// Precalculated usage from the graph
-    Precalculated {
-        src_layout: vk::ImageLayout,
-        src_stage_mask: vk::PipelineStageFlags2,
-        src_access_mask: vk::AccessFlags2,
-    },
+    Precalculated(ImageResourceAccess),
 }
 
 #[derive(Debug, Default)]
 pub struct ImageBarrier {
     pub index: ImageIndex,
     pub src: ImageBarrierSource,
-    pub dst_layout: vk::ImageLayout,
-    pub dst_stage_mask: vk::PipelineStageFlags2,
-    pub dst_access_mask: vk::AccessFlags2,
+    pub dst: ImageResourceAccess,
 }
 
 #[derive(Debug, Default)]
@@ -321,7 +320,7 @@ pub enum CommandBufferDependency {
     },
     Swapchain {
         index: usize,
-        stage_mask: vk::PipelineStageFlags2,
+        access: ImageResourceAccess,
     },
 }
 

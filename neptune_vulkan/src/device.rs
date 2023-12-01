@@ -207,7 +207,7 @@ impl Device {
         let graphics_queue_index = 0;
 
         let device = AshDevice::new(instance, &physical_device).map(Arc::new)?;
-        let resource_manager = ResourceManager::new(device.clone());
+        let resource_manager = ResourceManager::new(device.clone(), settings.frames_in_flight);
         let swapchain_manager = SwapchainManager::new(device.instance.clone());
 
         let pipelines = Pipelines::new(device.clone(), unsafe {
@@ -226,7 +226,7 @@ impl Device {
         let upload_queue = UploadQueue::default();
         let graph_executor = BasicRenderGraphExecutor::new(device.clone())?;
         let graph_executor2 =
-            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight as usize)?;
+            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
 
         Ok(Device {
             device,

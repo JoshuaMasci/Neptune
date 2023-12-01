@@ -699,7 +699,8 @@ impl RenderGraphBuilder {
         let index = self.render_graph.image_resources.len() as ImageIndex;
         self.render_graph.image_resources.push(ImageGraphResource {
             description: ImageResourceDescription::Transient(desc),
-            last_access: ImageResourceAccess::None,
+            first_access: None,
+            last_access: None,
         });
         let handle = ImageHandle::Transient(index);
         self.image_index_map.insert(handle, index);
@@ -714,7 +715,8 @@ impl RenderGraphBuilder {
             .push((surface_handle, index));
         self.render_graph.image_resources.push(ImageGraphResource {
             description: ImageResourceDescription::Swapchain(swapchain_index),
-            last_access: ImageResourceAccess::None,
+            first_access: None,
+            last_access: None,
         });
         let handle = ImageHandle::Transient(index);
         self.image_index_map.insert(handle, index);
@@ -776,7 +778,8 @@ impl RenderGraphBuilder {
                     let index = self.render_graph.image_resources.len() as ImageIndex;
                     self.render_graph.image_resources.push(ImageGraphResource {
                         description: ImageResourceDescription::Persistent(image_key),
-                        last_access: ImageResourceAccess::None,
+                        first_access: None,
+                        last_access: None,
                     });
                     self.image_index_map.insert(image_handle, index);
                     index

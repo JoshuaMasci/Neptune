@@ -383,11 +383,19 @@ impl Editor {
             neptune_vulkan::render_graph_builder2::RenderGraphBuilder::default();
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
+        let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
+            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
+            format: vk::Format::D16_UNORM,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            mip_levels: 1,
+            memory_location: MemoryLocation::GpuOnly,
+        });
+
         render_graph_builder.add_raster_pass(
             "Swapchain Pass".to_string(),
             [1.0; 4],
             &[(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]))],
-            None,
+            Some((depth_image, Some((1.0, 0)))),
         );
 
         let render_graph = render_graph_builder.build();

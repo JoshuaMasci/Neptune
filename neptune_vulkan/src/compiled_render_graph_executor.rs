@@ -1,9 +1,13 @@
 use crate::device::{AshDevice, AshQueue};
+use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
 use crate::render_graph::{
-    CommandBuffer, CommandBufferDependency, CompiledRenderGraph, ImageIndex,
+    BufferBarrierSource, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
+    ImageBarrierSource, ImageIndex, RenderPassCommand,
 };
-use crate::render_graph_executor::RenderGraphResources;
+use crate::render_graph_executor::{
+    record_compute_pass, record_raster_pass, record_transfer_pass, RenderGraphResources,
+};
 use crate::resource_managers::ResourceManager;
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::upload_queue::UploadPass;
@@ -269,11 +273,10 @@ pub struct CompiledRenderGraphExecutor {
 }
 
 impl CompiledRenderGraphExecutor {
-    pub fn new(
-        device: Arc<AshDevice>,
-        frame_in_flight_count: usize,
-    ) -> ash::prelude::VkResult<Self> {
-        let mut frame_contexts = Vec::with_capacity(frame_in_flight_count);
+    pub fn new(device: Arc<AshDevice>, frame_in_flight_count: u32) -> ash::prelude::VkResult<Self> {
+        //TODO: not this once ResourceManager supports multiple frames in flight
+        let frame_in_flight_count = frame_in_flight_count.min(1);
+        let mut frame_contexts = Vec::with_capacity(frame_in_flight_count as usize);
         for _ in 0..frame_contexts.capacity() {
             frame_contexts.push(FrameContext::new(device.clone())?)
         }
@@ -317,12 +320,6 @@ impl CompiledRenderGraphExecutor {
         let mut buffers = resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
         let mut images = resource_manager
             .get_image_resources(&acquired_swapchain_images, &render_graph.image_resources)?;
-        // let mut resources = RenderGraphResources {
-        //     buffers: &mut buffers,
-        //     images: &mut images,
-        //     persistent: resource_manager,
-        //     pipelines,
-        // };
 
         let submit_queue = self.device.graphics_queue.unwrap().handle;
 
@@ -348,7 +345,18 @@ impl CompiledRenderGraphExecutor {
 
                 //TODO: acquire resource ownership
 
-                record_command_buffer(&self.device, vulkan_command_buffer, graph_command_buffer);
+                let mut resources = RenderGraphResources {
+                    buffers: &mut buffers,
+                    images: &mut images,
+                    persistent: resource_manager,
+                    pipelines,
+                };
+                record_command_buffer(
+                    &self.device,
+                    vulkan_command_buffer,
+                    graph_command_buffer,
+                    &mut resources,
+                );
 
                 //TODO: release resource ownership
 
@@ -369,25 +377,22 @@ impl CompiledRenderGraphExecutor {
                     .command_buffer_signal_dependencies
                     .iter()
                     .filter_map(|signal_dependency| match signal_dependency {
-                        CommandBufferDependency::Swapchain { index, .. } => Some(index),
+                        CommandBufferDependency::Swapchain { index, access } => {
+                            Some((index, access))
+                        }
                         _ => None,
                     })
-                    .map(|&swapchain_index| {
+                    .map(|(&swapchain_index, access)| {
+                        let src = access.get_barrier_flags(true);
                         //Get last swapchain usages
-                        let swapchain_image_resource_index =
-                            render_graph.swapchain_images[swapchain_index].1;
-                        let src_swapchain_barrier = &images[swapchain_image_resource_index]
-                            .last_access
-                            .get_barrier_flags(true); //Swapchain is always a color image
-
                         vk::ImageMemoryBarrier2::builder()
                             .image(acquired_swapchain_images[swapchain_index].image.handle)
-                            .old_layout(src_swapchain_barrier.layout)
-                            .src_stage_mask(src_swapchain_barrier.stage_mask)
-                            .src_access_mask(src_swapchain_barrier.access_mask)
+                            .old_layout(src.layout)
+                            .src_stage_mask(src.stage_mask)
+                            .src_access_mask(src.access_mask)
                             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                            .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                            .dst_access_mask(vk::AccessFlags2::NONE)
                             .subresource_range(SWAPCHAIN_SUBRESOURCE_RANGE)
                             .build()
                     })
@@ -426,10 +431,10 @@ impl CompiledRenderGraphExecutor {
                             )
                             .stage_mask(*stage_mask)
                             .build(),
-                        CommandBufferDependency::Swapchain { index, stage_mask } => {
+                        CommandBufferDependency::Swapchain { index, access } => {
                             vk::SemaphoreSubmitInfo::builder()
                                 .semaphore(acquired_swapchains[*index].image_ready_semaphore)
-                                .stage_mask(*stage_mask)
+                                .stage_mask(access.get_barrier_flags(true).stage_mask)
                                 .build()
                         }
                     })
@@ -455,10 +460,10 @@ impl CompiledRenderGraphExecutor {
                                 .stage_mask(*stage_mask)
                                 .build()
                         }
-                        CommandBufferDependency::Swapchain { index, stage_mask } => {
+                        CommandBufferDependency::Swapchain { index, access } => {
                             vk::SemaphoreSubmitInfo::builder()
                                 .semaphore(acquired_swapchains[*index].present_ready_semaphore)
-                                .stage_mask(*stage_mask)
+                                .stage_mask(access.get_barrier_flags(true).stage_mask)
                                 .build()
                         }
                     })
@@ -563,6 +568,7 @@ fn record_command_buffer(
     device: &AshDevice,
     vulkan_command_buffer: vk::CommandBuffer,
     graph_command_buffer: &CommandBuffer,
+    graph_resources: &mut RenderGraphResources,
 ) {
     for (render_pass_set_index, render_pass_set) in
         graph_command_buffer.render_pass_sets.iter().enumerate()
@@ -576,11 +582,70 @@ fn record_command_buffer(
         }
 
         //TODO: Buffer and Image Barriers
+        let buffer_barriers: Vec<vk::BufferMemoryBarrier2> = render_pass_set
+            .buffer_barriers
+            .iter()
+            .map(|buffer_barrier| {
+                let buffer = &graph_resources.buffers[buffer_barrier.index];
+                let src = match buffer_barrier.src {
+                    BufferBarrierSource::FirstUsage => buffer.last_access,
+                    BufferBarrierSource::Precalculated(flags) => flags,
+                }
+                .get_barrier_flags();
+                let dst = buffer_barrier.dst.get_barrier_flags();
+                vk::BufferMemoryBarrier2::builder()
+                    .buffer(buffer.buffer.handle)
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .src_stage_mask(src.stage_mask)
+                    .src_access_mask(src.access_mask)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_stage_mask(dst.stage_mask)
+                    .src_access_mask(dst.access_mask)
+                    .build()
+            })
+            .collect();
+
+        let image_barriers: Vec<vk::ImageMemoryBarrier2> = render_pass_set
+            .image_barriers
+            .iter()
+            .map(|image_barrier| {
+                let image = &graph_resources.images[image_barrier.index];
+                let is_color = image.image.is_color();
+                let src = match image_barrier.src {
+                    ImageBarrierSource::FirstUsage => image.last_access.get_barrier_flags(is_color),
+                    ImageBarrierSource::Precalculated(flags) => flags.get_barrier_flags(is_color),
+                };
+                let dst = image_barrier.dst.get_barrier_flags(is_color);
+                vk::ImageMemoryBarrier2::builder()
+                    .image(image.image.handle)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk_format_get_aspect_flags(image.image.format),
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .old_layout(src.layout)
+                    .src_stage_mask(src.stage_mask)
+                    .src_access_mask(src.access_mask)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .new_layout(dst.layout)
+                    .dst_stage_mask(dst.stage_mask)
+                    .dst_access_mask(dst.access_mask)
+                    .build()
+            })
+            .collect();
+
         unsafe {
             device.core.cmd_pipeline_barrier2(
                 vulkan_command_buffer,
                 &vk::DependencyInfo::builder()
                     .memory_barriers(&render_pass_set.memory_barriers)
+                    .buffer_memory_barriers(&buffer_barriers)
+                    .image_memory_barriers(&image_barriers)
                     .build(),
             );
         }
@@ -594,7 +659,40 @@ fn record_command_buffer(
                 );
             }
 
-            //TODO: record passes
+            if let Some(render_pass_command) = &render_pass.command {
+                match render_pass_command {
+                    RenderPassCommand::Transfer { transfers } => {
+                        record_transfer_pass(
+                            device,
+                            vulkan_command_buffer,
+                            graph_resources,
+                            transfers,
+                        );
+                    }
+                    RenderPassCommand::Compute {
+                        pipeline,
+                        resources,
+                        dispatch,
+                    } => record_compute_pass(
+                        device,
+                        vulkan_command_buffer,
+                        graph_resources,
+                        *pipeline,
+                        resources,
+                        dispatch,
+                    ),
+                    RenderPassCommand::Raster {
+                        framebuffer,
+                        draw_commands,
+                    } => record_raster_pass(
+                        device,
+                        vulkan_command_buffer,
+                        graph_resources,
+                        framebuffer,
+                        draw_commands,
+                    ),
+                }
+            }
 
             if let Some(debug_util) = &device.instance.debug_utils {
                 debug_util.cmd_end_label(vulkan_command_buffer);

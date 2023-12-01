@@ -15,6 +15,7 @@ mod compiled_render_graph_executor;
 pub mod render_graph;
 pub mod render_graph_builder;
 pub mod render_graph_builder2;
+mod render_graph_builder_trait;
 mod upload_queue;
 
 //Public Types

@@ -522,7 +522,7 @@ fn record_barrier(
     }
 }
 
-fn record_transfer_pass(
+pub fn record_transfer_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     graph_resources: &RenderGraphResources,
@@ -679,7 +679,7 @@ fn record_transfer_pass(
     }
 }
 
-fn record_compute_pass(
+pub fn record_compute_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     graph_resources: &RenderGraphResources,
@@ -712,7 +712,7 @@ fn record_compute_pass(
     }
 }
 
-fn record_raster_pass(
+pub fn record_raster_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     graph_resources: &RenderGraphResources,

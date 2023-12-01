@@ -190,9 +190,19 @@ pub struct ImageTempResource {
     pub last_access: ImageResourceAccess,
 }
 
+#[derive(Default)]
+struct ResourceFrame {
+    freed_buffers2: Vec<BufferKey>,
+    freed_images2: Vec<ImageKey>,
+    pub(crate) transient_buffers: Vec<Buffer>,
+    pub(crate) transient_images: Vec<Image>,
+}
+
 pub struct ResourceManager {
     #[allow(unused)]
     device: Arc<AshDevice>,
+
+    pub(crate) descriptor_set: DescriptorSet,
 
     buffers: SlotMap<BufferKey, BufferResource>,
     freed_buffers: Vec<BufferKey>,
@@ -202,9 +212,10 @@ pub struct ResourceManager {
 
     samplers: SlotMap<SamplerKey, Arc<Sampler>>,
 
-    pub(crate) descriptor_set: DescriptorSet,
-
     //TODO: rework this use multiple frames in flight
+    frames_in_flight: Vec<ResourceFrame>,
+    frame_index: usize,
+
     freed_buffers2: Vec<BufferKey>,
     freed_images2: Vec<ImageKey>,
     pub(crate) transient_buffers: Vec<Buffer>,
@@ -212,7 +223,7 @@ pub struct ResourceManager {
 }
 
 impl ResourceManager {
-    pub fn new(device: Arc<AshDevice>) -> Self {
+    pub fn new(device: Arc<AshDevice>, frame_in_flight_count: u32) -> Self {
         let descriptor_set = DescriptorSet::new(
             device.clone(),
             DescriptorCount {
@@ -224,6 +235,11 @@ impl ResourceManager {
             },
         )
         .unwrap();
+
+        let mut frames_in_flight = Vec::with_capacity(frame_in_flight_count as usize);
+        for _ in 0..frames_in_flight.capacity() {
+            frames_in_flight.push(ResourceFrame::default());
+        }
 
         Self {
             device,
@@ -237,6 +253,8 @@ impl ResourceManager {
             freed_images2: Vec::new(),
             transient_buffers: Vec::new(),
             transient_images: Vec::new(),
+            frames_in_flight,
+            frame_index: 0,
         }
     }
 
@@ -273,6 +291,7 @@ impl ResourceManager {
     pub fn get_buffer(&self, key: BufferKey) -> Option<&Buffer> {
         self.buffers.get(key).map(|resource| &resource.buffer)
     }
+
     pub fn get_and_update_buffer_resource(
         &mut self,
         key: BufferKey,
@@ -386,7 +405,7 @@ impl ResourceManager {
                         image: image.image.get_copy(),
                         last_access: std::mem::replace(
                             &mut image.last_access,
-                            graph_image.last_access,
+                            graph_image.last_access.expect("In theory this should never happen, but I need to figure out if it will"),
                         ),
                     }
                 }
