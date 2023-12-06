@@ -4,7 +4,7 @@ use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
 use glam::Mat4;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::render_graph::{CompiledRenderGraph, ImageResourceDescription};
+use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
 use neptune_vulkan::{
     render_graph_builder, vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize,
 };
@@ -308,10 +308,10 @@ impl Editor {
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
-        let mut render_graph_builder = render_graph_builder::RenderGraphBuilder::default();
+        let mut render_graph_builder =
+            neptune_vulkan::basic_render_graph_builder::BasicRenderGraphBuilder::default();
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
-
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
             format: vk::Format::D16_UNORM,
@@ -321,9 +321,9 @@ impl Editor {
         });
 
         let mut raster_pass_builder =
-            render_graph_builder::RasterPassBuilder::new(&mut render_graph_builder, "Gltf Scene")
-                .add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]))
-                .add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
+            render_graph_builder::RasterPassBuilder::new("Swapchain Pass");
+        raster_pass_builder.add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]));
+        raster_pass_builder.add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
 
         for (index, node) in self.scene.mesh_nodes.iter().enumerate() {
             let mesh = &self.scene.meshes[node.mesh_index];
@@ -337,22 +337,21 @@ impl Editor {
                     .map(|tex| (tex.image, tex.sampler))
                     .unwrap_or((self.scene.images[0], self.scene.samplers.default));
 
-                let draw_command_builder = render_graph_builder::DrawCommandBuilder::new(
-                    &mut raster_pass_builder,
-                    self.raster_pipeline,
-                )
-                .add_vertex_buffer(render_graph_builder::BufferOffset {
+                let mut draw_command_builder =
+                    render_graph_builder::RasterDrawCommandBuilder::new(self.raster_pipeline);
+
+                draw_command_builder.add_vertex_buffer(render_graph_builder::BufferOffset {
                     buffer: primitive.position_buffer,
                     offset: 0,
-                })
-                .add_vertex_buffer(render_graph_builder::BufferOffset {
+                });
+                draw_command_builder.add_vertex_buffer(render_graph_builder::BufferOffset {
                     buffer: primitive.attributes_buffer,
                     offset: 0,
-                })
-                .read_buffer(self.view_projection_matrix_buffer)
-                .read_buffer(self.model_matrices_buffer)
-                .read_sampler(base_color_sampler)
-                .read_sampled_image(base_color_texture);
+                });
+                draw_command_builder.read_buffer(self.view_projection_matrix_buffer);
+                draw_command_builder.read_buffer(self.model_matrices_buffer);
+                draw_command_builder.read_sampler(base_color_sampler);
+                draw_command_builder.read_sampled_image(base_color_texture);
 
                 let instance_range = (index as u32)..(index as u32 + 1);
 
@@ -370,33 +369,12 @@ impl Editor {
                 } else {
                     draw_command_builder.draw(0..primitive.vertex_count as u32, instance_range);
                 }
+
+                draw_command_builder.build(&mut raster_pass_builder);
             }
         }
-        raster_pass_builder.build();
 
-        self.device.submit_frame(&render_graph_builder.build())?;
-        Ok(())
-    }
-
-    pub fn render2(&mut self) -> anyhow::Result<()> {
-        let mut render_graph_builder =
-            neptune_vulkan::render_graph_builder2::RenderGraphBuilder::default();
-
-        let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
-        let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
-            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: vk::Format::D16_UNORM,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            mip_levels: 1,
-            memory_location: MemoryLocation::GpuOnly,
-        });
-
-        render_graph_builder.add_raster_pass(
-            "Swapchain Pass".to_string(),
-            [1.0; 4],
-            &[(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]))],
-            Some((depth_image, Some((1.0, 0)))),
-        );
+        raster_pass_builder.build(&mut render_graph_builder);
 
         let render_graph = render_graph_builder.build();
         self.device.submit_graph(&render_graph)?;

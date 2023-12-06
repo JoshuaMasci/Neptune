@@ -3,17 +3,19 @@ use crate::device::{AshDevice, AshQueue};
 use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
 use crate::render_graph::{
-    BufferIndex, ComputeDispatch, DrawCommandDispatch, Framebuffer, ImageIndex, IndexType,
-    RasterDrawCommand, RenderGraph, RenderPass, RenderPassCommand, ShaderResourceUsage, Transfer,
+    BufferBarrierSource, BufferIndex, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
+    ComputeDispatch, DrawCommandDispatch, Framebuffer, ImageBarrierSource, ImageIndex, IndexType,
+    OldRenderPass, RasterDrawCommand, RenderPassCommand, ShaderResourceUsage, Transfer,
 };
-
 use crate::resource_managers::{
     BufferResourceAccess, BufferTempResource, ImageResourceAccess, ImageTempResource,
     ResourceManager,
 };
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::upload_queue::UploadPass;
-use crate::{ComputePipelineHandle, RasterPipelineHandle, Sampler, SamplerHandle, VulkanError};
+use crate::{
+    ComputePipelineHandle, RasterPipelineHandle, Sampler, SamplerHandle, SurfaceHandle, VulkanError,
+};
 use ash::vk;
 use log::info;
 use std::sync::Arc;
@@ -25,22 +27,20 @@ use std::sync::Arc;
 // 3. Multi-Queue execution
 // 4. Sub resource tracking. Allowing image levels/layers and buffer regions to be transition and accessed in parallel
 
-pub struct BasicRenderGraphExecutor {
+struct AshCommandPool {
     device: Arc<AshDevice>,
-    queue: AshQueue,
-
-    command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
-
-    swapchain_semaphores: Vec<(vk::Semaphore, vk::Semaphore)>,
-    frame_done_fence: vk::Fence,
+    handle: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
+    next_index: usize,
 }
 
-impl BasicRenderGraphExecutor {
-    pub fn new(device: Arc<AshDevice>) -> ash::prelude::VkResult<Self> {
-        let queue = device.graphics_queue.expect("Requires a graphics queue");
-
-        let command_pool = unsafe {
+impl AshCommandPool {
+    pub fn new(
+        device: Arc<AshDevice>,
+        queue: AshQueue,
+        capacity: u32,
+    ) -> ash::prelude::VkResult<Self> {
+        let handle = unsafe {
             device.core.create_command_pool(
                 &vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(queue.family_index)
@@ -50,39 +50,244 @@ impl BasicRenderGraphExecutor {
             )
         }?;
 
-        let command_buffer = unsafe {
+        let command_buffers = unsafe {
             device.core.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::builder()
-                    .command_pool(command_pool)
-                    .command_buffer_count(1),
-            )
-        }?[0];
-
-        let frame_done_fence = unsafe {
-            device.core.create_fence(
-                &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
-                None,
+                    .command_pool(handle)
+                    .command_buffer_count(capacity),
             )
         }?;
 
-        let swapchain_semaphores = vec![unsafe {
-            (
-                device
-                    .core
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
-                device
-                    .core
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
-            )
-        }];
-
         Ok(Self {
             device,
-            queue,
-            command_pool,
-            command_buffer,
-            swapchain_semaphores,
-            frame_done_fence,
+            handle,
+            command_buffers,
+            next_index: 0,
+        })
+    }
+
+    pub fn get(&mut self) -> ash::prelude::VkResult<vk::CommandBuffer> {
+        if self.next_index >= self.command_buffers.len() {
+            let mut new_command_buffers = unsafe {
+                self.device.core.allocate_command_buffers(
+                    &vk::CommandBufferAllocateInfo::builder()
+                        .command_pool(self.handle)
+                        .command_buffer_count(self.command_buffers.len().max(2) as u32),
+                )?
+            };
+            self.command_buffers.append(&mut new_command_buffers);
+        }
+
+        let command_buffer = self.command_buffers[self.next_index];
+        self.next_index += 1;
+        Ok(command_buffer)
+    }
+
+    pub fn reset(&mut self) -> ash::prelude::VkResult<()> {
+        self.next_index = 0;
+        unsafe {
+            self.device
+                .core
+                .reset_command_pool(self.handle, vk::CommandPoolResetFlags::empty())
+        }
+    }
+}
+
+impl Drop for AshCommandPool {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.core.destroy_command_pool(self.handle, None);
+        }
+    }
+}
+
+struct AshSemaphorePool {
+    device: Arc<AshDevice>,
+    semaphores: Vec<vk::Semaphore>,
+    next_index: usize,
+}
+
+impl AshSemaphorePool {
+    pub fn new(device: Arc<AshDevice>) -> Self {
+        Self {
+            device,
+            semaphores: Vec::new(),
+            next_index: 0,
+        }
+    }
+
+    pub fn get(&mut self) -> ash::prelude::VkResult<vk::Semaphore> {
+        if self.next_index >= self.semaphores.len() {
+            unsafe {
+                self.semaphores.push(
+                    self.device
+                        .core
+                        .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?,
+                );
+            }
+        }
+
+        let semaphore = self.semaphores[self.next_index];
+        self.next_index += 1;
+        Ok(semaphore)
+    }
+
+    pub fn get_vec(&mut self, count: usize) -> ash::prelude::VkResult<Vec<vk::Semaphore>> {
+        let mut vec = Vec::with_capacity(count);
+        for _ in 0..count {
+            vec.push(self.get()?);
+        }
+        Ok(vec)
+    }
+
+    pub fn reset(&mut self) {
+        self.next_index = 0;
+    }
+}
+
+impl Drop for AshSemaphorePool {
+    fn drop(&mut self) {
+        for semaphore in self.semaphores.drain(..) {
+            unsafe {
+                self.device.core.destroy_semaphore(semaphore, None);
+            }
+        }
+    }
+}
+
+struct AshFencePool {
+    device: Arc<AshDevice>,
+    fences: Vec<vk::Fence>,
+    next_index: usize,
+}
+
+impl AshFencePool {
+    pub fn new(device: Arc<AshDevice>) -> Self {
+        Self {
+            device,
+            fences: Vec::new(),
+            next_index: 0,
+        }
+    }
+
+    pub fn get(&mut self) -> ash::prelude::VkResult<vk::Fence> {
+        if self.next_index >= self.fences.len() {
+            unsafe {
+                self.fences.push(
+                    self.device
+                        .core
+                        .create_fence(&vk::FenceCreateInfo::default(), None)?,
+                );
+            }
+        }
+
+        let fence = self.fences[self.next_index];
+        self.next_index += 1;
+        Ok(fence)
+    }
+
+    pub fn wait_for_all(&self, timeout_ns: u64) -> ash::prelude::VkResult<()> {
+        if self.next_index == 0 {
+            return Ok(());
+        }
+
+        unsafe {
+            self.device
+                .core
+                .wait_for_fences(&self.fences[0..self.next_index], true, timeout_ns)
+        }
+    }
+
+    pub fn reset(&mut self) -> ash::prelude::VkResult<()> {
+        if self.next_index == 0 {
+            return Ok(());
+        }
+
+        unsafe {
+            self.device
+                .core
+                .reset_fences(&self.fences[0..self.next_index])?;
+        }
+        self.next_index = 0;
+        Ok(())
+    }
+}
+
+impl Drop for AshFencePool {
+    fn drop(&mut self) {
+        for fence in self.fences.drain(..) {
+            unsafe {
+                self.device.core.destroy_fence(fence, None);
+            }
+        }
+    }
+}
+
+struct FrameContext {
+    graphics_command_pool: AshCommandPool,
+    async_compute_command_pool: Option<AshCommandPool>,
+    async_transfer_command_pool: Option<AshCommandPool>,
+    semaphore_pool: AshSemaphorePool,
+    fence_pool: AshFencePool,
+}
+
+impl FrameContext {
+    pub fn new(device: Arc<AshDevice>) -> ash::prelude::VkResult<Self> {
+        Ok(Self {
+            graphics_command_pool: AshCommandPool::new(
+                device.clone(),
+                device.graphics_queue.expect("Requires a graphics queue"),
+                8,
+            )?,
+            async_compute_command_pool: match device.compute_queue {
+                None => None,
+                Some(queue) => Some(AshCommandPool::new(device.clone(), queue, 4)?),
+            },
+            async_transfer_command_pool: match device.transfer_queue {
+                None => None,
+                Some(queue) => Some(AshCommandPool::new(device.clone(), queue, 4)?),
+            },
+            semaphore_pool: AshSemaphorePool::new(device.clone()),
+            fence_pool: AshFencePool::new(device),
+        })
+    }
+
+    pub fn wait_and_reset(&mut self, timeout_ns: u64) -> ash::prelude::VkResult<()> {
+        self.fence_pool.wait_for_all(timeout_ns)?;
+        self.fence_pool.reset()?;
+        self.semaphore_pool.reset();
+
+        self.graphics_command_pool.reset()?;
+        if let Some(command_pool) = &mut self.async_compute_command_pool {
+            command_pool.reset()?;
+        }
+
+        if let Some(command_pool) = &mut self.async_transfer_command_pool {
+            command_pool.reset()?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct RenderGraphExecutor {
+    device: Arc<AshDevice>,
+    frame_contexts: Vec<FrameContext>,
+    frame_index: usize,
+}
+
+impl RenderGraphExecutor {
+    pub fn new(device: Arc<AshDevice>, frame_in_flight_count: u32) -> ash::prelude::VkResult<Self> {
+        //TODO: not this once ResourceManager supports multiple frames in flight
+        let frame_in_flight_count = frame_in_flight_count.min(1);
+        let mut frame_contexts = Vec::with_capacity(frame_in_flight_count as usize);
+        for _ in 0..frame_contexts.capacity() {
+            frame_contexts.push(FrameContext::new(device.clone())?)
+        }
+        Ok(Self {
+            device,
+            frame_contexts,
+            frame_index: 0,
         })
     }
 
@@ -92,150 +297,30 @@ impl BasicRenderGraphExecutor {
         swapchain_manager: &mut SwapchainManager,
         pipelines: &Pipelines,
         upload_pass: Option<UploadPass>,
-        render_graph: &RenderGraph,
+        render_graph: &CompiledRenderGraph,
     ) -> Result<(), VulkanError> {
         const TIMEOUT_NS: u64 = std::time::Duration::from_secs(2).as_nanos() as u64;
+        self.frame_index = (self.frame_index + 1) % self.frame_contexts.len();
 
-        unsafe {
-            self.device
-                .core
-                .wait_for_fences(&[self.frame_done_fence], true, TIMEOUT_NS)
-                .unwrap();
+        let frame_context = &mut self.frame_contexts[self.frame_index];
 
-            self.device
-                .core
-                .reset_fences(&[self.frame_done_fence])
-                .unwrap();
-        }
-
+        frame_context.wait_and_reset(TIMEOUT_NS)?;
         resource_manager.flush_frame();
 
-        let semaphore_create_info = vk::SemaphoreCreateInfo::builder().build();
-
-        //If we need more semaphores create them
-        if self.swapchain_semaphores.len() < render_graph.swapchain_images.len() {
-            for _ in self.swapchain_semaphores.len()..render_graph.swapchain_images.len() {
-                self.swapchain_semaphores.push(unsafe {
-                    (
-                        self.device
-                            .core
-                            .create_semaphore(&semaphore_create_info, None)?,
-                        self.device
-                            .core
-                            .create_semaphore(&semaphore_create_info, None)?,
-                    )
-                });
-            }
-        }
-
-        let mut swapchain_index_images: Vec<AcquiredSwapchainImage> =
-            Vec::with_capacity(render_graph.swapchain_images.len());
-        for ((surface_handle, _), swapchain_semaphores) in render_graph
-            .swapchain_images
-            .iter()
-            .zip(self.swapchain_semaphores.iter())
-        {
-            let swapchain = swapchain_manager
-                .get(*surface_handle)
-                .expect("Failed to find swapchain");
-
-            let mut swapchain_result: ash::prelude::VkResult<(AcquiredSwapchainImage, bool)> =
-                swapchain.acquire_next_image(swapchain_semaphores.0);
-
-            while let Err(vk::Result::ERROR_OUT_OF_DATE_KHR) = &swapchain_result {
-                info!("Swapchain Out of Data, Rebuilding");
-                swapchain.rebuild()?;
-                swapchain_result = swapchain.acquire_next_image(swapchain_semaphores.0);
-            }
-
-            let image = swapchain_result.unwrap().0;
-            swapchain_index_images.push(image);
-        }
-
-        unsafe {
-            self.device
-                .core
-                .begin_command_buffer(self.command_buffer, &vk::CommandBufferBeginInfo::builder())
-                .unwrap();
-
-            // Device Upload Pass
-            // Treat it like a mini render-graph so I can reuse the upload code
-            if let Some(upload_pass) = upload_pass {
-                let mut buffers =
-                    resource_manager.get_buffer_resources(&upload_pass.buffer_resources)?;
-                let mut images =
-                    resource_manager.get_image_resources(&[], &upload_pass.image_resources)?;
-                let mut resources = RenderGraphResources {
-                    buffers: &mut buffers,
-                    images: &mut images,
-                    persistent: resource_manager,
-                    pipelines,
-                };
-                record_render_pass(
-                    &self.device,
-                    self.command_buffer,
-                    &mut resources,
-                    &upload_pass.pass,
-                );
-            }
-
-            //Bind descriptor set
-            {
-                let pipeline_bind_points = [
-                    vk::PipelineBindPoint::COMPUTE,
-                    vk::PipelineBindPoint::GRAPHICS,
-                ];
-                let set = resource_manager.descriptor_set.get_set();
-                for pipeline_bind_point in pipeline_bind_points {
-                    self.device.core.cmd_bind_descriptor_sets(
-                        self.command_buffer,
-                        pipeline_bind_point,
-                        pipelines.layout,
-                        0,
-                        &[set],
-                        &[],
-                    );
-                }
-            }
-
-            // Transition Swapchain to General
-            if !swapchain_index_images.is_empty() {
-                let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .base_mip_level(0)
-                    .level_count(1)
-                    .build();
-
-                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_index_images
-                    .iter()
-                    .map(|swapchain_image| {
-                        vk::ImageMemoryBarrier2::builder()
-                            .image(swapchain_image.image.handle)
-                            .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                            .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                            .old_layout(vk::ImageLayout::UNDEFINED)
-                            .new_layout(vk::ImageLayout::GENERAL)
-                            .subresource_range(swapchain_subresource_range)
-                            .build()
-                    })
-                    .collect();
-
-                self.device.core.cmd_pipeline_barrier2(
-                    self.command_buffer,
-                    &vk::DependencyInfo::builder()
-                        .image_memory_barriers(&image_barriers)
-                        .build(),
-                );
-            }
+        //Upload Pass
+        if let Some(upload_pass) = upload_pass {
+            let upload_command_buffer = frame_context.graphics_command_pool.get()?;
+            unsafe {
+                self.device.core.begin_command_buffer(
+                    upload_command_buffer,
+                    &vk::CommandBufferBeginInfo::builder(),
+                )?
+            };
 
             let mut buffers =
-                resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
-            let mut images = resource_manager
-                .get_image_resources(&swapchain_index_images, &render_graph.image_resources)?;
+                resource_manager.get_buffer_resources(&upload_pass.buffer_resources)?;
+            let mut images =
+                resource_manager.get_image_resources(&[], &upload_pass.image_resources)?;
 
             let mut resources = RenderGraphResources {
                 buffers: &mut buffers,
@@ -244,158 +329,458 @@ impl BasicRenderGraphExecutor {
                 pipelines,
             };
 
-            for render_pass in render_graph.render_passes.iter() {
-                record_render_pass(
-                    &self.device,
-                    self.command_buffer,
-                    &mut resources,
-                    render_pass,
-                );
-            }
+            //TODO rework upload pass to not use the old render pass object
+            record_render_pass(
+                &self.device,
+                upload_command_buffer,
+                &mut resources,
+                &upload_pass.pass,
+            );
 
-            // Transition Swapchain to Present
-            if !swapchain_index_images.is_empty() {
-                let swapchain_subresource_range = vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .base_mip_level(0)
-                    .level_count(1)
+            unsafe {
+                self.device.core.end_command_buffer(upload_command_buffer)?;
+
+                let command_buffer_info = vk::CommandBufferSubmitInfo::builder()
+                    .command_buffer(upload_command_buffer)
                     .build();
+                self.device.core.queue_submit2(
+                    self.device.graphics_queue.unwrap().handle,
+                    &[vk::SubmitInfo2::builder()
+                        .command_buffer_infos(&[command_buffer_info])
+                        .build()],
+                    vk::Fence::null(),
+                )?;
+            }
+        }
 
-                let image_barriers: Vec<vk::ImageMemoryBarrier2> = swapchain_index_images
+        let command_buffer_dependency_semaphores = allocate_command_buffer_semaphores(
+            &mut frame_context.semaphore_pool,
+            &render_graph.command_buffers,
+        )?;
+
+        let acquired_swapchains = acquire_swapchain_images(
+            &mut frame_context.semaphore_pool,
+            swapchain_manager,
+            &render_graph.swapchain_images,
+        )?;
+        let acquired_swapchain_images: Vec<AcquiredSwapchainImage> = acquired_swapchains
+            .iter()
+            .map(|swapchain| swapchain.image.clone())
+            .collect();
+        let mut buffers = resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
+        let mut images = resource_manager
+            .get_image_resources(&acquired_swapchain_images, &render_graph.image_resources)?;
+
+        let submit_queue = self.device.graphics_queue.unwrap().handle;
+
+        for (command_buffer_index, graph_command_buffer) in
+            render_graph.command_buffers.iter().enumerate()
+        {
+            //TODO: multi-queue
+            let vulkan_command_buffer = frame_context.graphics_command_pool.get()?;
+
+            unsafe {
+                self.device.core.begin_command_buffer(
+                    vulkan_command_buffer,
+                    &vk::CommandBufferBeginInfo::builder(),
+                )?;
+
+                //Bind descriptor set
+                {
+                    let pipeline_bind_points = [
+                        vk::PipelineBindPoint::COMPUTE,
+                        vk::PipelineBindPoint::GRAPHICS,
+                    ];
+                    let set = resource_manager.descriptor_set.get_set();
+                    for pipeline_bind_point in pipeline_bind_points {
+                        self.device.core.cmd_bind_descriptor_sets(
+                            vulkan_command_buffer,
+                            pipeline_bind_point,
+                            pipelines.layout,
+                            0,
+                            &[set],
+                            &[],
+                        );
+                    }
+                }
+
+                if let Some(debug_util) = &self.device.instance.debug_utils {
+                    debug_util.cmd_begin_label(
+                        vulkan_command_buffer,
+                        &format!("Command Buffer {}", command_buffer_index),
+                        [1.0; 4],
+                    );
+                }
+
+                //TODO: acquire resource ownership
+
+                let mut resources = RenderGraphResources {
+                    buffers: &mut buffers,
+                    images: &mut images,
+                    persistent: resource_manager,
+                    pipelines,
+                };
+                record_command_buffer(
+                    &self.device,
+                    vulkan_command_buffer,
+                    graph_command_buffer,
+                    &mut resources,
+                );
+
+                //TODO: release resource ownership
+
+                if let Some(debug_util) = &self.device.instance.debug_utils {
+                    debug_util.cmd_end_label(vulkan_command_buffer);
+                }
+
+                const SWAPCHAIN_SUBRESOURCE_RANGE: vk::ImageSubresourceRange =
+                    vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    };
+
+                let swapchain_transitions: Vec<vk::ImageMemoryBarrier2> = graph_command_buffer
+                    .command_buffer_signal_dependencies
                     .iter()
-                    .enumerate()
-                    .map(|(index, swapchain_image)| {
+                    .filter_map(|signal_dependency| match signal_dependency {
+                        CommandBufferDependency::Swapchain { index, access } => {
+                            Some((index, access))
+                        }
+                        _ => None,
+                    })
+                    .map(|(&swapchain_index, access)| {
+                        let src = access.get_barrier_flags(true);
                         //Get last swapchain usages
-                        let swapchain_image_resource_index = render_graph.swapchain_images[index].1;
-                        let src_swapchain_barrier = &images[swapchain_image_resource_index]
-                            .last_access
-                            .get_barrier_flags(true); //Swapchain is always a color image
-
                         vk::ImageMemoryBarrier2::builder()
-                            .image(swapchain_image.image.handle)
-                            .old_layout(src_swapchain_barrier.layout)
-                            .src_stage_mask(src_swapchain_barrier.stage_mask)
-                            .src_access_mask(src_swapchain_barrier.access_mask)
+                            .image(acquired_swapchain_images[swapchain_index].image.handle)
+                            .old_layout(src.layout)
+                            .src_stage_mask(src.stage_mask)
+                            .src_access_mask(src.access_mask)
                             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                            .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                            .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                            .subresource_range(swapchain_subresource_range)
+                            .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                            .dst_access_mask(vk::AccessFlags2::NONE)
+                            .subresource_range(SWAPCHAIN_SUBRESOURCE_RANGE)
                             .build()
                     })
                     .collect();
 
-                self.device.core.cmd_pipeline_barrier2(
-                    self.command_buffer,
-                    &vk::DependencyInfo::builder()
-                        .image_memory_barriers(&image_barriers)
-                        .build(),
-                );
+                if !swapchain_transitions.is_empty() {
+                    self.device.core.cmd_pipeline_barrier2(
+                        vulkan_command_buffer,
+                        &vk::DependencyInfo::builder()
+                            .image_memory_barriers(&swapchain_transitions)
+                            .build(),
+                    );
+                }
+
+                self.device.core.end_command_buffer(vulkan_command_buffer)?;
             }
 
-            self.device.core.end_command_buffer(self.command_buffer)?;
+            unsafe {
+                let command_buffer_info = [vk::CommandBufferSubmitInfo::builder()
+                    .command_buffer(vulkan_command_buffer)
+                    .build()];
 
-            let command_buffer_info = &[vk::CommandBufferSubmitInfo::builder()
-                .command_buffer(self.command_buffer)
-                .build()];
-            let wait_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
-                [0..swapchain_index_images.len()]
-                .iter()
-                .map(|(semaphore, _)| {
-                    vk::SemaphoreSubmitInfo::builder()
-                        .semaphore(*semaphore)
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                        .build()
-                })
-                .collect();
+                let wait_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = graph_command_buffer
+                    .command_buffer_wait_dependencies
+                    .iter()
+                    .map(|dependency| match dependency {
+                        CommandBufferDependency::CommandBuffer {
+                            command_buffer_index,
+                            dependency_index,
+                            stage_mask,
+                            ..
+                        } => vk::SemaphoreSubmitInfo::builder()
+                            .semaphore(
+                                command_buffer_dependency_semaphores[*command_buffer_index]
+                                    [*dependency_index],
+                            )
+                            .stage_mask(*stage_mask)
+                            .build(),
+                        CommandBufferDependency::Swapchain { index, access } => {
+                            vk::SemaphoreSubmitInfo::builder()
+                                .semaphore(acquired_swapchains[*index].image_ready_semaphore)
+                                .stage_mask(access.get_barrier_flags(true).stage_mask)
+                                .build()
+                        }
+                    })
+                    .collect();
 
-            let signal_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = self.swapchain_semaphores
-                [0..swapchain_index_images.len()]
-                .iter()
-                .map(|(_, semaphore)| {
-                    vk::SemaphoreSubmitInfo::builder()
-                        .semaphore(*semaphore)
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                        .build()
-                })
-                .collect();
+                let mut command_buffer_dependency: u32 = 0;
+                let signal_semaphore_infos: Vec<vk::SemaphoreSubmitInfo> = graph_command_buffer
+                    .command_buffer_signal_dependencies
+                    .iter()
+                    .map(|dependency| match dependency {
+                        CommandBufferDependency::CommandBuffer {
+                            command_buffer_index,
+                            dependency_index,
+                            stage_mask,
+                            ..
+                        } => {
+                            command_buffer_dependency += 1;
+                            vk::SemaphoreSubmitInfo::builder()
+                                .semaphore(
+                                    command_buffer_dependency_semaphores[*command_buffer_index]
+                                        [*dependency_index],
+                                )
+                                .stage_mask(*stage_mask)
+                                .build()
+                        }
+                        CommandBufferDependency::Swapchain { index, access } => {
+                            vk::SemaphoreSubmitInfo::builder()
+                                .semaphore(acquired_swapchains[*index].present_ready_semaphore)
+                                .stage_mask(access.get_barrier_flags(true).stage_mask)
+                                .build()
+                        }
+                    })
+                    .collect();
 
-            let submit_info = vk::SubmitInfo2::builder()
-                .command_buffer_infos(command_buffer_info)
-                .wait_semaphore_infos(&wait_semaphore_infos)
-                .signal_semaphore_infos(&signal_semaphore_infos);
+                // If the command buffer has no signal dependencies on other command buffers, that means it is a root node and should use a fence instead
+                let command_buffer_done_fence = if command_buffer_dependency == 0 {
+                    frame_context.fence_pool.get()?
+                } else {
+                    vk::Fence::null()
+                };
 
-            self.device
-                .core
-                .queue_submit2(
-                    self.queue.handle,
-                    &[submit_info.build()],
-                    self.frame_done_fence,
-                )
-                .unwrap();
-
-            let mut swapchains = Vec::with_capacity(swapchain_index_images.len());
-            let mut swapchain_indies = Vec::with_capacity(swapchain_index_images.len());
-            let mut wait_semaphores = Vec::with_capacity(swapchain_index_images.len());
-
-            for (swapchain_image, swapchain_semaphores) in swapchain_index_images
-                .iter()
-                .zip(self.swapchain_semaphores.iter())
-            {
-                swapchains.push(swapchain_image.swapchain_handle);
-                swapchain_indies.push(swapchain_image.image_index);
-                wait_semaphores.push(swapchain_semaphores.1);
+                self.device.core.queue_submit2(
+                    submit_queue,
+                    &[vk::SubmitInfo2::builder()
+                        .command_buffer_infos(&command_buffer_info)
+                        .wait_semaphore_infos(&wait_semaphore_infos)
+                        .signal_semaphore_infos(&signal_semaphore_infos)
+                        .build()],
+                    command_buffer_done_fence,
+                )?;
             }
+        }
 
-            if !swapchains.is_empty() {
+        //Submit Swapchains
+        if !acquired_swapchains.is_empty() {
+            let mut swapchains = Vec::with_capacity(acquired_swapchains.len());
+            let mut swapchain_indies = Vec::with_capacity(acquired_swapchains.len());
+            let mut wait_semaphores = Vec::with_capacity(acquired_swapchains.len());
+            for acquired_swapchain in acquired_swapchains.iter() {
+                swapchains.push(acquired_swapchain.image.swapchain_handle);
+                swapchain_indies.push(acquired_swapchain.image.image_index);
+                wait_semaphores.push(acquired_swapchain.present_ready_semaphore);
+            }
+            unsafe {
                 let _ = self.device.swapchain.queue_present(
-                    self.queue.handle,
+                    submit_queue,
                     &vk::PresentInfoKHR::builder()
                         .swapchains(&swapchains)
                         .image_indices(&swapchain_indies)
                         .wait_semaphores(&wait_semaphores),
                 );
             }
-
-            //Write out last usages
-            // render_graph
-            //     .buffer_descriptions
-            //     .iter()
-            //     .zip(buffers.iter())
-            //     .filter(|(description, _)| description.is_persistent())
-            //     .for_each(|(description, graph_resource)| {
-            //         let key = description.as_persistent().unwrap();
-            //     });
         }
 
         Ok(())
     }
 }
 
-impl Drop for BasicRenderGraphExecutor {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = self.device.core.device_wait_idle();
-            self.device
-                .core
-                .destroy_command_pool(self.command_pool, None);
+fn allocate_command_buffer_semaphores(
+    semaphore_pool: &mut AshSemaphorePool,
+    command_buffers: &[CommandBuffer],
+) -> ash::prelude::VkResult<Vec<Vec<vk::Semaphore>>> {
+    let mut vec = Vec::with_capacity(command_buffers.len());
+    for command_buffer in command_buffers {
+        vec.push(semaphore_pool.get_vec(command_buffer.command_buffer_signal_dependencies.len())?);
+    }
+    Ok(vec)
+}
 
-            for semaphore in self.swapchain_semaphores.drain(..) {
-                self.device.core.destroy_semaphore(semaphore.0, None);
-                self.device.core.destroy_semaphore(semaphore.1, None);
+struct AcquiredSwapchain {
+    image: AcquiredSwapchainImage,
+    image_ready_semaphore: vk::Semaphore,
+    present_ready_semaphore: vk::Semaphore,
+}
+
+fn acquire_swapchain_images(
+    semaphore_pool: &mut AshSemaphorePool,
+    swapchain_manager: &mut SwapchainManager,
+    swapchain_images: &[(SurfaceHandle, ImageIndex)],
+) -> ash::prelude::VkResult<Vec<AcquiredSwapchain>> {
+    let mut acquire_swapchains = Vec::with_capacity(swapchain_images.len());
+
+    for (surface, _image_index) in swapchain_images.iter() {
+        let swapchain = swapchain_manager
+            .get(*surface)
+            .expect("Failed to find swapchain");
+        let image_ready_semaphore = semaphore_pool.get()?;
+        let present_ready_semaphore = semaphore_pool.get()?;
+
+        let mut swapchain_result: ash::prelude::VkResult<(AcquiredSwapchainImage, bool)> =
+            swapchain.acquire_next_image(image_ready_semaphore);
+
+        while let Err(vk::Result::ERROR_OUT_OF_DATE_KHR) = &swapchain_result {
+            info!("Swapchain Out of Data, Rebuilding");
+            swapchain.rebuild()?;
+            swapchain_result = swapchain.acquire_next_image(image_ready_semaphore);
+        }
+        let image = swapchain_result.unwrap().0;
+
+        acquire_swapchains.push(AcquiredSwapchain {
+            image,
+            image_ready_semaphore,
+            present_ready_semaphore,
+        });
+    }
+
+    Ok(acquire_swapchains)
+}
+
+fn record_command_buffer(
+    device: &AshDevice,
+    vulkan_command_buffer: vk::CommandBuffer,
+    graph_command_buffer: &CommandBuffer,
+    graph_resources: &mut RenderGraphResources,
+) {
+    for (render_pass_set_index, render_pass_set) in
+        graph_command_buffer.render_pass_sets.iter().enumerate()
+    {
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.cmd_begin_label(
+                vulkan_command_buffer,
+                &format!("RenderPass Set {}", render_pass_set_index),
+                [1.0; 4],
+            );
+        }
+
+        //TODO: Buffer and Image Barriers
+        let buffer_barriers: Vec<vk::BufferMemoryBarrier2> = render_pass_set
+            .buffer_barriers
+            .iter()
+            .map(|buffer_barrier| {
+                let buffer = &graph_resources.buffers[buffer_barrier.index];
+                let src = match buffer_barrier.src {
+                    BufferBarrierSource::FirstUsage => buffer.last_access,
+                    BufferBarrierSource::Precalculated(flags) => flags,
+                }
+                .get_barrier_flags();
+                let dst = buffer_barrier.dst.get_barrier_flags();
+                vk::BufferMemoryBarrier2::builder()
+                    .buffer(buffer.buffer.handle)
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .src_stage_mask(src.stage_mask)
+                    .src_access_mask(src.access_mask)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_stage_mask(dst.stage_mask)
+                    .src_access_mask(dst.access_mask)
+                    .build()
+            })
+            .collect();
+
+        let image_barriers: Vec<vk::ImageMemoryBarrier2> = render_pass_set
+            .image_barriers
+            .iter()
+            .map(|image_barrier| {
+                let image = &graph_resources.images[image_barrier.index];
+                let is_color = image.image.is_color();
+                let src = match image_barrier.src {
+                    ImageBarrierSource::FirstUsage => image.last_access.get_barrier_flags(is_color),
+                    ImageBarrierSource::Precalculated(flags) => flags.get_barrier_flags(is_color),
+                };
+                let dst = image_barrier.dst.get_barrier_flags(is_color);
+                vk::ImageMemoryBarrier2::builder()
+                    .image(image.image.handle)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk_format_get_aspect_flags(image.image.format),
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .old_layout(src.layout)
+                    .src_stage_mask(src.stage_mask)
+                    .src_access_mask(src.access_mask)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .new_layout(dst.layout)
+                    .dst_stage_mask(dst.stage_mask)
+                    .dst_access_mask(dst.access_mask)
+                    .build()
+            })
+            .collect();
+
+        unsafe {
+            device.core.cmd_pipeline_barrier2(
+                vulkan_command_buffer,
+                &vk::DependencyInfo::builder()
+                    .memory_barriers(&render_pass_set.memory_barriers)
+                    .buffer_memory_barriers(&buffer_barriers)
+                    .image_memory_barriers(&image_barriers)
+                    .build(),
+            );
+        }
+
+        for render_pass in render_pass_set.render_passes.iter() {
+            if let Some(debug_util) = &device.instance.debug_utils {
+                debug_util.cmd_begin_label(
+                    vulkan_command_buffer,
+                    &render_pass.label_name,
+                    render_pass.label_color,
+                );
             }
 
-            self.device.core.destroy_fence(self.frame_done_fence, None);
+            if let Some(render_pass_command) = &render_pass.command {
+                match render_pass_command {
+                    RenderPassCommand::Transfer { transfers } => {
+                        record_transfer_pass(
+                            device,
+                            vulkan_command_buffer,
+                            graph_resources,
+                            transfers,
+                        );
+                    }
+                    RenderPassCommand::Compute {
+                        pipeline,
+                        resources,
+                        dispatch,
+                    } => record_compute_pass(
+                        device,
+                        vulkan_command_buffer,
+                        graph_resources,
+                        *pipeline,
+                        resources,
+                        dispatch,
+                    ),
+                    RenderPassCommand::Raster {
+                        framebuffer,
+                        draw_commands,
+                    } => record_raster_pass(
+                        device,
+                        vulkan_command_buffer,
+                        graph_resources,
+                        framebuffer,
+                        draw_commands,
+                    ),
+                }
+            }
+
+            if let Some(debug_util) = &device.instance.debug_utils {
+                debug_util.cmd_end_label(vulkan_command_buffer);
+            }
+        }
+
+        if let Some(debug_util) = &device.instance.debug_utils {
+            debug_util.cmd_end_label(vulkan_command_buffer);
         }
     }
 }
 
-fn record_render_pass(
+// OLD RENDER GRAPH RECORD FUNCTIONS
+// Need to update them to handle the new render graph format
+pub fn record_render_pass(
     device: &AshDevice,
     command_buffer: vk::CommandBuffer,
     graph_resources: &mut RenderGraphResources,
-    render_pass: &RenderPass,
+    render_pass: &OldRenderPass,
 ) {
     record_barrier(
         device,

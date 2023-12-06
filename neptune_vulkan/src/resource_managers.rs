@@ -288,23 +288,6 @@ impl ResourceManager {
             last_access: Default::default(),
         })
     }
-    pub fn get_buffer(&self, key: BufferKey) -> Option<&Buffer> {
-        self.buffers.get(key).map(|resource| &resource.buffer)
-    }
-
-    pub fn get_and_update_buffer_resource(
-        &mut self,
-        key: BufferKey,
-        new_last_access: BufferResourceAccess,
-    ) -> Option<BufferTempResource> {
-        self.buffers
-            .get_mut(key)
-            .map(|resource| BufferTempResource {
-                buffer: resource.buffer.get_copy(),
-                last_access: std::mem::replace(&mut resource.last_access, new_last_access),
-            })
-    }
-
     pub fn remove_buffer(&mut self, key: BufferKey) {
         self.freed_buffers.push(key);
     }
@@ -405,7 +388,7 @@ impl ResourceManager {
                         image: image.image.get_copy(),
                         last_access: std::mem::replace(
                             &mut image.last_access,
-                            graph_image.last_access.expect("In theory this should never happen, but I need to figure out if it will"),
+                            graph_image.last_access.unwrap_or_default(),
                         ),
                     }
                 }

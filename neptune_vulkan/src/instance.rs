@@ -190,8 +190,7 @@ impl Instance {
         let physical_devices = unsafe { instance.core.enumerate_physical_devices() }
             .expect("Failed to enumerate physical devices")
             .iter()
-            .enumerate()
-            .map(|(index, &physical_device)| PhysicalDevice::new(instance.clone(), physical_device))
+            .map(|&physical_device| PhysicalDevice::new(instance.clone(), physical_device))
             .collect();
 
         Ok(Self {

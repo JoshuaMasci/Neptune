@@ -1,11 +1,10 @@
 use crate::buffer::{Buffer, BufferDescription};
-use crate::compiled_render_graph_executor::CompiledRenderGraphExecutor;
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
-use crate::render_graph::{CompiledRenderGraph, RenderGraph};
+use crate::render_graph::CompiledRenderGraph;
 use crate::render_graph_builder::{BufferOffset, ImageCopyBuffer, ImageCopyImage};
-use crate::render_graph_executor::BasicRenderGraphExecutor;
+use crate::render_graph_executor::RenderGraphExecutor;
 use crate::resource_managers::ResourceManager;
 use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
@@ -186,8 +185,7 @@ pub struct Device {
     swapchain_manager: SwapchainManager,
 
     upload_queue: UploadQueue,
-    graph_executor: BasicRenderGraphExecutor,
-    graph_executor2: CompiledRenderGraphExecutor,
+    graph_executor: RenderGraphExecutor,
 }
 
 impl Device {
@@ -203,8 +201,6 @@ impl Device {
         }
         .limits
         .max_push_constants_size;
-
-        let graphics_queue_index = 0;
 
         let device = AshDevice::new(instance, &physical_device).map(Arc::new)?;
         let resource_manager = ResourceManager::new(device.clone(), settings.frames_in_flight);
@@ -224,9 +220,7 @@ impl Device {
         });
 
         let upload_queue = UploadQueue::default();
-        let graph_executor = BasicRenderGraphExecutor::new(device.clone())?;
-        let graph_executor2 =
-            CompiledRenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
+        let graph_executor = RenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
 
         Ok(Device {
             device,
@@ -235,7 +229,6 @@ impl Device {
             swapchain_manager,
             upload_queue,
             graph_executor,
-            graph_executor2,
         })
     }
 
@@ -454,19 +447,8 @@ impl Device {
         self.swapchain_manager.remove(surface_handle);
     }
 
-    pub fn submit_frame(&mut self, render_graph: &RenderGraph) -> Result<(), VulkanError> {
-        self.graph_executor.submit_frame(
-            &mut self.resource_manager,
-            &mut self.swapchain_manager,
-            &self.pipelines,
-            self.upload_queue.get_pass(),
-            render_graph,
-        )?;
-        Ok(())
-    }
-
     pub fn submit_graph(&mut self, render_graph: &CompiledRenderGraph) -> Result<(), VulkanError> {
-        self.graph_executor2.submit_frame(
+        self.graph_executor.submit_frame(
             &mut self.resource_manager,
             &mut self.swapchain_manager,
             &self.pipelines,

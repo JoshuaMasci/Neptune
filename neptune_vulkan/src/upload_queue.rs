@@ -1,15 +1,16 @@
 use crate::render_graph::{
     BufferGraphResource, BufferIndex, BufferOffset, BufferResourceDescription, ImageCopyBuffer,
-    ImageCopyImage, ImageGraphResource, ImageIndex, ImageResourceDescription, QueueType,
-    RenderPass, RenderPassCommand, Transfer,
+    ImageCopyImage, ImageGraphResource, ImageIndex, ImageResourceDescription, OldRenderPass,
+    QueueType, RenderPassCommand, Transfer,
 };
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{BufferHandle, ImageHandle};
 
+//TODO: switch to new pass system
 pub(crate) struct UploadPass {
     pub(crate) buffer_resources: Vec<BufferGraphResource>,
     pub(crate) image_resources: Vec<ImageGraphResource>,
-    pub(crate) pass: RenderPass,
+    pub(crate) pass: OldRenderPass,
 }
 
 #[derive(Default)]
@@ -100,7 +101,7 @@ impl UploadQueue {
         Some(UploadPass {
             buffer_resources: std::mem::take(&mut self.buffer_resources),
             image_resources: std::mem::take(&mut self.image_resources),
-            pass: RenderPass {
+            pass: OldRenderPass {
                 label_name: "Device Upload Pass".to_string(),
                 label_color: [0.5, 0.0, 0.5, 1.0],
                 queue: QueueType::Graphics,

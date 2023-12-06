@@ -60,8 +60,7 @@ fn main() -> anyhow::Result<()> {
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();
 
-                //editor.render().expect("Failed to render a frame");
-                editor.render2().expect("Failed to render a frame");
+                editor.render().expect("Failed to render a frame");
 
                 frame_count_time.0 += 1;
                 frame_count_time.1 += last_frame_time.as_secs_f32();

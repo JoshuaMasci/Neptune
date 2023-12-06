@@ -6,16 +6,14 @@ mod image;
 mod instance;
 mod physical_device;
 mod pipeline;
-mod render_graph_executor;
 mod resource_managers;
 mod sampler;
 mod swapchain;
 
-mod compiled_render_graph_executor;
+pub mod basic_render_graph_builder;
 pub mod render_graph;
 pub mod render_graph_builder;
-pub mod render_graph_builder2;
-mod render_graph_builder_trait;
+mod render_graph_executor;
 mod upload_queue;
 
 //Public Types

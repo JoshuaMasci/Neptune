@@ -1,6 +1,4 @@
-use crate::resource_managers::{
-    BufferBarrierFlags, BufferResourceAccess, ImageBarrierFlags, ImageResourceAccess,
-};
+use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{
     BufferDescription, BufferKey, ComputePipelineHandle, ImageKey, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle, TransientImageDesc,
@@ -78,7 +76,6 @@ pub enum ShaderResourceUsage {
 
 //Transfer
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-
 pub struct ImageCopyBuffer {
     pub buffer: BufferIndex,
     pub offset: u64,
@@ -87,7 +84,6 @@ pub struct ImageCopyBuffer {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-
 pub struct ImageCopyImage {
     pub image: ImageIndex,
     pub offset: [u32; 2],
@@ -201,7 +197,7 @@ pub enum RenderPassCommand {
 }
 
 #[derive(Debug)]
-pub struct RenderPass {
+pub struct OldRenderPass {
     pub label_name: String,
     pub label_color: [f32; 4],
     pub queue: QueueType,
@@ -210,20 +206,7 @@ pub struct RenderPass {
     pub command: Option<RenderPassCommand>,
 }
 
-#[derive(Debug, Default)]
-pub struct RenderGraph {
-    pub buffer_resources: Vec<BufferGraphResource>,
-    pub image_resources: Vec<ImageGraphResource>,
-    pub swapchain_images: Vec<(SurfaceHandle, ImageIndex)>,
-    pub render_passes: Vec<RenderPass>,
-}
-
-// Compiled Graph Struct
-// Will be the result of the RenderGraphBuilder, all sync requirements and command buffer lists are precalculate
-// Frame executor will only have to resolve resource, sync primitives, command buffer recording, submission, present.
-
 // TODO: Determine the best pre and/or post frame ownership barriers
-
 // Graph Builders:
 // 1. Debug = Single Queue + Serial + Image Transitions + Global Memory Barriers
 // 2. Basic = Single Queue + Pass Promoting + Image/Buffer Transitions
@@ -239,7 +222,7 @@ pub enum Queue {
 }
 
 #[derive(Debug)]
-pub struct RenderPass2 {
+pub struct RenderPass {
     pub label_name: String,
     pub label_color: [f32; 4],
     pub command: Option<RenderPassCommand>,
@@ -285,7 +268,7 @@ pub struct RenderPassSet {
     pub buffer_barriers: Vec<BufferBarrier>,
     pub image_barriers: Vec<ImageBarrier>,
 
-    pub render_passes: Vec<RenderPass2>,
+    pub render_passes: Vec<RenderPass>,
 }
 
 #[derive(Debug, Default)]

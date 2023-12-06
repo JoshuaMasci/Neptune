@@ -1,14 +1,9 @@
-use crate::image::TransientImageDesc;
-use crate::render_graph::{
-    BufferGraphResource, BufferIndex, BufferResourceDescription, ImageGraphResource, ImageIndex,
-    ImageResourceDescription, IndexType, QueueType, RenderGraph, RenderPassCommand,
-};
-use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
+use crate::render_graph::{CompiledRenderGraph, IndexType, QueueType};
 use crate::{
     BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
-    SamplerHandle, SurfaceHandle,
+    SamplerHandle, SurfaceHandle, TransientImageDesc,
 };
-use std::collections::HashMap;
+use ash::vk;
 use std::ops::Range;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -55,32 +50,126 @@ pub enum Transfer {
     },
 }
 
-pub struct TransferPassBuilder2<'a> {
-    render_graph_builder: &'a mut RenderGraphBuilder,
+#[derive(Debug, Clone)]
+pub enum ShaderResourceUsage {
+    StorageBuffer { buffer: BufferHandle, write: bool },
+    StorageImage { image: ImageHandle, write: bool },
+    SampledImage(ImageHandle),
+    Sampler(SamplerHandle),
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum ComputeDispatch {
+    Size([u32; 3]),
+    Indirect(BufferOffset),
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub struct ColorAttachment {
+    pub image: ImageHandle,
+    pub clear: Option<[f32; 4]>,
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub struct DepthStencilAttachment {
+    pub image: ImageHandle,
+    pub clear: Option<(f32, u32)>,
+}
+
+#[derive(Default, Debug)]
+pub struct Framebuffer {
+    pub color_attachments: Vec<ColorAttachment>,
+    pub depth_stencil_attachment: Option<DepthStencilAttachment>,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum DrawCommandDispatch {
+    Draw {
+        vertices: Range<u32>,
+        instances: Range<u32>,
+    },
+    DrawIndexed {
+        base_vertex: i32,
+        indices: Range<u32>,
+        instances: Range<u32>,
+        index_buffer: BufferOffset,
+        index_type: IndexType,
+    },
+    DrawIndirect {
+        indirect_buffer: BufferOffset,
+        draw_count: u32,
+        stride: u32,
+    },
+    DrawIndirectIndexed {
+        indirect_buffer: BufferOffset,
+        draw_count: u32,
+        stride: u32,
+        index_buffer: BufferOffset,
+        index_type: IndexType,
+    },
+}
+
+#[derive(Debug)]
+pub struct RasterDrawCommand {
+    pub pipeline: RasterPipelineHandle,
+    pub vertex_buffers: Vec<BufferOffset>,
+    pub resources: Vec<ShaderResourceUsage>,
+    pub dispatch: DrawCommandDispatch,
+}
+
+// Render Graph Builder Evolution
+// 0. Whole pipeline barriers between passes, no image layout changes (only general layout), no pass order changes, no dead-code culling (DONE!)
+// 1. Specific pipeline barriers between passes with image layout changes, no pass order changes, no dead-code culling
+// 2. Whole graph evaluation with pass reordering and dead code culling
+// 3. Multi-Queue execution
+pub trait RenderGraphBuilderTrait {
+    fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle;
+    fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle;
+    fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle;
+
+    fn add_transfer_pass(
+        &mut self,
+        name: String,
+        color: [f32; 4],
+        queue: QueueType,
+        transfers: &[Transfer],
+    );
+    fn add_compute_pass(
+        &mut self,
+        name: String,
+        color: [f32; 4],
+        queue: QueueType,
+        pipeline: ComputePipelineHandle,
+        dispatch: ComputeDispatch,
+        resources: &[ShaderResourceUsage],
+    );
+    fn add_raster_pass(
+        &mut self,
+        name: String,
+        color: [f32; 4],
+        color_attachments: &[ColorAttachment],
+        depth_stencil_attachment: Option<DepthStencilAttachment>,
+        raster_draw_commands: &[RasterDrawCommand],
+    );
+
+    fn build(self) -> CompiledRenderGraph;
+}
+
+//Helper Structs
+pub struct TransferPassBuilder {
     name: String,
     color: [f32; 4],
     queue: QueueType,
-
-    transfers: Vec<crate::render_graph::Transfer>,
-
-    buffer_usages: Vec<(BufferIndex, BufferResourceAccess)>,
-    image_usages: Vec<(ImageIndex, ImageResourceAccess)>,
+    transfers: Vec<Transfer>,
 }
 
-impl<'a> TransferPassBuilder2<'a> {
-    pub fn new(
-        render_graph_builder: &'a mut RenderGraphBuilder,
-        name: &str,
-        queue: QueueType,
-    ) -> Self {
+impl TransferPassBuilder {
+    pub fn new(name: &str, queue: QueueType) -> Self {
         Self {
-            render_graph_builder,
             name: name.to_string(),
             color: [1.0, 0.0, 0.0, 1.0],
             queue,
             transfers: Vec::new(),
-            buffer_usages: Vec::new(),
-            image_usages: Vec::new(),
         }
     }
 
@@ -94,20 +183,11 @@ impl<'a> TransferPassBuilder2<'a> {
         dst: BufferOffset,
         copy_size: usize,
     ) {
-        let src = self.render_graph_builder.get_buffer_offset(src);
-        let dst = self.render_graph_builder.get_buffer_offset(dst);
-
-        self.buffer_usages
-            .push((src.buffer, BufferResourceAccess::TransferRead));
-        self.buffer_usages
-            .push((dst.buffer, BufferResourceAccess::TransferWrite));
-
-        self.transfers
-            .push(crate::render_graph::Transfer::BufferToBuffer {
-                src,
-                dst,
-                copy_size: copy_size as u64,
-            })
+        self.transfers.push(Transfer::CopyBufferToBuffer {
+            src,
+            dst,
+            copy_size: copy_size as vk::DeviceSize,
+        });
     }
 
     pub fn copy_buffer_to_image(
@@ -116,20 +196,11 @@ impl<'a> TransferPassBuilder2<'a> {
         dst: ImageCopyImage,
         copy_size: [u32; 2],
     ) {
-        let src = self.render_graph_builder.get_image_copy_buffer(src);
-        let dst = self.render_graph_builder.get_image_copy_image(dst);
-
-        self.buffer_usages
-            .push((src.buffer, BufferResourceAccess::TransferRead));
-        self.image_usages
-            .push((dst.image, ImageResourceAccess::TransferWrite));
-
-        self.transfers
-            .push(crate::render_graph::Transfer::BufferToImage {
-                src,
-                dst,
-                copy_size,
-            })
+        self.transfers.push(Transfer::CopyBufferToImage {
+            src,
+            dst,
+            copy_size,
+        });
     }
 
     pub fn copy_image_to_buffer(
@@ -138,20 +209,11 @@ impl<'a> TransferPassBuilder2<'a> {
         dst: ImageCopyBuffer,
         copy_size: [u32; 2],
     ) {
-        let src = self.render_graph_builder.get_image_copy_image(src);
-        let dst = self.render_graph_builder.get_image_copy_buffer(dst);
-
-        self.image_usages
-            .push((src.image, ImageResourceAccess::TransferRead));
-        self.buffer_usages
-            .push((dst.buffer, BufferResourceAccess::TransferWrite));
-
-        self.transfers
-            .push(crate::render_graph::Transfer::ImageToBuffer {
-                src,
-                dst,
-                copy_size,
-            })
+        self.transfers.push(Transfer::CopyImageToBuffer {
+            src,
+            dst,
+            copy_size,
+        });
     }
 
     pub fn copy_image_to_image(
@@ -160,89 +222,36 @@ impl<'a> TransferPassBuilder2<'a> {
         dst: ImageCopyImage,
         copy_size: [u32; 2],
     ) {
-        let src = self.render_graph_builder.get_image_copy_image(src);
-        let dst = self.render_graph_builder.get_image_copy_image(dst);
-
-        self.image_usages
-            .push((src.image, ImageResourceAccess::TransferRead));
-        self.image_usages
-            .push((dst.image, ImageResourceAccess::TransferWrite));
-
-        self.transfers
-            .push(crate::render_graph::Transfer::ImageToImage {
-                src,
-                dst,
-                copy_size,
-            })
+        self.transfers.push(Transfer::CopyImageToImage {
+            src,
+            dst,
+            copy_size,
+        });
     }
 
-    pub fn build(self) {
-        drop(self)
+    pub fn build<T: RenderGraphBuilderTrait>(self, render_graph_builder: &mut T) {
+        render_graph_builder.add_transfer_pass(self.name, self.color, self.queue, &self.transfers);
     }
 }
 
-impl<'a> Drop for TransferPassBuilder2<'a> {
-    fn drop(&mut self) {
-        self.render_graph_builder.render_graph.render_passes.push(
-            crate::render_graph::RenderPass {
-                label_name: std::mem::take(&mut self.name),
-                label_color: self.color,
-                queue: self.queue,
-                buffer_access: std::mem::take(&mut self.buffer_usages),
-                image_access: std::mem::take(&mut self.image_usages),
-                command: Some(RenderPassCommand::Transfer {
-                    transfers: std::mem::take(&mut self.transfers),
-                }),
-            },
-        );
-    }
-}
-#[derive(Debug)]
-pub enum ShaderResourceUsage {
-    StorageBuffer { buffer: BufferHandle, write: bool },
-    StorageImage { image: ImageHandle, write: bool },
-    SampledImage(ImageHandle),
-    Sampler(SamplerHandle),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum ComputeDispatch {
-    Size([u32; 3]),
-    Indirect(BufferOffset),
-}
-
-#[derive(Debug)]
-pub struct ComputePassBuilder<'a> {
-    render_graph_builder: &'a mut RenderGraphBuilder,
+pub struct ComputePassBuilder {
     name: String,
     color: [f32; 4],
     queue: QueueType,
-
     pipeline: ComputePipelineHandle,
-    resources: Vec<crate::render_graph::ShaderResourceUsage>,
-    dispatch: crate::render_graph::ComputeDispatch,
-
-    buffer_usages: Vec<(BufferIndex, BufferResourceAccess)>,
-    image_usages: Vec<(ImageIndex, ImageResourceAccess)>,
+    resources: Vec<ShaderResourceUsage>,
+    dispatch: ComputeDispatch,
 }
 
-impl<'a> ComputePassBuilder<'a> {
-    pub fn new(
-        render_graph_builder: &'a mut RenderGraphBuilder,
-        name: &str,
-        queue: QueueType,
-        pipeline: ComputePipelineHandle,
-    ) -> Self {
+impl ComputePassBuilder {
+    pub fn new(name: &str, queue: QueueType, pipeline: ComputePipelineHandle) -> Self {
         Self {
-            render_graph_builder,
             name: name.to_string(),
             color: [0.0, 1.0, 0.0, 1.0],
             queue,
             pipeline,
             resources: Vec::new(),
-            dispatch: crate::render_graph::ComputeDispatch::Size([1; 3]),
-            buffer_usages: Vec::new(),
-            image_usages: Vec::new(),
+            dispatch: ComputeDispatch::Size([1; 3]),
         }
     }
 
@@ -250,133 +259,75 @@ impl<'a> ComputePassBuilder<'a> {
         self.color = color;
     }
 
-    pub fn dispatch_size(mut self, size: [u32; 3]) -> Self {
-        self.dispatch = crate::render_graph::ComputeDispatch::Size(size);
-        self
+    pub fn dispatch_size(&mut self, size: [u32; 3]) {
+        self.dispatch = ComputeDispatch::Size(size);
     }
 
-    pub fn dispatch_indirect(mut self, buffer: BufferHandle, offset: usize) -> Self {
-        let buffer = self.render_graph_builder.get_buffer_index(buffer);
-        let offset = offset as u64;
-        self.buffer_usages
-            .push((buffer, BufferResourceAccess::IndirectRead));
-        self.dispatch =
-            crate::render_graph::ComputeDispatch::Indirect(crate::render_graph::BufferOffset {
-                buffer,
-                offset,
-            });
-        self
+    pub fn dispatch_indirect(&mut self, buffer: BufferHandle, offset: usize) {
+        self.dispatch = ComputeDispatch::Indirect(BufferOffset { buffer, offset });
     }
 
-    pub fn read_buffer(mut self, buffer: BufferHandle) -> Self {
-        let buffer = self.render_graph_builder.get_buffer_index(buffer);
-        self.buffer_usages
-            .push((buffer, BufferResourceAccess::StorageRead));
+    pub fn read_buffer(&mut self, buffer: BufferHandle) {
+        self.resources.push(ShaderResourceUsage::StorageBuffer {
+            buffer,
+            write: false,
+        });
+    }
+
+    pub fn write_buffer(&mut self, buffer: BufferHandle) {
+        self.resources.push(ShaderResourceUsage::StorageBuffer {
+            buffer,
+            write: true,
+        });
+    }
+
+    pub fn read_storage_image(&mut self, image: ImageHandle) {
+        self.resources.push(ShaderResourceUsage::StorageImage {
+            image,
+            write: false,
+        });
+    }
+
+    pub fn write_storage_image(&mut self, image: ImageHandle) {
         self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageBuffer {
-                buffer,
-                write: false,
-            });
-        self
+            .push(ShaderResourceUsage::StorageImage { image, write: true });
     }
 
-    pub fn write_buffer(mut self, buffer: BufferHandle) -> Self {
-        let buffer = self.render_graph_builder.get_buffer_index(buffer);
-        self.buffer_usages
-            .push((buffer, BufferResourceAccess::StorageWrite));
+    pub fn read_sampled_image(&mut self, image: ImageHandle) {
         self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageBuffer {
-                buffer,
-                write: true,
-            });
-        self
+            .push(ShaderResourceUsage::SampledImage(image));
     }
 
-    pub fn read_storage_image(mut self, image: ImageHandle) -> Self {
-        let image = self.render_graph_builder.get_image_index(image);
-        self.image_usages
-            .push((image, ImageResourceAccess::StorageRead));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageImage {
-                image,
-                write: false,
-            });
-        self
+    pub fn read_sampler(&mut self, sampler: SamplerHandle) {
+        self.resources.push(ShaderResourceUsage::Sampler(sampler));
     }
 
-    pub fn write_storage_image(mut self, image: ImageHandle) -> Self {
-        let image = self.render_graph_builder.get_image_index(image);
-        self.image_usages
-            .push((image, ImageResourceAccess::StorageWrite));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageImage { image, write: true });
-        self
-    }
-
-    pub fn read_sampled_image(mut self, image: ImageHandle) -> Self {
-        let image = self.render_graph_builder.get_image_index(image);
-        self.image_usages
-            .push((image, ImageResourceAccess::SampledRead));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::SampledImage(
-                image,
-            ));
-        self
-    }
-
-    pub fn read_sampler(mut self, sampler: SamplerHandle) -> Self {
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::Sampler(sampler));
-        self
-    }
-
-    pub fn build(self) {
-        drop(self);
-    }
-}
-
-impl<'a> Drop for ComputePassBuilder<'a> {
-    fn drop(&mut self) {
-        self.render_graph_builder.render_graph.render_passes.push(
-            crate::render_graph::RenderPass {
-                label_name: std::mem::take(&mut self.name),
-                label_color: self.color,
-                queue: self.queue,
-                buffer_access: std::mem::take(&mut self.buffer_usages),
-                image_access: std::mem::take(&mut self.image_usages),
-                command: Some(crate::render_graph::RenderPassCommand::Compute {
-                    pipeline: self.pipeline,
-                    resources: std::mem::take(&mut self.resources),
-                    dispatch: self.dispatch.clone(),
-                }),
-            },
+    pub fn build<T: RenderGraphBuilderTrait>(self, render_graph_builder: &mut T) {
+        render_graph_builder.add_compute_pass(
+            self.name,
+            self.color,
+            self.queue,
+            self.pipeline,
+            self.dispatch,
+            &self.resources,
         );
     }
 }
 
-#[derive(Debug)]
-pub struct RasterPassBuilder<'a> {
-    render_graph_builder: &'a mut RenderGraphBuilder,
+pub struct RasterPassBuilder {
     name: String,
     color: [f32; 4],
-
-    framebuffer: crate::render_graph::Framebuffer,
-    draw_commands: Vec<crate::render_graph::RasterDrawCommand>,
-
-    buffer_usages: Vec<(BufferIndex, BufferResourceAccess)>,
-    image_usages: Vec<(ImageIndex, ImageResourceAccess)>,
+    framebuffer: Framebuffer,
+    draw_commands: Vec<RasterDrawCommand>,
 }
 
-impl<'a> RasterPassBuilder<'a> {
-    pub fn new(render_graph_builder: &'a mut RenderGraphBuilder, name: &str) -> Self {
+impl RasterPassBuilder {
+    pub fn new(name: &str) -> Self {
         Self {
-            render_graph_builder,
             name: name.to_string(),
             color: [0.0, 1.0, 0.0, 1.0],
-            framebuffer: crate::render_graph::Framebuffer::default(),
+            framebuffer: Framebuffer::default(),
             draw_commands: Vec::new(),
-            buffer_usages: Vec::new(),
-            image_usages: Vec::new(),
         }
     }
 
@@ -384,77 +335,41 @@ impl<'a> RasterPassBuilder<'a> {
         self.color = color;
     }
 
-    pub fn add_color_attachment(mut self, image: ImageHandle, clear: Option<[f32; 4]>) -> Self {
-        let image = self.render_graph_builder.get_image_index(image);
-        self.image_usages
-            .push((image, ImageResourceAccess::AttachmentWrite));
+    pub fn add_color_attachment(&mut self, image: ImageHandle, clear: Option<[f32; 4]>) {
         self.framebuffer
             .color_attachments
-            .push(crate::render_graph::ColorAttachment { image, clear });
-        self
+            .push(ColorAttachment { image, clear });
     }
 
-    pub fn add_depth_stencil_attachment(
-        mut self,
-        image: ImageHandle,
-        clear: Option<(f32, u32)>,
-    ) -> Self {
-        assert!(
-            self.framebuffer.depth_stencil_attachment.is_none(),
-            "Can only set one depth stencil attachment per raster pass"
-        );
-        let image = self.render_graph_builder.get_image_index(image);
-        self.image_usages
-            .push((image, ImageResourceAccess::AttachmentWrite));
-        self.framebuffer.depth_stencil_attachment =
-            Some(crate::render_graph::DepthStencilAttachment { image, clear });
-        self
+    pub fn add_depth_stencil_attachment(&mut self, image: ImageHandle, clear: Option<(f32, u32)>) {
+        self.framebuffer.depth_stencil_attachment = Some(DepthStencilAttachment { image, clear });
     }
 
-    pub fn build(self) {
-        drop(self);
+    pub fn add_draw_command(&mut self, draw_command: RasterDrawCommand) {
+        self.draw_commands.push(draw_command);
     }
-}
 
-impl<'a> Drop for RasterPassBuilder<'a> {
-    fn drop(&mut self) {
-        for (buffer, access) in self.buffer_usages.iter() {
-            self.render_graph_builder.render_graph.buffer_resources[*buffer].last_access = *access;
-        }
-
-        self.render_graph_builder.render_graph.render_passes.push(
-            crate::render_graph::RenderPass {
-                label_name: std::mem::take(&mut self.name),
-                label_color: self.color,
-                queue: QueueType::Graphics,
-                buffer_access: std::mem::take(&mut self.buffer_usages),
-                image_access: std::mem::take(&mut self.image_usages),
-                command: Some(RenderPassCommand::Raster {
-                    framebuffer: std::mem::take(&mut self.framebuffer),
-                    draw_commands: std::mem::take(&mut self.draw_commands),
-                }),
-            },
+    pub fn build<T: RenderGraphBuilderTrait>(self, render_graph_builder: &mut T) {
+        render_graph_builder.add_raster_pass(
+            self.name,
+            self.color,
+            &self.framebuffer.color_attachments,
+            self.framebuffer.depth_stencil_attachment,
+            &self.draw_commands,
         );
     }
 }
 
-#[derive(Debug)]
-pub struct DrawCommandBuilder<'a, 'b> {
-    raster_pass_builder: &'b mut RasterPassBuilder<'a>,
-
-    pipeline: RasterPipelineHandle,
-    vertex_buffers: Vec<crate::render_graph::BufferOffset>,
-    resources: Vec<crate::render_graph::ShaderResourceUsage>,
-    dispatch: Option<crate::render_graph::DrawCommandDispatch>,
+pub struct RasterDrawCommandBuilder {
+    pub pipeline: RasterPipelineHandle,
+    pub vertex_buffers: Vec<BufferOffset>,
+    pub resources: Vec<ShaderResourceUsage>,
+    pub dispatch: Option<DrawCommandDispatch>,
 }
 
-impl<'a, 'b> DrawCommandBuilder<'a, 'b> {
-    pub fn new(
-        raster_pass_builder: &'b mut RasterPassBuilder<'a>,
-        pipeline: RasterPipelineHandle,
-    ) -> Self {
+impl RasterDrawCommandBuilder {
+    pub fn new(pipeline: RasterPipelineHandle) -> Self {
         Self {
-            raster_pass_builder,
             pipeline,
             vertex_buffers: Vec::new(),
             resources: Vec::new(),
@@ -462,341 +377,102 @@ impl<'a, 'b> DrawCommandBuilder<'a, 'b> {
         }
     }
 
-    pub fn add_vertex_buffer(mut self, buffer_offset: BufferOffset) -> Self {
-        let buffer_offset = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_offset(buffer_offset);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((buffer_offset.buffer, BufferResourceAccess::VertexRead));
+    pub fn add_vertex_buffer(&mut self, buffer_offset: BufferOffset) {
         self.vertex_buffers.push(buffer_offset);
-        self
     }
 
-    pub fn read_buffer(mut self, buffer: BufferHandle) -> Self {
-        let buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_index(buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((buffer, BufferResourceAccess::StorageRead));
+    pub fn read_buffer(&mut self, buffer: BufferHandle) {
+        self.resources.push(ShaderResourceUsage::StorageBuffer {
+            buffer,
+            write: false,
+        });
+    }
+
+    pub fn write_buffer(&mut self, buffer: BufferHandle) {
+        self.resources.push(ShaderResourceUsage::StorageBuffer {
+            buffer,
+            write: true,
+        });
+    }
+
+    pub fn read_storage_image(&mut self, image: ImageHandle) {
+        self.resources.push(ShaderResourceUsage::StorageImage {
+            image,
+            write: false,
+        });
+    }
+
+    pub fn write_storage_image(&mut self, image: ImageHandle) {
         self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageBuffer {
-                buffer,
-                write: false,
-            });
-        self
+            .push(ShaderResourceUsage::StorageImage { image, write: true });
     }
 
-    pub fn write_buffer(mut self, buffer: BufferHandle) -> Self {
-        let buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_index(buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((buffer, BufferResourceAccess::StorageWrite));
+    pub fn read_sampled_image(&mut self, image: ImageHandle) {
         self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageBuffer {
-                buffer,
-                write: true,
-            });
-        self
+            .push(ShaderResourceUsage::SampledImage(image));
     }
 
-    pub fn read_storage_image(mut self, image: ImageHandle) -> Self {
-        let image = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_image_index(image);
-        self.raster_pass_builder
-            .image_usages
-            .push((image, ImageResourceAccess::StorageRead));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageImage {
-                image,
-                write: false,
-            });
-        self
+    pub fn read_sampler(&mut self, sampler: SamplerHandle) {
+        self.resources.push(ShaderResourceUsage::Sampler(sampler));
     }
 
-    pub fn write_storage_image(mut self, image: ImageHandle) -> Self {
-        let image = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_image_index(image);
-        self.raster_pass_builder
-            .image_usages
-            .push((image, ImageResourceAccess::StorageWrite));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::StorageImage { image, write: true });
-        self
-    }
-
-    pub fn read_sampled_image(mut self, image: ImageHandle) -> Self {
-        let image = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_image_index(image);
-        self.raster_pass_builder
-            .image_usages
-            .push((image, ImageResourceAccess::SampledRead));
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::SampledImage(
-                image,
-            ));
-        self
-    }
-
-    pub fn read_sampler(mut self, sampler: SamplerHandle) -> Self {
-        self.resources
-            .push(crate::render_graph::ShaderResourceUsage::Sampler(sampler));
-        self
-    }
-
-    pub fn draw(mut self, vertices: Range<u32>, instances: Range<u32>) {
-        self.dispatch = Some(crate::render_graph::DrawCommandDispatch::Draw {
+    pub fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) {
+        self.dispatch = Some(DrawCommandDispatch::Draw {
             vertices,
             instances,
         });
-        drop(self);
     }
 
     pub fn draw_indexed(
-        mut self,
+        &mut self,
         base_vertex: i32,
         indices: Range<u32>,
         instances: Range<u32>,
         index_buffer: BufferOffset,
         index_type: IndexType,
     ) {
-        let index_buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_offset(index_buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((index_buffer.buffer, BufferResourceAccess::IndexRead));
-
-        self.dispatch = Some(crate::render_graph::DrawCommandDispatch::DrawIndexed {
+        self.dispatch = Some(DrawCommandDispatch::DrawIndexed {
             base_vertex,
             indices,
             instances,
             index_buffer,
             index_type,
         });
-        drop(self);
     }
 
-    pub fn draw_indirect(mut self, indirect_buffer: BufferOffset, draw_count: u32, stride: u32) {
-        let indirect_buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_offset(indirect_buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((indirect_buffer.buffer, BufferResourceAccess::IndirectRead));
-
-        self.dispatch = Some(crate::render_graph::DrawCommandDispatch::DrawIndirect {
+    pub fn draw_indirect(&mut self, indirect_buffer: BufferOffset, draw_count: u32, stride: u32) {
+        self.dispatch = Some(DrawCommandDispatch::DrawIndirect {
             indirect_buffer,
             draw_count,
             stride,
         });
-        drop(self);
     }
 
     pub fn draw_indirect_indexed(
-        mut self,
+        &mut self,
         indirect_buffer: BufferOffset,
         draw_count: u32,
         stride: u32,
         index_buffer: BufferOffset,
         index_type: IndexType,
     ) {
-        let indirect_buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_offset(indirect_buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((indirect_buffer.buffer, BufferResourceAccess::IndirectRead));
-
-        let index_buffer = self
-            .raster_pass_builder
-            .render_graph_builder
-            .get_buffer_offset(index_buffer);
-        self.raster_pass_builder
-            .buffer_usages
-            .push((index_buffer.buffer, BufferResourceAccess::IndexRead));
-
-        self.dispatch = Some(
-            crate::render_graph::DrawCommandDispatch::DrawIndirectIndexed {
-                indirect_buffer,
-                draw_count,
-                stride,
-                index_buffer,
-                index_type,
-            },
-        );
-        drop(self);
-    }
-}
-
-impl<'a, 'b> Drop for DrawCommandBuilder<'a, 'b> {
-    fn drop(&mut self) {
-        self.raster_pass_builder
-            .draw_commands
-            .push(crate::render_graph::RasterDrawCommand {
-                pipeline: self.pipeline,
-                vertex_buffers: std::mem::take(&mut self.vertex_buffers),
-                resources: std::mem::take(&mut self.resources),
-                dispatch: self
-                    .dispatch
-                    .take()
-                    .expect("No draw command dispatch set for draw command"),
-            });
-    }
-}
-
-#[derive(Debug)]
-pub struct BufferAccess {
-    pub handle: BufferHandle,
-    pub usage: BufferResourceAccess,
-    //TODO: add access range
-}
-
-#[derive(Debug)]
-pub struct ImageAccess {
-    pub handle: ImageHandle,
-    pub usage: ImageResourceAccess,
-    //TODO: add access subresource range
-}
-
-#[derive(Default, Debug)]
-pub struct RenderGraphBuilder {
-    render_graph: RenderGraph,
-    buffer_index_map: HashMap<BufferHandle, BufferIndex>,
-    image_index_map: HashMap<ImageHandle, ImageIndex>,
-}
-
-impl RenderGraphBuilder {
-    pub fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle {
-        let index = self.render_graph.buffer_resources.len() as BufferIndex;
-        self.render_graph
-            .buffer_resources
-            .push(BufferGraphResource {
-                description: BufferResourceDescription::Transient(desc),
-                last_access: BufferResourceAccess::None,
-            });
-        let handle = BufferHandle::Transient(index);
-        self.buffer_index_map.insert(handle, index);
-        handle
-    }
-
-    pub fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle {
-        let index = self.render_graph.image_resources.len() as ImageIndex;
-        self.render_graph.image_resources.push(ImageGraphResource {
-            description: ImageResourceDescription::Transient(desc),
-            first_access: None,
-            last_access: None,
+        self.dispatch = Some(DrawCommandDispatch::DrawIndirectIndexed {
+            indirect_buffer,
+            draw_count,
+            stride,
+            index_buffer,
+            index_type,
         });
-        let handle = ImageHandle::Transient(index);
-        self.image_index_map.insert(handle, index);
-        handle
     }
 
-    pub fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle {
-        let index = self.render_graph.image_resources.len() as ImageIndex;
-        let swapchain_index = self.render_graph.swapchain_images.len();
-        self.render_graph
-            .swapchain_images
-            .push((surface_handle, index));
-        self.render_graph.image_resources.push(ImageGraphResource {
-            description: ImageResourceDescription::Swapchain(swapchain_index),
-            first_access: None,
-            last_access: None,
-        });
-        let handle = ImageHandle::Transient(index);
-        self.image_index_map.insert(handle, index);
-        handle
-    }
-
-    pub fn build(self) -> RenderGraph {
-        self.render_graph
-    }
-
-    pub fn get_buffer_index(&mut self, buffer_handle: BufferHandle) -> BufferIndex {
-        match self.buffer_index_map.get(&buffer_handle) {
-            Some(index) => *index,
-            None => {
-                if let BufferHandle::Persistent(buffer_key) = buffer_handle {
-                    let index = self.render_graph.buffer_resources.len() as BufferIndex;
-                    self.render_graph
-                        .buffer_resources
-                        .push(BufferGraphResource {
-                            description: BufferResourceDescription::Persistent(buffer_key),
-                            last_access: BufferResourceAccess::None,
-                        });
-                    self.buffer_index_map.insert(buffer_handle, index);
-                    index
-                } else {
-                    panic!("Invalid Transient Buffer Handle: {:?}", buffer_handle)
-                }
-            }
-        }
-    }
-
-    fn get_buffer_offset(
-        &mut self,
-        buffer_offset: BufferOffset,
-    ) -> crate::render_graph::BufferOffset {
-        crate::render_graph::BufferOffset {
-            buffer: self.get_buffer_index(buffer_offset.buffer),
-            offset: buffer_offset.offset as u64,
-        }
-    }
-
-    fn get_image_copy_buffer(
-        &mut self,
-        buffer: ImageCopyBuffer,
-    ) -> crate::render_graph::ImageCopyBuffer {
-        crate::render_graph::ImageCopyBuffer {
-            buffer: self.get_buffer_index(buffer.buffer),
-            offset: buffer.offset,
-            row_length: buffer.row_length,
-            row_height: buffer.row_height,
-        }
-    }
-
-    pub fn get_image_index(&mut self, image_handle: ImageHandle) -> ImageIndex {
-        match self.image_index_map.get(&image_handle) {
-            Some(index) => *index,
-            None => {
-                if let ImageHandle::Persistent(image_key) = image_handle {
-                    let index = self.render_graph.image_resources.len() as ImageIndex;
-                    self.render_graph.image_resources.push(ImageGraphResource {
-                        description: ImageResourceDescription::Persistent(image_key),
-                        first_access: None,
-                        last_access: None,
-                    });
-                    self.image_index_map.insert(image_handle, index);
-                    index
-                } else {
-                    panic!("Invalid Transient Image Handle: {:?}", image_handle)
-                }
-            }
-        }
-    }
-
-    fn get_image_copy_image(
-        &mut self,
-        image: ImageCopyImage,
-    ) -> crate::render_graph::ImageCopyImage {
-        crate::render_graph::ImageCopyImage {
-            image: self.get_image_index(image.image),
-            offset: image.offset,
-        }
+    pub fn build(self, raster_pass_builder: &mut RasterPassBuilder) {
+        raster_pass_builder.draw_commands.push(RasterDrawCommand {
+            pipeline: self.pipeline,
+            vertex_buffers: self.vertex_buffers,
+            resources: self.resources,
+            dispatch: self
+                .dispatch
+                .expect("No draw command dispatch set for this draw command"),
+        })
     }
 }
