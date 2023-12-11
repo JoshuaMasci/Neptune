@@ -371,8 +371,6 @@ impl ResourceManager {
         swapchain_images: &[AcquiredSwapchainImage],
         graph_images: &[ImageGraphResource],
     ) -> Result<Vec<ImageTempResource>, VulkanError> {
-        let frame = &mut self.frames_in_flight[self.frame_index];
-
         let mut image_resources = Vec::with_capacity(graph_images.len());
         for graph_image in graph_images {
             image_resources.push(match &graph_image.description {

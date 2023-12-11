@@ -131,6 +131,8 @@ impl DescriptorSetInner {
     const STORAGE_IMAGE_BINDING: u16 = 1;
     const SAMPLED_IMAGE_BINDING: u16 = 2;
     const SAMPLER_BINDING: u16 = 3;
+
+    #[allow(unused)]
     const ACCELERATION_STRUCTURE_BINDING: u16 = 4;
 
     fn new(device: Arc<AshDevice>, count: DescriptorCount) -> Result<Self, VulkanError> {
@@ -361,7 +363,7 @@ impl DescriptorSetInner {
             &[vk::DescriptorImageInfo {
                 sampler: vk::Sampler::null(),
                 image_view: image.view,
-                image_layout: vk::ImageLayout::GENERAL, //TODO: change this to SHADER_READ_ONLY_OPTIMAL once image transitions are supported
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             }],
         );
         index
@@ -445,6 +447,7 @@ impl DescriptorSetInner {
         }
     }
 
+    #[allow(unused)]
     fn write_acceleration_structure_descriptor(
         &self,
         binding: u16,
