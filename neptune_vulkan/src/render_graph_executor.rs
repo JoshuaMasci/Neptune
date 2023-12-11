@@ -278,8 +278,6 @@ pub struct RenderGraphExecutor {
 
 impl RenderGraphExecutor {
     pub fn new(device: Arc<AshDevice>, frame_in_flight_count: u32) -> ash::prelude::VkResult<Self> {
-        //TODO: not this once ResourceManager supports multiple frames in flight
-        let frame_in_flight_count = frame_in_flight_count.min(1);
         let mut frame_contexts = Vec::with_capacity(frame_in_flight_count as usize);
         for _ in 0..frame_contexts.capacity() {
             frame_contexts.push(FrameContext::new(device.clone())?)

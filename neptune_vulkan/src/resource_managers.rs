@@ -192,8 +192,8 @@ pub struct ImageTempResource {
 
 #[derive(Default)]
 struct ResourceFrame {
-    freed_buffers2: Vec<BufferKey>,
-    freed_images2: Vec<ImageKey>,
+    freed_buffers: Vec<BufferKey>,
+    freed_images: Vec<ImageKey>,
     pub(crate) transient_buffers: Vec<Buffer>,
     pub(crate) transient_images: Vec<Image>,
 }
@@ -212,14 +212,8 @@ pub struct ResourceManager {
 
     samplers: SlotMap<SamplerKey, Arc<Sampler>>,
 
-    //TODO: rework this use multiple frames in flight
     frames_in_flight: Vec<ResourceFrame>,
     frame_index: usize,
-
-    freed_buffers2: Vec<BufferKey>,
-    freed_images2: Vec<ImageKey>,
-    pub(crate) transient_buffers: Vec<Buffer>,
-    pub(crate) transient_images: Vec<Image>,
 }
 
 impl ResourceManager {
@@ -249,32 +243,30 @@ impl ResourceManager {
             freed_images: Vec::new(),
             samplers: SlotMap::with_key(),
             descriptor_set,
-            freed_buffers2: Vec::new(),
-            freed_images2: Vec::new(),
-            transient_buffers: Vec::new(),
-            transient_images: Vec::new(),
             frames_in_flight,
             frame_index: 0,
         }
     }
 
     pub fn flush_frame(&mut self) {
-        //TODO: fix this when multiple frames in flight implemented
-        for key in self.freed_buffers2.drain(..) {
+        self.frame_index = (self.frame_index + 1) % self.frames_in_flight.len();
+        let frame = &mut self.frames_in_flight[self.frame_index];
+
+        for key in frame.freed_buffers.drain(..) {
             if self.buffers.remove(key).is_none() {
                 warn!("BufferKey({:?}) was invalid on deletion", key);
             }
         }
-        for key in self.freed_images2.drain(..) {
+        for key in frame.freed_images.drain(..) {
             if self.images.remove(key).is_none() {
                 warn!("ImageKey({:?}) was invalid on deletion", key);
             }
         }
-        self.freed_buffers2 = std::mem::take(&mut self.freed_buffers);
-        self.freed_images2 = std::mem::take(&mut self.freed_images);
 
-        self.transient_buffers.clear();
-        self.transient_images.clear();
+        frame.freed_buffers = std::mem::take(&mut self.freed_buffers);
+        frame.freed_images = std::mem::take(&mut self.freed_images);
+        frame.transient_buffers.clear();
+        frame.transient_images.clear();
     }
 
     //Buffers
@@ -335,6 +327,8 @@ impl ResourceManager {
         &mut self,
         graph_buffers: &[BufferGraphResource],
     ) -> Result<Vec<BufferTempResource>, VulkanError> {
+        let frame = &mut self.frames_in_flight[self.frame_index];
+
         let mut buffer_resources = Vec::with_capacity(graph_buffers.len());
         for graph_buffer in graph_buffers {
             buffer_resources.push(match &graph_buffer.description {
@@ -361,7 +355,7 @@ impl ResourceManager {
                         buffer: buffer.get_copy(),
                         last_access: BufferResourceAccess::None, //Never used before
                     };
-                    self.transient_buffers.push(buffer);
+                    frame.transient_buffers.push(buffer);
                     resource
                 }
             });
@@ -377,6 +371,8 @@ impl ResourceManager {
         swapchain_images: &[AcquiredSwapchainImage],
         graph_images: &[ImageGraphResource],
     ) -> Result<Vec<ImageTempResource>, VulkanError> {
+        let frame = &mut self.frames_in_flight[self.frame_index];
+
         let mut image_resources = Vec::with_capacity(graph_images.len());
         for graph_image in graph_images {
             image_resources.push(match &graph_image.description {
@@ -418,7 +414,8 @@ impl ResourceManager {
                         image: image.get_copy(),
                         last_access: ImageResourceAccess::None, //Never used before
                     };
-                    self.transient_images.push(image);
+                    let frame = &mut self.frames_in_flight[self.frame_index];
+                    frame.transient_images.push(image);
                     resource
                 }
                 ImageResourceDescription::Swapchain(index) => {
