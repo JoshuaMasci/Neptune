@@ -1,16 +1,17 @@
 use crate::render_graph::{
-    BufferBarrier, BufferGraphResource, BufferIndex, BufferResourceDescription, CommandBuffer,
-    CommandBufferDependency, CompiledRenderGraph, Framebuffer, ImageBarrier, ImageBarrierSource,
-    ImageGraphResource, ImageIndex, ImageResourceDescription, QueueType, RenderPassCommand,
+    BufferBarrier, BufferGraphResource, BufferIndex, BufferRead, BufferResourceDescription,
+    BufferWrite, CommandBuffer, CommandBufferDependency, CompiledRenderGraph, Framebuffer,
+    ImageBarrier, ImageBarrierSource, ImageGraphResource, ImageIndex, ImageResourceDescription,
+    QueueType, RenderPassCommand,
 };
-use crate::render_graph_builder::ShaderResourceUsage;
 use crate::render_graph_builder::{
     BufferOffset, ColorAttachment, ComputeDispatch, DepthStencilAttachment, DrawCommandDispatch,
     ImageCopyBuffer, ImageCopyImage, RasterDrawCommand, RenderGraphBuilderTrait,
 };
+use crate::render_graph_builder::{BufferReadCallback, BufferWriteCallback, ShaderResourceUsage};
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{
-    BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, SurfaceHandle,
+    BufferHandle, BufferUsage, ComputePipelineHandle, ImageHandle, SurfaceHandle,
     TransientImageDesc,
 };
 use ash::vk;
@@ -38,12 +39,35 @@ impl Default for BasicRenderGraphBuilder {
 }
 
 impl RenderGraphBuilderTrait for BasicRenderGraphBuilder {
-    fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle {
+    fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback) {
+        let index = self.get_buffer_index(handle);
+        self.render_graph
+            .buffer_writes
+            .push(BufferWrite { index, callback });
+    }
+
+    fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback) {
+        let index = self.get_buffer_index(handle);
+        self.render_graph
+            .buffer_reads
+            .push(BufferRead { index, callback });
+    }
+
+    fn create_transient_buffer(
+        &mut self,
+        size: usize,
+        usage: BufferUsage,
+        location: gpu_allocator::MemoryLocation,
+    ) -> BufferHandle {
         let index = self.render_graph.buffer_resources.len() as BufferIndex;
         self.render_graph
             .buffer_resources
             .push(BufferGraphResource {
-                description: BufferResourceDescription::Transient(desc),
+                description: BufferResourceDescription::Transient {
+                    size,
+                    usage,
+                    location,
+                },
                 last_access: BufferResourceAccess::None,
             });
         let handle = BufferHandle::Transient(index);

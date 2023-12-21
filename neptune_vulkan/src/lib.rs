@@ -22,7 +22,7 @@ pub use gpu_allocator;
 
 use crate::render_graph::BufferIndex;
 
-pub use buffer::BufferDescription;
+pub use buffer::BufferUsage;
 pub use device::{Device, DeviceSettings};
 pub use image::{ImageDescription2D, TransientImageDesc, TransientImageSize};
 pub use instance::{AppInfo, Instance};
@@ -86,11 +86,21 @@ pub struct ComputePipelineHandle(ComputePipelineKey);
 pub struct RasterPipelineHandle(RasterPipleineKey);
 
 #[derive(thiserror::Error, Debug)]
+pub enum BufferWriteError {
+    #[error("Buffer Not Mappable")]
+    BufferNotMapped,
+    #[error("Write Out Of Bounds")]
+    WriteOutOfBounds,
+}
+
+#[derive(thiserror::Error, Debug)]
 pub enum VulkanError {
     #[error("Vulkan Error: {0}")]
     Vk(#[from] vk::Result),
     #[error("GpuAllocator Error: {0}")]
     GpuAllocator(#[from] gpu_allocator::AllocationError),
+    #[error("BufferWriteError: {0}")]
+    BufferWriteError(#[from] BufferWriteError),
 }
 
 /// Similar to promise/future in c++ and rust async. The contained type will be available sometime later

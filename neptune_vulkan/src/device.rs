@@ -1,4 +1,4 @@
-use crate::buffer::{Buffer, BufferDescription};
+use crate::buffer::{Buffer, BufferDescription, BufferUsage};
 use crate::image::{Image, ImageDescription2D};
 use crate::instance::AshInstance;
 use crate::pipeline::{ComputePipeline, Pipelines, RasterPipeline, RasterPipelineDescription};
@@ -179,6 +179,8 @@ pub struct DeviceSettings {
 }
 
 pub struct Device {
+    settings: DeviceSettings,
+
     device: Arc<AshDevice>,
     pipelines: Pipelines,
     resource_manager: ResourceManager,
@@ -192,7 +194,7 @@ impl Device {
     pub fn new(
         instance: Arc<AshInstance>,
         physical_device: PhysicalDevice,
-        settings: &DeviceSettings,
+        settings: DeviceSettings,
     ) -> Result<Device, VulkanError> {
         let push_constant_size = unsafe {
             instance
@@ -223,6 +225,7 @@ impl Device {
         let graph_executor = RenderGraphExecutor::new(device.clone(), settings.frames_in_flight)?;
 
         Ok(Device {
+            settings,
             device,
             pipelines,
             resource_manager,
@@ -235,14 +238,23 @@ impl Device {
     pub fn create_buffer(
         &mut self,
         name: &str,
-        description: &BufferDescription,
+        size: usize,
+        usage: BufferUsage,
+        location: gpu_allocator::MemoryLocation,
     ) -> Result<BufferHandle, VulkanError> {
-        let buffer = Buffer::new(self.device.clone(), name, description)?;
+        let buffer = Buffer::new2(
+            self.device.clone(),
+            name,
+            size as vk::DeviceSize,
+            usage.to_vk(),
+            location,
+        )?;
 
         Ok(BufferHandle::Persistent(
             self.resource_manager.add_buffer(buffer),
         ))
     }
+
     pub fn destroy_buffer(&mut self, buffer_handle: BufferHandle) {
         match buffer_handle {
             BufferHandle::Persistent(key) => self.resource_manager.remove_buffer(key),
@@ -251,6 +263,7 @@ impl Device {
             }
         }
     }
+
     pub fn update_data_to_buffer(
         &mut self,
         buffer_handle: BufferHandle,
@@ -296,18 +309,11 @@ impl Device {
     pub fn create_buffer_init(
         &mut self,
         name: &str,
-        usage: vk::BufferUsageFlags,
+        usage: BufferUsage,
         location: gpu_allocator::MemoryLocation,
         data: &[u8],
     ) -> Result<BufferHandle, VulkanError> {
-        let buffer = self.create_buffer(
-            name,
-            &BufferDescription {
-                size: data.len() as vk::DeviceSize,
-                usage,
-                location,
-            },
-        )?;
+        let buffer = self.create_buffer(name, data.len(), usage, location)?;
         self.update_data_to_buffer(buffer, 0, data)?;
         Ok(buffer)
     }

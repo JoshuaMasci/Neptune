@@ -306,7 +306,7 @@ impl PhysicalDevice {
         }
     }
 
-    pub fn create_device(self, settings: &DeviceSettings) -> Result<Device, VulkanError> {
+    pub fn create_device(self, settings: DeviceSettings) -> Result<Device, VulkanError> {
         Device::new(self.instance.clone(), self, settings)
     }
 }

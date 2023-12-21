@@ -293,7 +293,7 @@ fn create_vertex_buffer<T>(
 
     Ok(device.create_buffer_init(
         "Vertex Buffer",
-        vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        neptune_vulkan::BufferUsage::VERTEX | neptune_vulkan::BufferUsage::TRANSFER,
         MemoryLocation::GpuOnly,
         data_bytes,
     )?)
@@ -307,16 +307,12 @@ fn create_index_buffer(
         std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
     };
 
-    let buffer = device.create_buffer(
+    Ok(device.create_buffer_init(
         "Index Buffer",
-        &neptune_vulkan::BufferDescription {
-            size: std::mem::size_of_val(data) as vk::DeviceSize,
-            usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            location: MemoryLocation::GpuOnly,
-        },
-    )?;
-    device.update_data_to_buffer(buffer, 0, data_bytes)?;
-    Ok(buffer)
+        neptune_vulkan::BufferUsage::INDEX | neptune_vulkan::BufferUsage::TRANSFER,
+        MemoryLocation::GpuOnly,
+        data_bytes,
+    )?)
 }
 
 pub fn load_materials(

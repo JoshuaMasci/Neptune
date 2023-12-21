@@ -320,6 +320,8 @@ impl RenderGraphExecutor {
             let mut images =
                 resource_manager.get_image_resources(&[], &upload_pass.image_resources)?;
 
+            //TODO: cache buffer reads for when frame is finished
+
             let mut resources = RenderGraphResources {
                 buffers: &mut buffers,
                 images: &mut images,
@@ -368,6 +370,10 @@ impl RenderGraphExecutor {
         let mut buffers = resource_manager.get_buffer_resources(&render_graph.buffer_resources)?;
         let mut images = resource_manager
             .get_image_resources(&acquired_swapchain_images, &render_graph.image_resources)?;
+
+        //Buffer Writes/Reads
+        resource_manager.write_buffers(&render_graph.buffer_writes);
+        resource_manager.read_buffers(&render_graph.buffer_reads);
 
         let submit_queue = self.device.graphics_queue.unwrap().handle;
 

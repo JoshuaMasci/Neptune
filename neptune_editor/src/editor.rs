@@ -2,12 +2,11 @@ use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::{gltf_loader, mesh};
+use anyhow::Context;
 use glam::Mat4;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
-use neptune_vulkan::{
-    render_graph_builder, vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize,
-};
+use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
+use neptune_vulkan::{vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 #[derive(clap::Parser)]
@@ -54,7 +53,7 @@ impl Editor {
                 }
 
                 const DISCRETE_DEVICE_ADJUSTMENT: usize = 100;
-                const MAX_MEMORY_CONSIDERATION: usize = 50;
+                const MAX_MEMORY_CONSIDERATION: usize = 25;
                 const BYTES_TO_GIGABYTES: usize = 1024 * 1024 * 1024;
                 const ASYNC_COMPUTE: usize = 25;
                 const ASYNC_TRANSFER: usize = 25;
@@ -83,17 +82,17 @@ impl Editor {
 
                 score
             })
-            .expect("Failed to find a suitable Vulkan device");
+            .context("Failed to find a suitable Vulkan device")?;
 
         info!("Selected Device: {:#?}", physical_device);
 
         const FRAME_IN_FLIGHT_COUNT: u32 = 3;
 
         let mut device = physical_device
-            .create_device(&DeviceSettings {
+            .create_device(DeviceSettings {
                 frames_in_flight: FRAME_IN_FLIGHT_COUNT,
             })
-            .expect("Failed to initialize vulkan device");
+            .context("Failed to initialize vulkan device")?;
 
         let window_size = window.inner_size();
         let surface_size = [window_size.width, window_size.height];
@@ -192,36 +191,12 @@ impl Editor {
 
         let scene = load_gltf_scene(&mut device, &gltf_scene_path)?;
 
-        let view_projection_matrix_buffer = {
-            let mut projection_matrix = Mat4::perspective_infinite_lh(
-                45.0f32.to_radians(),
-                surface_size[0] as f32 / surface_size[1] as f32,
-                0.01,
-            );
-            projection_matrix.y_axis.y *= -1.0;
-
-            let view_matrix = Mat4::look_to_lh(
-                glam::Vec3::new(0.0, 0.0, -1.0),
-                glam::Vec3::Z,
-                glam::Vec3::Y,
-            );
-
-            let view_projection_matrix = projection_matrix * view_matrix;
-            let matrix_data = &[view_projection_matrix];
-            let matrix_data_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(
-                    matrix_data.as_ptr() as *const u8,
-                    std::mem::size_of_val(matrix_data),
-                )
-            };
-
-            device.create_buffer_init(
-                "view_projection_matrix_buffer",
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                matrix_data_bytes,
-            )?
-        };
+        let view_projection_matrix_buffer = device.create_buffer(
+            "view_projection_matrix_buffer",
+            std::mem::size_of::<Mat4>(),
+            neptune_vulkan::BufferUsage::STORAGE | neptune_vulkan::BufferUsage::TRANSFER,
+            MemoryLocation::GpuOnly,
+        )?;
 
         let model_matrices_buffer = {
             let model_matrices_data: Vec<Mat4> =
@@ -236,7 +211,7 @@ impl Editor {
 
             device.create_buffer_init(
                 "model_matrices_buffer",
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                neptune_vulkan::BufferUsage::STORAGE | neptune_vulkan::BufferUsage::TRANSFER,
                 MemoryLocation::GpuOnly,
                 model_matrices_bytes,
             )?
@@ -271,39 +246,6 @@ impl Editor {
             },
         )?;
 
-        self.device
-            .destroy_buffer(self.view_projection_matrix_buffer);
-        self.view_projection_matrix_buffer = {
-            let mut projection_matrix = Mat4::perspective_infinite_lh(
-                45.0f32.to_radians(),
-                self.surface_size[0] as f32 / self.surface_size[1] as f32,
-                0.01,
-            );
-            projection_matrix.y_axis.y *= -1.0;
-
-            let view_matrix = Mat4::look_to_lh(
-                glam::Vec3::new(0.0, 0.0, -1.0),
-                glam::Vec3::Z,
-                glam::Vec3::Y,
-            );
-
-            let view_projection_matrix = projection_matrix * view_matrix;
-            let matrix_data = &[view_projection_matrix];
-            let matrix_data_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(
-                    matrix_data.as_ptr() as *const u8,
-                    std::mem::size_of_val(matrix_data),
-                )
-            };
-
-            self.device.create_buffer_init(
-                "view_projection_matrix_buffer",
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                MemoryLocation::GpuOnly,
-                matrix_data_bytes,
-            )?
-        };
-
         Ok(())
     }
 
@@ -320,8 +262,64 @@ impl Editor {
             memory_location: MemoryLocation::GpuOnly,
         });
 
+        {
+            let mut projection_matrix = Mat4::perspective_infinite_lh(
+                45.0f32.to_radians(),
+                self.surface_size[0] as f32 / self.surface_size[1] as f32,
+                0.01,
+            );
+            projection_matrix.y_axis.y *= -1.0;
+
+            let view_matrix = Mat4::look_to_lh(
+                glam::Vec3::new(0.0, 0.0, -1.0),
+                glam::Vec3::Z,
+                glam::Vec3::Y,
+            );
+
+            let view_projection_matrix = projection_matrix * view_matrix;
+
+            let buffer_size = std::mem::size_of_val(&view_projection_matrix);
+            let host_view_projection_matrix_buffer = render_graph_builder.create_transient_buffer(
+                buffer_size,
+                neptune_vulkan::BufferUsage::TRANSFER,
+                MemoryLocation::CpuToGpu,
+            );
+
+            render_graph_builder.add_mapped_buffer_write(
+                host_view_projection_matrix_buffer,
+                BufferWriteCallback::new(move |slice| {
+                    let matrix_data = &[view_projection_matrix];
+                    let matrix_data_bytes: &[u8] = unsafe {
+                        std::slice::from_raw_parts(
+                            matrix_data.as_ptr() as *const u8,
+                            std::mem::size_of_val(matrix_data),
+                        )
+                    };
+                    slice.copy_from_slice(matrix_data_bytes);
+                }),
+            );
+
+            let mut data_upload_pass =
+                neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
+                    "Matrix Upload Pass",
+                    neptune_vulkan::render_graph::QueueType::Graphics,
+                );
+            data_upload_pass.copy_buffer_to_buffer(
+                neptune_vulkan::render_graph_builder::BufferOffset {
+                    buffer: host_view_projection_matrix_buffer,
+                    offset: 0,
+                },
+                neptune_vulkan::render_graph_builder::BufferOffset {
+                    buffer: self.view_projection_matrix_buffer,
+                    offset: 0,
+                },
+                buffer_size,
+            );
+            data_upload_pass.build(&mut render_graph_builder);
+        }
+
         let mut raster_pass_builder =
-            render_graph_builder::RasterPassBuilder::new("Swapchain Pass");
+            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Swapchain Pass");
         raster_pass_builder.add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]));
         raster_pass_builder.add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
 
@@ -338,16 +336,22 @@ impl Editor {
                     .unwrap_or((self.scene.images[0], self.scene.samplers.default));
 
                 let mut draw_command_builder =
-                    render_graph_builder::RasterDrawCommandBuilder::new(self.raster_pipeline);
+                    neptune_vulkan::render_graph_builder::RasterDrawCommandBuilder::new(
+                        self.raster_pipeline,
+                    );
 
-                draw_command_builder.add_vertex_buffer(render_graph_builder::BufferOffset {
-                    buffer: primitive.position_buffer,
-                    offset: 0,
-                });
-                draw_command_builder.add_vertex_buffer(render_graph_builder::BufferOffset {
-                    buffer: primitive.attributes_buffer,
-                    offset: 0,
-                });
+                draw_command_builder.add_vertex_buffer(
+                    neptune_vulkan::render_graph_builder::BufferOffset {
+                        buffer: primitive.position_buffer,
+                        offset: 0,
+                    },
+                );
+                draw_command_builder.add_vertex_buffer(
+                    neptune_vulkan::render_graph_builder::BufferOffset {
+                        buffer: primitive.attributes_buffer,
+                        offset: 0,
+                    },
+                );
                 draw_command_builder.read_buffer(self.view_projection_matrix_buffer);
                 draw_command_builder.read_buffer(self.model_matrices_buffer);
                 draw_command_builder.read_sampler(base_color_sampler);
@@ -360,7 +364,7 @@ impl Editor {
                         0,
                         0..index_buffer_ref.count,
                         instance_range,
-                        render_graph_builder::BufferOffset {
+                        neptune_vulkan::render_graph_builder::BufferOffset {
                             buffer: index_buffer_ref.buffer,
                             offset: 0,
                         },

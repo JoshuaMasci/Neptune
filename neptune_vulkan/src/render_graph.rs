@@ -1,9 +1,11 @@
+use crate::render_graph_builder::{BufferReadCallback, BufferWriteCallback};
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{
-    BufferDescription, BufferKey, ComputePipelineHandle, ImageKey, RasterPipelineHandle,
-    SamplerHandle, SurfaceHandle, TransientImageDesc,
+    BufferKey, BufferUsage, ComputePipelineHandle, ImageKey, RasterPipelineHandle, SamplerHandle,
+    SurfaceHandle, TransientImageDesc,
 };
 use ash::vk;
+use std::fmt::{Debug, Formatter};
 use std::ops::Range;
 
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
@@ -19,21 +21,25 @@ pub type BufferIndex = usize;
 #[derive(Debug)]
 pub enum BufferResourceDescription {
     Persistent(BufferKey),
-    Transient(BufferDescription),
+    Transient {
+        size: usize,
+        usage: BufferUsage,
+        location: gpu_allocator::MemoryLocation,
+    },
 }
 
 impl BufferResourceDescription {
     pub fn is_persistent(&self) -> bool {
         match self {
             BufferResourceDescription::Persistent(_) => true,
-            BufferResourceDescription::Transient(_) => false,
+            BufferResourceDescription::Transient { .. } => false,
         }
     }
 
     pub fn as_persistent(&self) -> Option<BufferKey> {
         match self {
             BufferResourceDescription::Persistent(key) => Some(*key),
-            BufferResourceDescription::Transient(_) => None,
+            BufferResourceDescription::Transient { .. } => None,
         }
     }
 }
@@ -213,6 +219,31 @@ pub struct OldRenderPass {
 // 3. Graph = Single Queue + Topological Sort + Image/Buffer Transitions
 // 4. GraphMultiQueue = Multiple Queues + Topological Sort + Image/Buffer Transitions
 
+pub struct BufferWrite {
+    pub(crate) index: BufferIndex,
+    pub(crate) callback: BufferWriteCallback,
+}
+impl Debug for BufferWrite {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferWrite")
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct BufferRead {
+    pub(crate) index: BufferIndex,
+    pub(crate) callback: BufferReadCallback,
+}
+impl Debug for BufferRead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferRead")
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Queue {
     #[default]
@@ -323,6 +354,9 @@ pub struct CommandBuffer {
 
 #[derive(Debug, Default)]
 pub struct CompiledRenderGraph {
+    pub buffer_writes: Vec<BufferWrite>,
+    pub buffer_reads: Vec<BufferRead>,
+
     //TODO: Update this to contain first and last usages with queue
     /// List of buffers used by this graph
     pub buffer_resources: Vec<BufferGraphResource>,

@@ -1,10 +1,25 @@
 use crate::render_graph::{CompiledRenderGraph, IndexType, QueueType};
 use crate::{
-    BufferDescription, BufferHandle, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
+    BufferHandle, BufferUsage, ComputePipelineHandle, ImageHandle, RasterPipelineHandle,
     SamplerHandle, SurfaceHandle, TransientImageDesc,
 };
 use ash::vk;
 use std::ops::Range;
+use std::rc::Rc;
+
+type BufferWriteCallbackType = Box<dyn Fn(&mut [u8])>;
+pub struct BufferWriteCallback(BufferWriteCallbackType);
+impl BufferWriteCallback {
+    pub fn new(function: impl Fn(&mut [u8]) + 'static) -> Self {
+        Self(Box::new(function))
+    }
+
+    pub fn call(&self, slice: &mut [u8]) {
+        (self.0)(slice)
+    }
+}
+
+pub type BufferReadCallback = Rc<dyn Fn(&[u8])>;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct BufferOffset {
@@ -123,7 +138,15 @@ pub struct RasterDrawCommand {
 // 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
 pub trait RenderGraphBuilderTrait {
-    fn create_transient_buffer(&mut self, desc: BufferDescription) -> BufferHandle;
+    fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback);
+    fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback);
+
+    fn create_transient_buffer(
+        &mut self,
+        size: usize,
+        usage: BufferUsage,
+        location: gpu_allocator::MemoryLocation,
+    ) -> BufferHandle;
     fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle;
     fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle;
 

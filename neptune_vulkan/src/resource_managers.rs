@@ -3,7 +3,8 @@ use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
 use crate::image::{AshImage, Image, TransientImageSize};
 use crate::render_graph::{
-    BufferGraphResource, BufferResourceDescription, ImageGraphResource, ImageResourceDescription,
+    BufferGraphResource, BufferIndex, BufferRead, BufferResourceDescription, BufferWrite,
+    ImageGraphResource, ImageResourceDescription,
 };
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
@@ -11,6 +12,7 @@ use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
 use log::{error, warn};
 use slotmap::SlotMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
@@ -172,6 +174,9 @@ impl ImageResourceAccess {
 
 pub struct BufferResource {
     pub buffer: Buffer,
+    pub queue_owner: Option<Queue>,
+
+    //TODO: move to frame context
     pub last_access: BufferResourceAccess,
 }
 
@@ -194,8 +199,10 @@ pub struct ImageTempResource {
 struct ResourceFrame {
     freed_buffers: Vec<BufferKey>,
     freed_images: Vec<ImageKey>,
-    pub(crate) transient_buffers: Vec<Buffer>,
+    pub(crate) transient_buffers: HashMap<BufferIndex, Buffer>,
     pub(crate) transient_images: Vec<Image>,
+
+    buffer_reads: Vec<BufferRead>,
 }
 
 pub struct ResourceManager {
@@ -230,10 +237,9 @@ impl ResourceManager {
         )
         .unwrap();
 
-        let mut frames_in_flight = Vec::with_capacity(frame_in_flight_count as usize);
-        for _ in 0..frames_in_flight.capacity() {
-            frames_in_flight.push(ResourceFrame::default());
-        }
+        let frames_in_flight = (0..frame_in_flight_count as usize)
+            .map(|_| ResourceFrame::default())
+            .collect();
 
         Self {
             device,
@@ -251,6 +257,19 @@ impl ResourceManager {
     pub fn flush_frame(&mut self) {
         self.frame_index = (self.frame_index + 1) % self.frames_in_flight.len();
         let frame = &mut self.frames_in_flight[self.frame_index];
+
+        //Read callbacks
+        for buffer_read in frame.buffer_reads.drain(..) {
+            let buffer = frame.transient_buffers.get(&buffer_read.index).unwrap();
+            match buffer.allocation.mapped_slice() {
+                None => {
+                    todo!("Return Error, target buffer not mapped");
+                }
+                Some(buffer_slice) => {
+                    (buffer_read.callback)(buffer_slice);
+                }
+            }
+        }
 
         for key in frame.freed_buffers.drain(..) {
             if self.buffers.remove(key).is_none() {
@@ -277,6 +296,7 @@ impl ResourceManager {
 
         self.buffers.insert(BufferResource {
             buffer,
+            queue_owner: None,
             last_access: Default::default(),
         })
     }
@@ -320,6 +340,31 @@ impl ResourceManager {
         }
     }
 
+    pub fn write_buffers(&mut self, buffer_writes: &[BufferWrite]) {
+        let frame = &mut self.frames_in_flight[self.frame_index];
+
+        for buffer_write in buffer_writes.iter() {
+            let buffer = frame
+                .transient_buffers
+                .get_mut(&buffer_write.index)
+                .unwrap();
+
+            match buffer.allocation.mapped_slice_mut() {
+                None => {
+                    todo!("Return Error, target buffer not mapped");
+                }
+                Some(buffer_slice) => {
+                    buffer_write.callback.call(buffer_slice);
+                }
+            }
+        }
+    }
+
+    pub fn read_buffers(&mut self, buffer_reads: &[BufferRead]) {
+        let frame = &mut self.frames_in_flight[self.frame_index];
+        frame.buffer_reads = buffer_reads.to_vec();
+    }
+
     //Graph Functions
     //TODO: take in vector to reuse memory?
     /// Get the buffer resources and update the last usages
@@ -330,7 +375,7 @@ impl ResourceManager {
         let frame = &mut self.frames_in_flight[self.frame_index];
 
         let mut buffer_resources = Vec::with_capacity(graph_buffers.len());
-        for graph_buffer in graph_buffers {
+        for (index, graph_buffer) in graph_buffers.iter().enumerate() {
             buffer_resources.push(match &graph_buffer.description {
                 BufferResourceDescription::Persistent(key) => {
                     let buffer = &mut self.buffers[*key];
@@ -344,9 +389,18 @@ impl ResourceManager {
                         ),
                     }
                 }
-                BufferResourceDescription::Transient(buffer_description) => {
-                    let mut buffer =
-                        Buffer::new(self.device.clone(), "Transient Buffer", buffer_description)?;
+                BufferResourceDescription::Transient {
+                    size,
+                    usage,
+                    location,
+                } => {
+                    let mut buffer = Buffer::new2(
+                        self.device.clone(),
+                        "Transient Buffer",
+                        *size as vk::DeviceSize,
+                        usage.to_vk(),
+                        *location,
+                    )?;
                     if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
                         buffer.storage_binding =
                             Some(self.descriptor_set.bind_storage_buffer(&buffer));
@@ -355,7 +409,7 @@ impl ResourceManager {
                         buffer: buffer.get_copy(),
                         last_access: BufferResourceAccess::None, //Never used before
                     };
-                    frame.transient_buffers.push(buffer);
+                    let _ = frame.transient_buffers.insert(index, buffer);
                     resource
                 }
             });
