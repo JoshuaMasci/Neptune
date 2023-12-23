@@ -19,9 +19,9 @@ memoffset = "0.9.0"
 glam = "0.24.0"
 
 raw-window-handle = "0.5.0"
-winit = "0.28.3"
-
-gltf = {version =  "1.2.0", features = ["utils"] }
+winit = { version = "0.29.5", features = ["rwh_05"] }
+winit_input_helper = "0.15.1"
+gltf = { version =  "1.2.0", features = ["utils"] }
 clap = { version = "4.4.0", features = ["derive"] }
 rfd = "0.11.4"
 

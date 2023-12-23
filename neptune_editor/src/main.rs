@@ -1,8 +1,10 @@
+mod camera;
 mod editor;
 mod gltf_loader;
 mod material;
 mod mesh;
 mod shader;
+mod transform;
 
 #[macro_use]
 extern crate log;
@@ -11,7 +13,7 @@ use crate::editor::{Editor, EditorConfig};
 
 use clap::Parser;
 use std::time::Instant;
-use winit::platform::run_return::EventLoopExtRunReturn;
+
 use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
@@ -22,7 +24,8 @@ pub const APP_NAME: &str = "Neptune Editor";
 fn main() -> anyhow::Result<()> {
     pretty_env_logger::init_timed();
 
-    let mut event_loop = winit::event_loop::EventLoop::new();
+    let mut input = winit_input_helper::WinitInputHelper::new();
+    let event_loop = winit::event_loop::EventLoop::new()?;
     let window = winit::window::WindowBuilder::new()
         .with_title(APP_NAME)
         .with_resizable(true)
@@ -38,15 +41,16 @@ fn main() -> anyhow::Result<()> {
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
 
-    event_loop.run_return(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run(move |event, window_target| {
+        input.update(&event);
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
                 info!("The close button was pressed; stopping");
-                *control_flow = ControlFlow::Exit
+                window_target.exit();
             }
             Event::WindowEvent {
                 event: WindowEvent::Resized(new_size),
@@ -56,9 +60,12 @@ fn main() -> anyhow::Result<()> {
                     .window_resize([new_size.width, new_size.height])
                     .expect("Failed to resize swapchain");
             }
-            Event::MainEventsCleared => {
+            Event::AboutToWait => {
                 let last_frame_time = last_frame_start.elapsed();
                 last_frame_start = Instant::now();
+
+                editor.process_input(&input);
+                editor.update(last_frame_time.as_secs_f32());
 
                 editor.render().expect("Failed to render a frame");
 
@@ -70,11 +77,9 @@ fn main() -> anyhow::Result<()> {
                     frame_count_time = (0, 0.0);
                 }
             }
-            Event::RedrawRequested(_window_id) => {}
             _ => {}
         }
-    });
-
+    })?;
     info!("Exiting Main Loop!");
     Ok(())
 }

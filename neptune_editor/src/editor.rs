@@ -1,13 +1,17 @@
+use crate::camera::Camera;
 use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
 use crate::material::Material;
 use crate::mesh::Mesh;
+use crate::transform::Transform;
 use crate::{gltf_loader, mesh};
 use anyhow::Context;
-use glam::Mat4;
+use glam::{BVec3, Mat4, Vec3};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
 use neptune_vulkan::{vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use winit::keyboard::KeyCode;
+use winit_input_helper::WinitInputHelper;
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -29,18 +33,29 @@ pub struct Editor {
     view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
     model_matrices_buffer: neptune_vulkan::BufferHandle,
     scene: GltfScene,
+
+    camera_transform: Transform,
+    camera: Camera,
+
+    camera_move_speed: Vec3,
+    camera_move_input: Vec3,
+
+    camera_rotate_speed: Vec3,
+    camera_rotate_input: Vec3,
 }
 
 impl Editor {
     pub fn new(window: &winit::window::Window, config: &EditorConfig) -> anyhow::Result<Self> {
+        let raw_display_handle = window.raw_display_handle();
+        let raw_window_handle = window.raw_window_handle();
+
         let mut instance = neptune_vulkan::Instance::new(
             &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
             &neptune_vulkan::AppInfo::new(crate::APP_NAME, [0, 0, 1, 0]),
-            Some(window.raw_display_handle()),
+            Some(raw_display_handle),
         )?;
 
-        let surface_handle =
-            instance.create_surface(window.raw_display_handle(), window.raw_window_handle())?;
+        let surface_handle = instance.create_surface(raw_display_handle, raw_window_handle)?;
 
         let physical_device = instance
             .select_physical_device(Some(surface_handle), |physical_device| {
@@ -130,10 +145,10 @@ impl Editor {
                 vertex: vertex_state,
                 primitive: neptune_vulkan::PrimitiveState {
                     front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                    cull_mode: vk::CullModeFlags::NONE,
+                    cull_mode: vk::CullModeFlags::BACK,
                 },
                 depth_state: Some(neptune_vulkan::DepthState {
-                    format: vk::Format::D16_UNORM,
+                    format: vk::Format::D32_SFLOAT,
                     depth_enabled: true,
                     write_depth: true,
                     depth_op: vk::CompareOp::LESS,
@@ -227,6 +242,12 @@ impl Editor {
             view_projection_matrix_buffer,
             model_matrices_buffer,
             scene,
+            camera_transform: Transform::with_position(Vec3::NEG_Z),
+            camera: Camera::default(),
+            camera_move_speed: Vec3::splat(1.0),
+            camera_move_input: Vec3::ZERO,
+            camera_rotate_speed: Vec3::new(0.0, 60.0f32.to_radians(), 0.0),
+            camera_rotate_input: Vec3::ZERO,
         })
     }
 
@@ -249,6 +270,40 @@ impl Editor {
         Ok(())
     }
 
+    pub fn process_input(&mut self, input: &WinitInputHelper) {
+        fn buttons_to_axis(input: &WinitInputHelper, pos_key: KeyCode, neg_key: KeyCode) -> f32 {
+            let mut value = 0.0;
+            if input.key_held(pos_key) {
+                value += 1.0;
+            }
+
+            if input.key_held(neg_key) {
+                value -= 1.0;
+            }
+
+            value
+        }
+
+        self.camera_move_input.x = buttons_to_axis(input, KeyCode::KeyD, KeyCode::KeyA);
+        self.camera_move_input.y = buttons_to_axis(input, KeyCode::ShiftLeft, KeyCode::ControlLeft);
+        self.camera_move_input.z = buttons_to_axis(input, KeyCode::KeyW, KeyCode::KeyS);
+
+        self.camera_rotate_input.y =
+            buttons_to_axis(input, KeyCode::ArrowRight, KeyCode::ArrowLeft);
+    }
+
+    pub fn update(&mut self, delta_time: f32) {
+        self.camera_transform.rotate(
+            self.camera_transform.rotation * Vec3::Y,
+            self.camera_rotate_speed.y * self.camera_rotate_input.y * delta_time,
+        );
+
+        self.camera_transform.translate(
+            self.camera_transform.rotation
+                * (self.camera_move_speed * self.camera_move_input * delta_time),
+        );
+    }
+
     pub fn render(&mut self) -> anyhow::Result<()> {
         let mut render_graph_builder =
             neptune_vulkan::basic_render_graph_builder::BasicRenderGraphBuilder::default();
@@ -256,26 +311,16 @@ impl Editor {
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: vk::Format::D16_UNORM,
+            format: vk::Format::D32_SFLOAT,
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             mip_levels: 1,
             memory_location: MemoryLocation::GpuOnly,
         });
 
         {
-            let mut projection_matrix = Mat4::perspective_infinite_lh(
-                45.0f32.to_radians(),
-                self.surface_size[0] as f32 / self.surface_size[1] as f32,
-                0.01,
-            );
-            projection_matrix.y_axis.y *= -1.0;
-
-            let view_matrix = Mat4::look_to_lh(
-                glam::Vec3::new(0.0, 0.0, -1.0),
-                glam::Vec3::Z,
-                glam::Vec3::Y,
-            );
-
+            let aspect_ratio = self.surface_size[0] as f32 / self.surface_size[1] as f32;
+            let projection_matrix = self.camera.projection_matrix(aspect_ratio);
+            let view_matrix = self.camera_transform.view_matrix();
             let view_projection_matrix = projection_matrix * view_matrix;
 
             let buffer_size = std::mem::size_of_val(&view_projection_matrix);
