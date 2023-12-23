@@ -5,10 +5,12 @@ use crate::mesh::Mesh;
 use crate::transform::Transform;
 use crate::{gltf_loader, mesh};
 use anyhow::Context;
-use glam::{BVec3, Mat4, Vec3};
+use glam::{Mat4, Vec3};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
-use neptune_vulkan::{vk, DeviceSettings, ImageHandle, TransientImageDesc, TransientImageSize};
+use neptune_vulkan::{
+    vk, DeviceSettings, ImageDescription2D, ImageHandle, TransientImageDesc, TransientImageSize,
+};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::keyboard::KeyCode;
 use winit_input_helper::WinitInputHelper;
@@ -29,6 +31,7 @@ pub struct Editor {
 
     raster_pipeline: neptune_vulkan::RasterPipelineHandle,
     fullscreen_copy_pipeline: neptune_vulkan::RasterPipelineHandle,
+    empty_image: ImageHandle,
 
     view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
     model_matrices_buffer: neptune_vulkan::BufferHandle,
@@ -45,6 +48,8 @@ pub struct Editor {
 }
 
 impl Editor {
+    const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
+
     pub fn new(window: &winit::window::Window, config: &EditorConfig) -> anyhow::Result<Self> {
         let raw_display_handle = window.raw_display_handle();
         let raw_window_handle = window.raw_window_handle();
@@ -148,7 +153,7 @@ impl Editor {
                     cull_mode: vk::CullModeFlags::BACK,
                 },
                 depth_state: Some(neptune_vulkan::DepthState {
-                    format: vk::Format::D32_SFLOAT,
+                    format: Self::DEPTH_FORMAT,
                     depth_enabled: true,
                     write_depth: true,
                     depth_op: vk::CompareOp::LESS,
@@ -232,6 +237,18 @@ impl Editor {
             )?
         };
 
+        let empty_image = device.create_image_init(
+            "Empty Image",
+            &ImageDescription2D {
+                size: [1; 2],
+                format: vk::Format::R8G8B8A8_UNORM,
+                usage: vk::ImageUsageFlags::SAMPLED,
+                mip_levels: 1,
+                location: MemoryLocation::GpuOnly,
+            },
+            &[255u8; 4],
+        )?;
+
         Ok(Self {
             instance,
             surface_handle,
@@ -239,6 +256,7 @@ impl Editor {
             device,
             raster_pipeline,
             fullscreen_copy_pipeline,
+            empty_image,
             view_projection_matrix_buffer,
             model_matrices_buffer,
             scene,
@@ -266,7 +284,6 @@ impl Editor {
                 present_mode: vk::PresentModeKHR::FIFO,
             },
         )?;
-
         Ok(())
     }
 
@@ -311,7 +328,7 @@ impl Editor {
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
         let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
             size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: vk::Format::D32_SFLOAT,
+            format: Self::DEPTH_FORMAT,
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             mip_levels: 1,
             memory_location: MemoryLocation::GpuOnly,
@@ -378,7 +395,7 @@ impl Editor {
                     .base_color_texture
                     .as_ref()
                     .map(|tex| (tex.image, tex.sampler))
-                    .unwrap_or((self.scene.images[0], self.scene.samplers.default));
+                    .unwrap_or((self.empty_image, self.scene.samplers.default));
 
                 let mut draw_command_builder =
                     neptune_vulkan::render_graph_builder::RasterDrawCommandBuilder::new(
