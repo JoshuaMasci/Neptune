@@ -86,7 +86,7 @@ impl VertexSkinningAttributes {
         };
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Mesh {
     pub name: String,
     pub primitives: Vec<Primitive>,

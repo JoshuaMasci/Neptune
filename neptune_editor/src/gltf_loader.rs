@@ -325,7 +325,7 @@ pub fn load_materials(
         .map(|gltf_material| Material {
             name: gltf_material
                 .name()
-                .unwrap_or("Unammed Material")
+                .unwrap_or("Unnamed Material")
                 .to_string(),
             base_color: gltf_material
                 .pbr_metallic_roughness()

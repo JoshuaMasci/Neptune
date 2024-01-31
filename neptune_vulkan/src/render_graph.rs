@@ -202,16 +202,6 @@ pub enum RenderPassCommand {
     },
 }
 
-#[derive(Debug)]
-pub struct OldRenderPass {
-    pub label_name: String,
-    pub label_color: [f32; 4],
-    pub queue: QueueType,
-    pub buffer_access: Vec<(BufferIndex, BufferResourceAccess)>,
-    pub image_access: Vec<(ImageIndex, ImageResourceAccess)>,
-    pub command: Option<RenderPassCommand>,
-}
-
 // TODO: Determine the best pre and/or post frame ownership barriers
 // Graph Builders:
 // 1. Debug = Single Queue + Serial + Image Transitions + Global Memory Barriers

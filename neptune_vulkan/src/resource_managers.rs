@@ -8,8 +8,9 @@ use crate::render_graph::{
 };
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
-use crate::{BufferKey, ImageHandle, ImageKey, SamplerKey, VulkanError};
+use crate::{BufferKey, BufferUsage, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
+use gpu_allocator::MemoryLocation;
 use log::{error, warn};
 use slotmap::SlotMap;
 use std::collections::HashMap;
@@ -243,11 +244,15 @@ impl ResourceManager {
 
         Self {
             device,
+
             buffers: SlotMap::with_key(),
             freed_buffers: Vec::new(),
+
             images: SlotMap::with_key(),
             freed_images: Vec::new(),
+
             samplers: SlotMap::with_key(),
+
             descriptor_set,
             frames_in_flight,
             frame_index: 0,
@@ -289,6 +294,32 @@ impl ResourceManager {
     }
 
     //Buffers
+    pub fn create_buffer(
+        &mut self,
+        name: &str,
+        size: usize,
+        usage: BufferUsage,
+        location: MemoryLocation,
+    ) -> Result<BufferKey, VulkanError> {
+        let mut buffer = Buffer::new2(
+            self.device.clone(),
+            name,
+            size as vk::DeviceSize,
+            usage.to_vk(),
+            location,
+        )?;
+
+        if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
+        }
+
+        Ok(self.buffers.insert(BufferResource {
+            buffer,
+            queue_owner: None,
+            last_access: Default::default(),
+        }))
+    }
+
     pub fn add_buffer(&mut self, mut buffer: Buffer) -> BufferKey {
         if buffer.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
             buffer.storage_binding = Some(self.descriptor_set.bind_storage_buffer(&buffer));
@@ -486,7 +517,7 @@ impl ResourceManager {
 
 fn get_transient_image_size(
     size: TransientImageSize,
-    persistent: &ResourceManager,
+    resource_manager: &ResourceManager,
     images: &[ImageGraphResource],
     swapchain_images: &[AcquiredSwapchainImage],
 ) -> vk::Extent2D {
@@ -495,16 +526,20 @@ fn get_transient_image_size(
         TransientImageSize::Relative(scale, target) => {
             let mut extent = match target {
                 ImageHandle::Persistent(image_key) => {
-                    persistent.get_image(image_key).as_ref().unwrap().size
+                    resource_manager.get_image(image_key).as_ref().unwrap().size
                 }
                 ImageHandle::Transient(index) => match &images[index].description {
                     ImageResourceDescription::Persistent(image_key) => {
                         error!("Found a Persistent image when looking up a transient image size, this shouldn't happened (but I won't crash)");
-                        persistent.get_image(*image_key).as_ref().unwrap().size
+                        resource_manager
+                            .get_image(*image_key)
+                            .as_ref()
+                            .unwrap()
+                            .size
                     }
                     ImageResourceDescription::Transient(desc) => get_transient_image_size(
                         desc.size.clone(),
-                        persistent,
+                        resource_manager,
                         images,
                         swapchain_images,
                     ),

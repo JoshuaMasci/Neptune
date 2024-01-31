@@ -3,14 +3,11 @@ use crate::device::{AshDevice, AshQueue};
 use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
 use crate::render_graph::{
-    BufferBarrierSource, BufferIndex, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
+    BufferBarrierSource, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
     ComputeDispatch, DrawCommandDispatch, Framebuffer, ImageBarrierSource, ImageIndex, IndexType,
-    OldRenderPass, RasterDrawCommand, RenderPassCommand, ShaderResourceUsage, Transfer,
+    RasterDrawCommand, RenderPassCommand, ShaderResourceUsage, Transfer,
 };
-use crate::resource_managers::{
-    BufferResourceAccess, BufferTempResource, ImageResourceAccess, ImageTempResource,
-    ResourceManager,
-};
+use crate::resource_managers::{BufferTempResource, ImageTempResource, ResourceManager};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::upload_queue::UploadPass;
 use crate::{
@@ -320,8 +317,6 @@ impl RenderGraphExecutor {
             let mut images =
                 resource_manager.get_image_resources(&[], &upload_pass.image_resources)?;
 
-            //TODO: cache buffer reads for when frame is finished
-
             let mut resources = RenderGraphResources {
                 buffers: &mut buffers,
                 images: &mut images,
@@ -329,12 +324,11 @@ impl RenderGraphExecutor {
                 pipelines,
             };
 
-            //TODO rework upload pass to not use the old render pass object
-            record_render_pass(
+            record_command_buffer(
                 &self.device,
                 upload_command_buffer,
+                &upload_pass.command_buffer,
                 &mut resources,
-                &upload_pass.pass,
             );
 
             unsafe {
@@ -654,7 +648,6 @@ fn record_command_buffer(
             );
         }
 
-        //TODO: Buffer and Image Barriers
         let buffer_barriers: Vec<vk::BufferMemoryBarrier2> = render_pass_set
             .buffer_barriers
             .iter()
@@ -775,139 +768,6 @@ fn record_command_buffer(
         if let Some(debug_util) = &device.instance.debug_utils {
             debug_util.cmd_end_label(vulkan_command_buffer);
         }
-    }
-}
-
-// OLD RENDER GRAPH RECORD FUNCTIONS
-// Need to update them to handle the new render graph format
-pub fn record_render_pass(
-    device: &AshDevice,
-    command_buffer: vk::CommandBuffer,
-    graph_resources: &mut RenderGraphResources,
-    render_pass: &OldRenderPass,
-) {
-    record_barrier(
-        device,
-        command_buffer,
-        graph_resources.buffers,
-        graph_resources.images,
-        &render_pass.buffer_access,
-        &render_pass.image_access,
-    );
-
-    //TODO: use queue
-    let _ = render_pass.queue;
-
-    if let Some(debug_util) = &device.instance.debug_utils {
-        debug_util.cmd_begin_label(
-            command_buffer,
-            &render_pass.label_name,
-            render_pass.label_color,
-        );
-    }
-
-    if let Some(render_pass_command) = &render_pass.command {
-        match render_pass_command {
-            RenderPassCommand::Transfer { transfers } => {
-                record_transfer_pass(device, command_buffer, graph_resources, transfers);
-            }
-            RenderPassCommand::Compute {
-                pipeline,
-                resources,
-                dispatch,
-            } => record_compute_pass(
-                device,
-                command_buffer,
-                graph_resources,
-                *pipeline,
-                resources,
-                dispatch,
-            ),
-            RenderPassCommand::Raster {
-                framebuffer,
-                draw_commands,
-            } => record_raster_pass(
-                device,
-                command_buffer,
-                graph_resources,
-                framebuffer,
-                draw_commands,
-            ),
-        }
-    }
-
-    if let Some(debug_util) = &device.instance.debug_utils {
-        debug_util.cmd_end_label(command_buffer);
-    }
-}
-
-fn record_barrier(
-    device: &AshDevice,
-    command_buffer: vk::CommandBuffer,
-    buffers: &mut [BufferTempResource],
-    images: &mut [ImageTempResource],
-    buffer_access: &[(BufferIndex, BufferResourceAccess)],
-    image_access: &[(ImageIndex, ImageResourceAccess)],
-) {
-    let buffer_barriers: Vec<vk::BufferMemoryBarrier2> = buffer_access
-        .iter()
-        .map(|(index, access)| {
-            let resource = &mut buffers[*index];
-            let src = resource.last_access.get_barrier_flags();
-            let dst = access.get_barrier_flags();
-            resource.last_access = *access;
-
-            vk::BufferMemoryBarrier2::builder()
-                .buffer(resource.buffer.handle)
-                .offset(0)
-                .size(vk::WHOLE_SIZE)
-                .src_stage_mask(src.stage_mask)
-                .src_access_mask(src.access_mask)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_stage_mask(dst.stage_mask)
-                .dst_access_mask(dst.access_mask)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .build()
-        })
-        .collect();
-
-    let image_barriers: Vec<vk::ImageMemoryBarrier2> = image_access
-        .iter()
-        .map(|(index, access)| {
-            let resource = &mut images[*index];
-            let aspect_mask = resource.image.get_aspect_flags();
-            let is_color = aspect_mask == vk::ImageAspectFlags::COLOR;
-            let src = resource.last_access.get_barrier_flags(is_color);
-            let dst = access.get_barrier_flags(is_color);
-            resource.last_access = *access;
-            vk::ImageMemoryBarrier2::builder()
-                .image(resource.image.handle)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .old_layout(src.layout)
-                .new_layout(dst.layout)
-                .src_stage_mask(src.stage_mask)
-                .src_access_mask(src.access_mask)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_stage_mask(dst.stage_mask)
-                .dst_access_mask(dst.access_mask)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .build()
-        })
-        .collect();
-
-    unsafe {
-        device.core.cmd_pipeline_barrier2(
-            command_buffer,
-            &vk::DependencyInfo::builder()
-                .buffer_memory_barriers(&buffer_barriers)
-                .image_memory_barriers(&image_barriers),
-        );
     }
 }
 

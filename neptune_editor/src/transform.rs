@@ -63,3 +63,14 @@ impl Transform {
         )
     }
 }
+
+impl From<Mat4> for Transform {
+    fn from(value: Mat4) -> Self {
+        let (scale, rotation, position) = value.to_scale_rotation_translation();
+        Self {
+            position,
+            rotation,
+            scale,
+        }
+    }
+}

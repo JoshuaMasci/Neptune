@@ -1,7 +1,8 @@
 use crate::render_graph::{
-    BufferGraphResource, BufferIndex, BufferOffset, BufferResourceDescription, ImageCopyBuffer,
-    ImageCopyImage, ImageGraphResource, ImageIndex, ImageResourceDescription, OldRenderPass,
-    QueueType, RenderPassCommand, Transfer,
+    BufferBarrier, BufferBarrierSource, BufferGraphResource, BufferIndex, BufferOffset,
+    BufferResourceDescription, CommandBuffer, ImageBarrier, ImageBarrierSource, ImageCopyBuffer,
+    ImageCopyImage, ImageGraphResource, ImageIndex, ImageResourceDescription, Queue, RenderPass,
+    RenderPassCommand, RenderPassSet, Transfer,
 };
 use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
 use crate::{BufferHandle, ImageHandle};
@@ -10,7 +11,7 @@ use crate::{BufferHandle, ImageHandle};
 pub(crate) struct UploadPass {
     pub(crate) buffer_resources: Vec<BufferGraphResource>,
     pub(crate) image_resources: Vec<ImageGraphResource>,
-    pub(crate) pass: OldRenderPass,
+    pub(crate) command_buffer: CommandBuffer,
 }
 
 #[derive(Default)]
@@ -95,22 +96,51 @@ impl UploadQueue {
 
     pub(crate) fn get_pass(&mut self) -> Option<UploadPass> {
         if self.transfers.is_empty() {
-            return None;
-        }
+            None
+        } else {
+            let buffer_barriers = self
+                .buffer_resources
+                .iter()
+                .enumerate()
+                .map(|(index, _buffer)| BufferBarrier {
+                    index,
+                    src: BufferBarrierSource::FirstUsage,
+                    dst: BufferResourceAccess::TransferWrite,
+                })
+                .collect();
 
-        Some(UploadPass {
-            buffer_resources: std::mem::take(&mut self.buffer_resources),
-            image_resources: std::mem::take(&mut self.image_resources),
-            pass: OldRenderPass {
-                label_name: "Device Upload Pass".to_string(),
-                label_color: [0.5, 0.0, 0.5, 1.0],
-                queue: QueueType::Graphics,
-                buffer_access: std::mem::take(&mut self.buffer_access),
-                image_access: std::mem::take(&mut self.image_access),
-                command: Some(RenderPassCommand::Transfer {
-                    transfers: std::mem::take(&mut self.transfers),
-                }),
-            },
-        })
+            let image_barriers = self
+                .image_resources
+                .iter()
+                .enumerate()
+                .map(|(index, _image)| ImageBarrier {
+                    index,
+                    src: ImageBarrierSource::FirstUsage,
+                    dst: ImageResourceAccess::TransferWrite,
+                })
+                .collect();
+
+            Some(UploadPass {
+                buffer_resources: std::mem::take(&mut self.buffer_resources),
+                image_resources: std::mem::take(&mut self.image_resources),
+                command_buffer: CommandBuffer {
+                    queue: Queue::Graphics,
+                    command_buffer_wait_dependencies: Vec::new(),
+                    render_pass_sets: vec![RenderPassSet {
+                        memory_barriers: vec![],
+                        buffer_barriers,
+                        image_barriers,
+                        render_passes: vec![RenderPass {
+                            label_name: "Device Upload Pass".to_string(),
+                            label_color: [0.5, 0.0, 0.5, 1.0],
+                            command: Some(RenderPassCommand::Transfer {
+                                transfers: std::mem::take(&mut self.transfers),
+                            }),
+                        }],
+                    }],
+                    command_buffer_signal_dependencies: Vec::new(),
+                },
+            })
+        }
     }
 }

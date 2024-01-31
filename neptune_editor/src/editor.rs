@@ -1,9 +1,12 @@
 use crate::camera::Camera;
+use crate::game::entity::StaticEntity;
+use crate::game::world::{World, WorldData};
 use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
 use crate::material::Material;
 use crate::mesh::Mesh;
+use crate::scene::scene_renderer::{Scene, SceneCamera, SceneRenderer};
 use crate::transform::Transform;
-use crate::{gltf_loader, mesh};
+use crate::{gltf_loader, mesh, Model};
 use anyhow::Context;
 use glam::{Mat4, Vec3};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
@@ -12,6 +15,7 @@ use neptune_vulkan::{
     vk, DeviceSettings, ImageDescription2D, ImageHandle, TransientImageDesc, TransientImageSize,
 };
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::sync::Arc;
 use winit::keyboard::KeyCode;
 use winit_input_helper::WinitInputHelper;
 
@@ -28,17 +32,13 @@ pub struct Editor {
     surface_size: [u32; 2],
 
     device: neptune_vulkan::Device,
+    scene_renderer: SceneRenderer,
 
-    raster_pipeline: neptune_vulkan::RasterPipelineHandle,
-    fullscreen_copy_pipeline: neptune_vulkan::RasterPipelineHandle,
-    empty_image: ImageHandle,
-
-    view_projection_matrix_buffer: neptune_vulkan::BufferHandle,
-    model_matrices_buffer: neptune_vulkan::BufferHandle,
-    scene: GltfScene,
-
-    camera_transform: Transform,
     camera: Camera,
+    camera_transform: Transform,
+    scene_camera: SceneCamera,
+
+    world: World,
 
     camera_move_speed: Vec3,
     camera_move_input: Vec3,
@@ -131,73 +131,7 @@ impl Editor {
             },
         )?;
 
-        let raster_pipeline = {
-            let vertex_shader_code = crate::shader::MESH_STATIC_VERT;
-            let fragment_shader_code = crate::shader::MESH_FRAG;
-
-            let vertex_state = neptune_vulkan::VertexState {
-                shader: neptune_vulkan::ShaderStage {
-                    code: vertex_shader_code,
-                    entry: "main",
-                },
-                layouts: &[
-                    mesh::VertexPosition::VERTEX_BUFFER_LAYOUT,
-                    mesh::VertexAttributes::VERTEX_BUFFER_LAYOUT,
-                ],
-            };
-
-            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
-                vertex: vertex_state,
-                primitive: neptune_vulkan::PrimitiveState {
-                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                    cull_mode: vk::CullModeFlags::BACK,
-                },
-                depth_state: Some(neptune_vulkan::DepthState {
-                    format: Self::DEPTH_FORMAT,
-                    depth_enabled: true,
-                    write_depth: true,
-                    depth_op: vk::CompareOp::LESS,
-                }),
-                fragment: Some(neptune_vulkan::FragmentState {
-                    shader: neptune_vulkan::ShaderStage {
-                        code: fragment_shader_code,
-                        entry: "main",
-                    },
-                    targets: &[neptune_vulkan::ColorTargetState {
-                        format: vk::Format::B8G8R8A8_UNORM,
-                        blend: None,
-                        write_mask: vk::ColorComponentFlags::RGBA,
-                    }],
-                }),
-            })?
-        };
-
-        let fullscreen_copy_pipeline =
-            device.create_raster_pipeline(&neptune_vulkan::RasterPipelineDescription {
-                vertex: neptune_vulkan::VertexState {
-                    shader: neptune_vulkan::ShaderStage {
-                        code: crate::shader::FULLSCREEN_QUAD_VERT,
-                        entry: "main",
-                    },
-                    layouts: &[],
-                },
-                primitive: neptune_vulkan::PrimitiveState {
-                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                    cull_mode: vk::CullModeFlags::NONE,
-                },
-                depth_state: None,
-                fragment: Some(neptune_vulkan::FragmentState {
-                    shader: neptune_vulkan::ShaderStage {
-                        code: crate::shader::FULLSCREEN_STORAGE_COPY_FRAG,
-                        entry: "main",
-                    },
-                    targets: &[neptune_vulkan::ColorTargetState {
-                        format: vk::Format::B8G8R8A8_UNORM,
-                        blend: None,
-                        write_mask: vk::ColorComponentFlags::RGBA,
-                    }],
-                }),
-            })?;
+        let scene_renderer = SceneRenderer::new(&mut device, Self::DEPTH_FORMAT)?;
 
         let gltf_scene_path = if let Some(path) = &config.gltf_scene_path {
             path.clone()
@@ -209,59 +143,20 @@ impl Editor {
                 .expect("Failed to pick a gltf file")
         };
 
-        let scene = load_gltf_scene(&mut device, &gltf_scene_path)?;
+        let scene_camera = SceneCamera::new(&mut device)?;
 
-        let view_projection_matrix_buffer = device.create_buffer(
-            "view_projection_matrix_buffer",
-            std::mem::size_of::<Mat4>(),
-            neptune_vulkan::BufferUsage::STORAGE | neptune_vulkan::BufferUsage::TRANSFER,
-            MemoryLocation::GpuOnly,
-        )?;
-
-        let model_matrices_buffer = {
-            let model_matrices_data: Vec<Mat4> =
-                scene.mesh_nodes.iter().map(|node| node.transform).collect();
-            let model_matrices_slice = model_matrices_data.as_slice();
-            let model_matrices_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(
-                    model_matrices_slice.as_ptr() as *const u8,
-                    std::mem::size_of_val(model_matrices_slice),
-                )
-            };
-
-            device.create_buffer_init(
-                "model_matrices_buffer",
-                neptune_vulkan::BufferUsage::STORAGE | neptune_vulkan::BufferUsage::TRANSFER,
-                MemoryLocation::GpuOnly,
-                model_matrices_bytes,
-            )?
-        };
-
-        let empty_image = device.create_image_init(
-            "Empty Image",
-            &ImageDescription2D {
-                size: [1; 2],
-                format: vk::Format::R8G8B8A8_UNORM,
-                usage: vk::ImageUsageFlags::SAMPLED,
-                mip_levels: 1,
-                location: MemoryLocation::GpuOnly,
-            },
-            &[255u8; 4],
-        )?;
+        let world = load_world(&mut device, gltf_scene_path)?;
 
         Ok(Self {
             instance,
             surface_handle,
             surface_size,
             device,
-            raster_pipeline,
-            fullscreen_copy_pipeline,
-            empty_image,
-            view_projection_matrix_buffer,
-            model_matrices_buffer,
-            scene,
+            scene_renderer,
+            camera: Default::default(),
             camera_transform: Transform::with_position(Vec3::NEG_Z),
-            camera: Camera::default(),
+            scene_camera,
+            world,
             camera_move_speed: Vec3::splat(1.0),
             camera_move_input: Vec3::ZERO,
             camera_rotate_speed: Vec3::new(0.0, 60.0f32.to_radians(), 0.0),
@@ -319,6 +214,14 @@ impl Editor {
             self.camera_transform.rotation
                 * (self.camera_move_speed * self.camera_move_input * delta_time),
         );
+
+        self.scene_camera.update(
+            &self.camera,
+            &self.camera_transform,
+            (self.surface_size[0] as f32) / (self.surface_size[1] as f32),
+        );
+
+        self.world.update(delta_time);
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
@@ -326,121 +229,19 @@ impl Editor {
             neptune_vulkan::basic_render_graph_builder::BasicRenderGraphBuilder::default();
 
         let swapchain_image = render_graph_builder.acquire_swapchain_image(self.surface_handle);
-        let depth_image = render_graph_builder.create_transient_image(TransientImageDesc {
-            size: TransientImageSize::Relative([1.0; 2], swapchain_image),
-            format: Self::DEPTH_FORMAT,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            mip_levels: 1,
-            memory_location: MemoryLocation::GpuOnly,
-        });
 
-        {
-            let aspect_ratio = self.surface_size[0] as f32 / self.surface_size[1] as f32;
-            let projection_matrix = self.camera.projection_matrix(aspect_ratio);
-            let view_matrix = self.camera_transform.view_matrix();
-            let view_projection_matrix = projection_matrix * view_matrix;
-
-            let buffer_size = std::mem::size_of_val(&view_projection_matrix);
-            let host_view_projection_matrix_buffer = render_graph_builder.create_transient_buffer(
-                buffer_size,
-                neptune_vulkan::BufferUsage::TRANSFER,
-                MemoryLocation::CpuToGpu,
-            );
-
-            render_graph_builder.add_mapped_buffer_write(
-                host_view_projection_matrix_buffer,
-                BufferWriteCallback::new(move |slice| {
-                    let matrix_data = &[view_projection_matrix];
-                    let matrix_data_bytes: &[u8] = unsafe {
-                        std::slice::from_raw_parts(
-                            matrix_data.as_ptr() as *const u8,
-                            std::mem::size_of_val(matrix_data),
-                        )
-                    };
-                    slice.copy_from_slice(matrix_data_bytes);
-                }),
-            );
-
-            let mut data_upload_pass =
-                neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
-                    "Matrix Upload Pass",
-                    neptune_vulkan::render_graph::QueueType::Graphics,
-                );
-            data_upload_pass.copy_buffer_to_buffer(
-                neptune_vulkan::render_graph_builder::BufferOffset {
-                    buffer: host_view_projection_matrix_buffer,
-                    offset: 0,
-                },
-                neptune_vulkan::render_graph_builder::BufferOffset {
-                    buffer: self.view_projection_matrix_buffer,
-                    offset: 0,
-                },
-                buffer_size,
-            );
-            data_upload_pass.build(&mut render_graph_builder);
-        }
-
-        let mut raster_pass_builder =
-            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Swapchain Pass");
-        raster_pass_builder.add_color_attachment(swapchain_image, Some([0.0, 0.0, 0.0, 1.0]));
-        raster_pass_builder.add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
-
-        for (index, node) in self.scene.mesh_nodes.iter().enumerate() {
-            let mesh = &self.scene.meshes[node.mesh_index];
-            for (primitive, material_index) in
-                mesh.primitives.iter().zip(node.primitive_materials.iter())
-            {
-                let (base_color_texture, base_color_sampler) = self.scene.materials
-                    [*material_index]
-                    .base_color_texture
-                    .as_ref()
-                    .map(|tex| (tex.image, tex.sampler))
-                    .unwrap_or((self.empty_image, self.scene.samplers.default));
-
-                let mut draw_command_builder =
-                    neptune_vulkan::render_graph_builder::RasterDrawCommandBuilder::new(
-                        self.raster_pipeline,
-                    );
-
-                draw_command_builder.add_vertex_buffer(
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: primitive.position_buffer,
-                        offset: 0,
-                    },
-                );
-                draw_command_builder.add_vertex_buffer(
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: primitive.attributes_buffer,
-                        offset: 0,
-                    },
-                );
-                draw_command_builder.read_buffer(self.view_projection_matrix_buffer);
-                draw_command_builder.read_buffer(self.model_matrices_buffer);
-                draw_command_builder.read_sampler(base_color_sampler);
-                draw_command_builder.read_sampled_image(base_color_texture);
-
-                let instance_range = (index as u32)..(index as u32 + 1);
-
-                if let Some(index_buffer_ref) = &primitive.index_buffer {
-                    draw_command_builder.draw_indexed(
-                        0,
-                        0..index_buffer_ref.count,
-                        instance_range,
-                        neptune_vulkan::render_graph_builder::BufferOffset {
-                            buffer: index_buffer_ref.buffer,
-                            offset: 0,
-                        },
-                        neptune_vulkan::render_graph::IndexType::U32,
-                    );
-                } else {
-                    draw_command_builder.draw(0..primitive.vertex_count as u32, instance_range);
-                }
-
-                draw_command_builder.build(&mut raster_pass_builder);
-            }
-        }
-
-        raster_pass_builder.build(&mut render_graph_builder);
+        self.scene_camera
+            .write_render_passes(&mut render_graph_builder);
+        self.world
+            .data
+            .scene
+            .write_render_passes(&mut render_graph_builder);
+        self.scene_renderer.write_render_passes(
+            swapchain_image,
+            &self.scene_camera,
+            &self.world.data.scene,
+            &mut render_graph_builder,
+        );
 
         let render_graph = render_graph_builder.build();
         self.device.submit_graph(&render_graph)?;
@@ -453,6 +254,33 @@ impl Drop for Editor {
         self.device.release_surface(self.surface_handle);
         self.instance.destroy_surface(self.surface_handle);
     }
+}
+
+fn load_world<P: AsRef<std::path::Path>>(
+    device: &mut neptune_vulkan::Device,
+    path: P,
+) -> anyhow::Result<World> {
+    let gltf_scene = load_gltf_scene(device, path)?;
+
+    let mut world = World {
+        data: WorldData {
+            scene: Scene::new(device, 1024)?,
+        },
+        entities: Default::default(),
+    };
+
+    for node in gltf_scene.mesh_nodes.iter() {
+        let entity = StaticEntity::new(
+            node.transform.into(),
+            Model {
+                mesh: Arc::new(gltf_scene.meshes[node.mesh_index].clone()),
+                material: Arc::new(gltf_scene.materials[node.primitive_materials[0]].clone()),
+            },
+        );
+        world.add_static_entity(entity);
+    }
+
+    Ok(world)
 }
 
 struct GltfScene {

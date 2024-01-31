@@ -1,8 +1,10 @@
 mod camera;
 mod editor;
+mod game;
 mod gltf_loader;
 mod material;
 mod mesh;
+mod scene;
 mod shader;
 mod transform;
 
@@ -10,14 +12,25 @@ mod transform;
 extern crate log;
 
 use crate::editor::{Editor, EditorConfig};
+use std::sync::Arc;
 
+use crate::material::Material;
+use crate::mesh::Mesh;
 use clap::Parser;
 use std::time::Instant;
-
 use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
 };
+
+//TODO: create these
+pub struct InputSystem {}
+
+#[derive(Clone)]
+pub struct Model {
+    pub mesh: Arc<Mesh>,
+    pub material: Arc<Material>,
+}
 
 pub const APP_NAME: &str = "Neptune Editor";
 

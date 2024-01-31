@@ -14,6 +14,7 @@ pub mod basic_render_graph_builder;
 pub mod render_graph;
 pub mod render_graph_builder;
 mod render_graph_executor;
+mod resource_set;
 mod upload_queue;
 
 //Public Types
@@ -36,9 +37,15 @@ pub use swapchain::SurfaceSettings;
 
 slotmap::new_key_type! {
     pub struct SurfaceKey;
+
     pub struct BufferKey;
     pub struct ImageKey;
     pub struct SamplerKey;
+
+    pub struct BufferSetKey;
+    pub struct ImageSetKey;
+    pub struct SamplerSetKey;
+
     pub struct ComputePipelineKey;
     pub struct RasterPipleineKey;
 }
@@ -76,12 +83,27 @@ impl ImageHandle {
     }
 }
 
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
 pub struct SamplerHandle(SamplerKey);
 
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+pub struct BufferSetHandle(BufferSetKey);
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+pub struct ImageSetHandle(ImageSetKey);
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug)]
+pub struct SamplerSetHandle(SamplerSetKey);
+
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
 pub struct ComputePipelineHandle(ComputePipelineKey);
 
+#[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
 pub struct RasterPipelineHandle(RasterPipleineKey);
 

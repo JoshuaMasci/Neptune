@@ -10,10 +10,12 @@ use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::upload_queue::UploadQueue;
 use crate::{
-    BufferHandle, ComputePipelineHandle, ImageHandle, PhysicalDevice, RasterPipelineHandle,
-    SamplerHandle, ShaderStage, SurfaceHandle, VulkanError,
+    BufferHandle, BufferSetHandle, ComputePipelineHandle, ImageHandle, PhysicalDevice,
+    RasterPipelineHandle, SamplerHandle, ShaderStage, SurfaceHandle, VulkanError,
 };
 use ash::vk;
+use ash::vk::BufferUsageFlags;
+use gpu_allocator::MemoryLocation;
 use log::error;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
@@ -180,7 +182,6 @@ pub struct DeviceSettings {
 
 pub struct Device {
     settings: DeviceSettings,
-
     device: Arc<AshDevice>,
     pipelines: Pipelines,
     resource_manager: ResourceManager,
@@ -240,18 +241,11 @@ impl Device {
         name: &str,
         size: usize,
         usage: BufferUsage,
-        location: gpu_allocator::MemoryLocation,
+        location: MemoryLocation,
     ) -> Result<BufferHandle, VulkanError> {
-        let buffer = Buffer::new2(
-            self.device.clone(),
-            name,
-            size as vk::DeviceSize,
-            usage.to_vk(),
-            location,
-        )?;
-
         Ok(BufferHandle::Persistent(
-            self.resource_manager.add_buffer(buffer),
+            self.resource_manager
+                .create_buffer(name, size, usage, location)?,
         ))
     }
 
@@ -284,7 +278,7 @@ impl Device {
             None => return Err(VulkanError::Vk(vk::Result::ERROR_MEMORY_MAP_FAILED)),
             Some(mut_slice) => mut_slice,
         };
-        mut_slice.copy_from_slice(data);
+        mut_slice[0..data.len()].copy_from_slice(data);
 
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
@@ -404,6 +398,42 @@ impl Device {
     pub fn destroy_sampler(&mut self, sampler_handle: SamplerHandle) {
         self.resource_manager.remove_sampler(sampler_handle.0);
     }
+
+    // pub fn create_buffer_set(
+    //     &mut self,
+    //     name: &str,
+    //     count: usize,
+    // ) -> Result<BufferSetHandle, VulkanError> {
+    //     let gpu_buffer_size = std::mem::size_of::<u32>() * count;
+    //     let gpu_buffers: Vec<Buffer> = (0..self.settings.frames_in_flight)
+    //         .map(|i| {
+    //             Buffer::new2(
+    //                 self.device.clone(),
+    //                 &format!("{} - {}", name, i),
+    //                 gpu_buffer_size as vk::DeviceSize,
+    //                 BufferUsageFlags::UNIFORM_BUFFER | BufferUsageFlags::TRANSFER_DST,
+    //                 MemoryLocation::GpuOnly,
+    //             )
+    //         })
+    //         .collect::<Result<Vec<Buffer>, VulkanError>>()?;
+    //
+    //     let set = crate::resource_set::BufferSet {
+    //         name: name.to_string(),
+    //         handles: vec![None; count],
+    //         gpu_buffer_index: 0,
+    //         gpu_buffers,
+    //     };
+    //     Ok(BufferSetHandle(self.resource_manager.add_buffer_set(set)))
+    // }
+    // pub fn destroy_buffer_set(&mut self, buffer_set_handle: BufferSetHandle) {}
+    // pub fn update_buffer_set(
+    //     &mut self,
+    //     buffer_set_handle: BufferSetHandle,
+    //     index: usize,
+    //     buffer_handle: BufferHandle,
+    // ) {
+    // }
+    // pub fn clear_buffer_set(&mut self, buffer_set_handle: BufferSetHandle, index: usize) {}
 
     //TODO: use vulkan future and some async pipeline creation method to avoid pipeline creation in the main code paths
     pub fn create_compute_pipeline(
