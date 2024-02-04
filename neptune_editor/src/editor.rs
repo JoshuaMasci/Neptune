@@ -2,7 +2,6 @@ use crate::camera::Camera;
 use crate::game::entity::{Player, StaticEntity};
 use crate::game::world::{World, WorldData};
 use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
-use crate::input_system::InputSystem;
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::scene_renderer::{Scene, SceneCamera, SceneRenderer};
@@ -14,9 +13,6 @@ use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
 use neptune_vulkan::{vk, DeviceSettings, ImageHandle};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
-use winit::keyboard::KeyCode;
-use winit_input_helper::WinitInputHelper;
-
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct EditorConfig {
@@ -25,8 +21,6 @@ pub struct EditorConfig {
 }
 
 pub struct Editor {
-    pub winit_input: crate::input::winit::WinitInputHandler,
-
     instance: neptune_vulkan::Instance,
     surface_handle: neptune_vulkan::SurfaceHandle,
     surface_size: [u32; 2],
@@ -149,11 +143,7 @@ impl Editor {
 
         let world = load_world(&mut device, gltf_scene_path)?;
 
-        //TODO: load input bindings
-        let winit_input = crate::input::winit::WinitInputHandler::new();
-
         Ok(Self {
-            winit_input,
             instance,
             surface_handle,
             surface_size,
@@ -188,27 +178,27 @@ impl Editor {
         Ok(())
     }
 
-    pub fn process_input(&mut self, input: &WinitInputHelper) {
-        fn buttons_to_axis(input: &WinitInputHelper, pos_key: KeyCode, neg_key: KeyCode) -> f32 {
-            let mut value = 0.0;
-            if input.key_held(pos_key) {
-                value += 1.0;
-            }
-
-            if input.key_held(neg_key) {
-                value -= 1.0;
-            }
-
-            value
-        }
-
-        self.camera_move_input.x = buttons_to_axis(input, KeyCode::KeyD, KeyCode::KeyA);
-        self.camera_move_input.y = buttons_to_axis(input, KeyCode::ShiftLeft, KeyCode::ControlLeft);
-        self.camera_move_input.z = buttons_to_axis(input, KeyCode::KeyW, KeyCode::KeyS);
-
-        self.camera_rotate_input.y =
-            buttons_to_axis(input, KeyCode::ArrowRight, KeyCode::ArrowLeft);
-    }
+    // pub fn process_input(&mut self, input: &WinitInputHelper) {
+    //     fn buttons_to_axis(input: &WinitInputHelper, pos_key: KeyCode, neg_key: KeyCode) -> f32 {
+    //         let mut value = 0.0;
+    //         if input.key_held(pos_key) {
+    //             value += 1.0;
+    //         }
+    //
+    //         if input.key_held(neg_key) {
+    //             value -= 1.0;
+    //         }
+    //
+    //         value
+    //     }
+    //
+    //     self.camera_move_input.x = buttons_to_axis(input, KeyCode::KeyD, KeyCode::KeyA);
+    //     self.camera_move_input.y = buttons_to_axis(input, KeyCode::ShiftLeft, KeyCode::ControlLeft);
+    //     self.camera_move_input.z = buttons_to_axis(input, KeyCode::KeyW, KeyCode::KeyS);
+    //
+    //     self.camera_rotate_input.y =
+    //         buttons_to_axis(input, KeyCode::ArrowRight, KeyCode::ArrowLeft);
+    // }
 
     pub fn update(&mut self, delta_time: f32) {
         self.camera_transform.rotate(

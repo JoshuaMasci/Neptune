@@ -7,7 +7,7 @@ pub struct Sdl2Platform {
     event_pump: sdl2::EventPump,
 
     video: sdl2::VideoSubsystem,
-    window: sdl2::video::Window,
+    pub(crate) window: sdl2::video::Window,
 
     should_quit: bool,
 }

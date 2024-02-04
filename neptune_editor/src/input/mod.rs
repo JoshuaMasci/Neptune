@@ -1,5 +1,3 @@
-pub mod winit;
-
 pub type StaticString = &'static str;
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum ButtonEventState {
