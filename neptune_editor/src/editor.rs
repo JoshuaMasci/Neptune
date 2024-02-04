@@ -267,6 +267,15 @@ impl InputEventReceiver for Editor {
                 self.camera_move_input.z = value;
                 true
             }
+            "player_move_yaw" => {
+                self.camera_rotate_input.y = value;
+                true
+            }
+            "player_move_pitch" => {
+                self.camera_rotate_input.x = value;
+                true
+            }
+
             _ => false,
         }
     }

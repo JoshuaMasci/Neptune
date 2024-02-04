@@ -38,12 +38,19 @@ impl ButtonAxisState {
     }
 }
 
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum ButtonBinding {
     Button(StaticString),
     Axis {
         name: StaticString,
         direction: ButtonAxisDirection,
     },
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct MouseAxisBinding {
+    name: StaticString,
+    sensitivity: f32,
 }
 
 pub struct Sdl2Platform {
@@ -58,6 +65,11 @@ pub struct Sdl2Platform {
     // Move binding into App at some point
     mouse_captured: bool,
     key_bindings: HashMap<Keycode, ButtonBinding>,
+
+    mouse_button_bindings: HashMap<MouseButton, ButtonBinding>,
+    mouse_axis_x_binding: Option<MouseAxisBinding>,
+    mouse_axis_y_binding: Option<MouseAxisBinding>,
+
     button_axis_state: HashMap<StaticString, ButtonAxisState>,
 }
 
@@ -126,6 +138,8 @@ impl Sdl2Platform {
             },
         );
 
+        let mouse_button_bindings = HashMap::new();
+
         Ok(Self {
             context,
             event_pump,
@@ -134,6 +148,15 @@ impl Sdl2Platform {
             should_quit: false,
             mouse_captured: false,
             key_bindings,
+            mouse_button_bindings,
+            mouse_axis_x_binding: Some(MouseAxisBinding {
+                name: "player_move_yaw",
+                sensitivity: 0.5,
+            }),
+            mouse_axis_y_binding: Some(MouseAxisBinding {
+                name: "player_move_pitch",
+                sensitivity: 0.5,
+            }),
             button_axis_state: HashMap::new(),
         })
     }
@@ -148,6 +171,15 @@ impl Sdl2Platform {
     ) -> anyhow::Result<()> {
         if !app.requests_mouse_capture() && self.mouse_captured {
             self.capture_mouse(false);
+        }
+
+        // Clear movement from last frame
+        //TODO: figure out something less hacky
+        if let Some(binding) = &self.mouse_axis_x_binding {
+            let _ = app.on_axis_event(binding.name, 0.0);
+        }
+        if let Some(binding) = &self.mouse_axis_y_binding {
+            let _ = app.on_axis_event(binding.name, 0.0);
         }
 
         while let Some(event) = self.event_pump.poll_event() {
@@ -177,12 +209,33 @@ impl Sdl2Platform {
                 }
 
                 Event::MouseButtonDown { mouse_btn, .. } => {
-                    //if !self.window.has_mouse_focus() && mouse_btn == MouseButton::Left {
                     if app.requests_mouse_capture()
                         && !self.window.mouse_grab()
                         && mouse_btn == MouseButton::Left
                     {
                         self.capture_mouse(true);
+                    }
+
+                    if self.mouse_captured {
+                        self.process_mouse_button_event(app, mouse_btn, ButtonState::Pressed);
+                    }
+                }
+                Event::MouseButtonUp { mouse_btn, .. } => {
+                    if self.mouse_captured {
+                        self.process_mouse_button_event(app, mouse_btn, ButtonState::Pressed);
+                    }
+                }
+                Event::MouseMotion { xrel, yrel, .. } => {
+                    if self.mouse_captured {
+                        if let Some(binding) = &self.mouse_axis_x_binding {
+                            let _ =
+                                app.on_axis_event(binding.name, xrel as f32 * binding.sensitivity);
+                        }
+
+                        if let Some(binding) = &self.mouse_axis_y_binding {
+                            let _ =
+                                app.on_axis_event(binding.name, yrel as f32 * binding.sensitivity);
+                        }
                     }
                 }
 
@@ -202,13 +255,10 @@ impl Sdl2Platform {
     pub fn capture_mouse(&mut self, capture: bool) {
         if capture {
             debug!("sdl2 capture mouse");
-            self.window.set_grab(true);
-            self.context.mouse().show_cursor(false);
+            self.context.mouse().set_relative_mouse_mode(true);
         } else {
             debug!("sdl2 free mouse");
-            self.context.mouse().capture(false);
-            self.window.set_grab(false);
-            self.context.mouse().show_cursor(true);
+            self.context.mouse().set_relative_mouse_mode(false);
         }
         self.mouse_captured = capture;
     }
@@ -220,17 +270,37 @@ impl Sdl2Platform {
         state: ButtonState,
     ) {
         if let Some(keycode) = keycode {
-            if let Some(binding) = self.key_bindings.get(&keycode) {
-                match binding {
-                    ButtonBinding::Button(name) => {
-                        let _ = app.on_button_event(name, state);
-                    }
-                    ButtonBinding::Axis { name, direction } => {
-                        let entry = self.button_axis_state.entry(name).or_default();
-                        entry.set(*direction, state);
-                        let _ = app.on_axis_event(name, entry.to_f32());
-                    }
-                }
+            if let Some(binding) = self.key_bindings.get(&keycode).cloned() {
+                self.process_button_event(app, binding, state);
+            }
+        }
+    }
+
+    pub fn process_mouse_button_event<T: InputEventReceiver>(
+        &mut self,
+        app: &mut T,
+        mouse_button: MouseButton,
+        state: ButtonState,
+    ) {
+        if let Some(binding) = self.mouse_button_bindings.get(&mouse_button).cloned() {
+            self.process_button_event(app, binding, state);
+        }
+    }
+
+    pub fn process_button_event<T: InputEventReceiver>(
+        &mut self,
+        app: &mut T,
+        binding: ButtonBinding,
+        state: ButtonState,
+    ) {
+        match binding {
+            ButtonBinding::Button(name) => {
+                let _ = app.on_button_event(name, state);
+            }
+            ButtonBinding::Axis { name, direction } => {
+                let entry = self.button_axis_state.entry(name).or_default();
+                entry.set(direction, state);
+                let _ = app.on_axis_event(name, entry.to_f32());
             }
         }
     }
