@@ -1,7 +1,8 @@
 use crate::game::world::WorldData;
+use crate::input_system::InputSystem;
 use crate::scene::scene_renderer::SceneInstanceHandle;
 use crate::transform::Transform;
-use crate::{InputSystem, Model};
+use crate::Model;
 use glam::{Vec2, Vec3};
 
 //TODO: use this to abstract entity types?
@@ -17,7 +18,7 @@ pub trait Entity {
 }
 
 pub struct Player {
-    transform: Transform,
+    pub(crate) transform: Transform,
 
     /// units: rad
     pitch_yaw: Vec2,
@@ -46,17 +47,13 @@ impl Player {
         }
     }
 
-    pub fn process_input(&mut self, input_system: &mut InputSystem) {}
+    pub fn process_input(&mut self, input_system: &InputSystem) {}
 }
 
 impl Entity for Player {
-    fn add_to_world(&mut self, world_data: &mut WorldData) {
-        todo!()
-    }
+    fn add_to_world(&mut self, world_data: &mut WorldData) {}
 
-    fn remove_from_world(&mut self, world_data: &mut WorldData) {
-        todo!()
-    }
+    fn remove_from_world(&mut self, world_data: &mut WorldData) {}
 
     fn update(&mut self, delta_time: f32, world_data: &mut WorldData) {
         self.pitch_yaw += self.angular_input * self.angular_speed;

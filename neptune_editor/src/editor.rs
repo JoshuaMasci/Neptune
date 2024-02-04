@@ -1,19 +1,17 @@
 use crate::camera::Camera;
-use crate::game::entity::StaticEntity;
+use crate::game::entity::{Player, StaticEntity};
 use crate::game::world::{World, WorldData};
 use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
+use crate::input_system::InputSystem;
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::scene_renderer::{Scene, SceneCamera, SceneRenderer};
 use crate::transform::Transform;
-use crate::{gltf_loader, mesh, Model};
+use crate::{gltf_loader, Model};
 use anyhow::Context;
 use glam::{Mat4, Vec3};
-use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
-use neptune_vulkan::{
-    vk, DeviceSettings, ImageDescription2D, ImageHandle, TransientImageDesc, TransientImageSize,
-};
+use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
+use neptune_vulkan::{vk, DeviceSettings, ImageHandle};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
 use winit::keyboard::KeyCode;
@@ -27,6 +25,8 @@ pub struct EditorConfig {
 }
 
 pub struct Editor {
+    pub winit_input: crate::input::winit::WinitInputHandler,
+
     instance: neptune_vulkan::Instance,
     surface_handle: neptune_vulkan::SurfaceHandle,
     surface_size: [u32; 2],
@@ -50,10 +50,13 @@ pub struct Editor {
 impl Editor {
     const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
-    pub fn new(window: &winit::window::Window, config: &EditorConfig) -> anyhow::Result<Self> {
+    pub fn new<W: HasRawDisplayHandle + HasRawWindowHandle>(
+        window: &W,
+        window_size: [u32; 2],
+        config: &EditorConfig,
+    ) -> anyhow::Result<Self> {
         let raw_display_handle = window.raw_display_handle();
         let raw_window_handle = window.raw_window_handle();
-
         let mut instance = neptune_vulkan::Instance::new(
             &neptune_vulkan::AppInfo::new("Neptune Engine", [0, 0, 1, 0]),
             &neptune_vulkan::AppInfo::new(crate::APP_NAME, [0, 0, 1, 0]),
@@ -114,8 +117,7 @@ impl Editor {
             })
             .context("Failed to initialize vulkan device")?;
 
-        let window_size = window.inner_size();
-        let surface_size = [window_size.width, window_size.height];
+        let surface_size = window_size;
 
         device.configure_surface(
             surface_handle,
@@ -147,7 +149,11 @@ impl Editor {
 
         let world = load_world(&mut device, gltf_scene_path)?;
 
+        //TODO: load input bindings
+        let winit_input = crate::input::winit::WinitInputHandler::new();
+
         Ok(Self {
+            winit_input,
             instance,
             surface_handle,
             surface_size,
@@ -215,11 +221,18 @@ impl Editor {
                 * (self.camera_move_speed * self.camera_move_input * delta_time),
         );
 
+        let camera_transform = match &self.world.entities.player {
+            None => self.camera_transform.clone(),
+            Some(player) => player.transform.clone(),
+        };
+
         self.scene_camera.update(
             &self.camera,
-            &self.camera_transform,
+            &camera_transform,
             (self.surface_size[0] as f32) / (self.surface_size[1] as f32),
         );
+
+        //self.world.process_input(&self.input_system);
 
         self.world.update(delta_time);
     }
@@ -279,6 +292,8 @@ fn load_world<P: AsRef<std::path::Path>>(
         );
         world.add_static_entity(entity);
     }
+
+    world.add_player(Player::with_position(Vec3::NEG_Z));
 
     Ok(world)
 }

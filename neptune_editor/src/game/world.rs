@@ -1,6 +1,6 @@
 use crate::game::entity::{Entity, Player, StaticEntity};
+use crate::input_system::InputSystem;
 use crate::scene::scene_renderer::Scene;
-use crate::InputSystem;
 
 pub struct World {
     pub data: WorldData,
@@ -18,7 +18,7 @@ impl World {
         self.entities.static_entities.push(static_entity);
     }
 
-    pub fn process_input(&mut self, input_system: &mut InputSystem) {
+    pub fn process_input(&mut self, input_system: &InputSystem) {
         if let Some(player) = &mut self.entities.player {
             player.process_input(input_system);
         }
@@ -42,6 +42,6 @@ pub struct WorldData {
 
 #[derive(Default)]
 pub struct WorldEntities {
-    player: Option<Player>,
+    pub(crate) player: Option<Player>,
     static_entities: Vec<StaticEntity>,
 }
