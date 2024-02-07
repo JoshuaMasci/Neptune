@@ -140,6 +140,9 @@ impl Sdl2Platform {
 
         let mouse_button_bindings = HashMap::new();
 
+        //TODO: allow as setting
+        //const HINT_MOUSE_RELATIVE_SYSTEM_SCALE: &str = "SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE"; // bool
+
         Ok(Self {
             context,
             event_pump,
@@ -151,11 +154,11 @@ impl Sdl2Platform {
             mouse_button_bindings,
             mouse_axis_x_binding: Some(MouseAxisBinding {
                 name: "player_move_yaw",
-                sensitivity: 0.5,
+                sensitivity: 0.2,
             }),
             mouse_axis_y_binding: Some(MouseAxisBinding {
                 name: "player_move_pitch",
-                sensitivity: 0.5,
+                sensitivity: 0.2,
             }),
             button_axis_state: HashMap::new(),
         })
@@ -175,12 +178,7 @@ impl Sdl2Platform {
 
         // Clear movement from last frame
         //TODO: figure out something less hacky
-        if let Some(binding) = &self.mouse_axis_x_binding {
-            let _ = app.on_axis_event(binding.name, 0.0);
-        }
-        if let Some(binding) = &self.mouse_axis_y_binding {
-            let _ = app.on_axis_event(binding.name, 0.0);
-        }
+        self.proccess_mouse_move_event(app, 0, 0);
 
         while let Some(event) = self.event_pump.poll_event() {
             match event {
@@ -208,6 +206,10 @@ impl Sdl2Platform {
                     }
                 }
 
+                Event::TextInput { text, .. } => {
+                    app.on_text_event(text);
+                }
+
                 Event::MouseButtonDown { mouse_btn, .. } => {
                     if app.requests_mouse_capture()
                         && !self.window.mouse_grab()
@@ -227,15 +229,7 @@ impl Sdl2Platform {
                 }
                 Event::MouseMotion { xrel, yrel, .. } => {
                     if self.mouse_captured {
-                        if let Some(binding) = &self.mouse_axis_x_binding {
-                            let _ =
-                                app.on_axis_event(binding.name, xrel as f32 * binding.sensitivity);
-                        }
-
-                        if let Some(binding) = &self.mouse_axis_y_binding {
-                            let _ =
-                                app.on_axis_event(binding.name, yrel as f32 * binding.sensitivity);
-                        }
+                        self.proccess_mouse_move_event(app, xrel, yrel);
                     }
                 }
 
@@ -263,16 +257,18 @@ impl Sdl2Platform {
         self.mouse_captured = capture;
     }
 
-    pub fn process_key_event<T: InputEventReceiver>(
+    pub fn proccess_mouse_move_event<T: InputEventReceiver>(
         &mut self,
         app: &mut T,
-        keycode: Option<Keycode>,
-        state: ButtonState,
+        x_move: i32,
+        y_move: i32,
     ) {
-        if let Some(keycode) = keycode {
-            if let Some(binding) = self.key_bindings.get(&keycode).cloned() {
-                self.process_button_event(app, binding, state);
-            }
+        if let Some(binding) = &self.mouse_axis_x_binding {
+            let _ = app.on_axis_event(binding.name, x_move as f32 * binding.sensitivity);
+        }
+
+        if let Some(binding) = &self.mouse_axis_y_binding {
+            let _ = app.on_axis_event(binding.name, y_move as f32 * binding.sensitivity);
         }
     }
 
@@ -284,6 +280,19 @@ impl Sdl2Platform {
     ) {
         if let Some(binding) = self.mouse_button_bindings.get(&mouse_button).cloned() {
             self.process_button_event(app, binding, state);
+        }
+    }
+
+    pub fn process_key_event<T: InputEventReceiver>(
+        &mut self,
+        app: &mut T,
+        keycode: Option<Keycode>,
+        state: ButtonState,
+    ) {
+        if let Some(keycode) = keycode {
+            if let Some(binding) = self.key_bindings.get(&keycode).cloned() {
+                self.process_button_event(app, binding, state);
+            }
         }
     }
 

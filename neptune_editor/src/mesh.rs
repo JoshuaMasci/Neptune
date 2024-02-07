@@ -1,5 +1,6 @@
 use memoffset::offset_of;
 use neptune_vulkan::vk;
+use std::sync::Arc;
 
 #[repr(transparent)]
 pub struct VertexPosition(glam::Vec3);
@@ -89,7 +90,7 @@ impl VertexSkinningAttributes {
 #[derive(Default, Clone)]
 pub struct Mesh {
     pub name: String,
-    pub primitives: Vec<Primitive>,
+    pub primitives: Vec<Arc<Primitive>>,
 }
 
 #[derive(Debug, Default, Copy, Clone)]

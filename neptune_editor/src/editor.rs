@@ -1,18 +1,18 @@
 use crate::camera::Camera;
 use crate::game::entity::{Player, StaticEntity};
 use crate::game::world::{World, WorldData};
+use crate::gltf_loader;
 use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::platform::WindowEventReceiver;
-use crate::scene::scene_renderer::{Scene, SceneCamera, SceneRenderer};
+use crate::scene::scene_renderer::{Model, ModelPrimitive, Scene, SceneCamera, SceneRenderer};
 use crate::transform::Transform;
-use crate::{gltf_loader, Model};
 use anyhow::Context;
 use glam::{Mat4, Vec3};
 use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
-use neptune_vulkan::{vk, DeviceSettings, ImageHandle};
+use neptune_vulkan::{vk, DeviceSettings, ImageHandle, SurfaceHandle};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
 
@@ -129,6 +129,7 @@ impl Editor {
                 present_mode: vk::PresentModeKHR::FIFO,
             },
         )?;
+        clear_surfaces(&mut device, [0.0; 3], &[surface_handle])?;
 
         let scene_renderer = SceneRenderer::new(&mut device, Self::DEPTH_FORMAT)?;
 
@@ -250,10 +251,18 @@ impl InputEventReceiver for Editor {
     }
 
     fn on_button_event(&mut self, button_name: StaticString, state: ButtonState) -> bool {
+        if let Some(player) = &mut self.world.entities.player {
+            return player.on_button_event(button_name, state);
+        }
+
         false
     }
 
     fn on_axis_event(&mut self, axis_name: StaticString, value: f32) -> bool {
+        if let Some(player) = &mut self.world.entities.player {
+            return player.on_axis_event(axis_name, value);
+        }
+
         match axis_name {
             "player_move_right_left" => {
                 self.camera_move_input.x = value;
@@ -280,7 +289,7 @@ impl InputEventReceiver for Editor {
         }
     }
 
-    fn on_text_event(&mut self) -> bool {
+    fn on_text_event(&mut self, text: String) -> bool {
         false
     }
 }
@@ -299,17 +308,28 @@ fn load_world<P: AsRef<std::path::Path>>(
     };
 
     for node in gltf_scene.mesh_nodes.iter() {
-        let entity = StaticEntity::new(
-            node.transform.into(),
-            Model {
-                mesh: Arc::new(gltf_scene.meshes[node.mesh_index].clone()),
-                material: Arc::new(gltf_scene.materials[node.primitive_materials[0]].clone()),
-            },
-        );
+        let model = Model {
+            name: gltf_scene.meshes[node.mesh_index].name.clone(),
+            primitives: gltf_scene.meshes[node.mesh_index]
+                .primitives
+                .iter()
+                .zip(node.primitive_materials.iter())
+                .map(|(primitive, material_index)| ModelPrimitive {
+                    primitive: primitive.clone(),
+                    material: gltf_scene
+                        .materials
+                        .get(*material_index)
+                        .cloned()
+                        .map(Arc::new),
+                })
+                .collect(),
+        };
+
+        let entity = StaticEntity::new(node.transform.into(), model);
         world.add_static_entity(entity);
     }
 
-    //world.add_player(Player::with_position(Vec3::NEG_Z));
+    world.add_player(Player::with_position(Vec3::NEG_Z));
 
     Ok(world)
 }
@@ -385,4 +405,26 @@ fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf
     for child in node.children() {
         gltf_node(world_transform, mesh_nodes, &child);
     }
+}
+
+fn clear_surfaces(
+    device: &mut neptune_vulkan::Device,
+    color: [f32; 3],
+    surface_handles: &[SurfaceHandle],
+) -> anyhow::Result<()> {
+    let mut render_graph_builder =
+        neptune_vulkan::basic_render_graph_builder::BasicRenderGraphBuilder::default();
+
+    for handle in surface_handles {
+        let swapchain_image = render_graph_builder.acquire_swapchain_image(*handle);
+        let mut raster_pass_builder =
+            neptune_vulkan::render_graph_builder::RasterPassBuilder::new("Swapchain Pass");
+        raster_pass_builder
+            .add_color_attachment(swapchain_image, Some([color[0], color[1], color[2], 1.0]));
+        raster_pass_builder.build(&mut render_graph_builder);
+    }
+
+    let render_graph = render_graph_builder.build();
+    device.submit_graph(&render_graph)?;
+    Ok(())
 }

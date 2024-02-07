@@ -1,5 +1,4 @@
 use crate::game::entity::{Entity, Player, StaticEntity};
-use crate::input_system::InputSystem;
 use crate::scene::scene_renderer::Scene;
 
 pub struct World {
@@ -16,12 +15,6 @@ impl World {
     pub fn add_static_entity(&mut self, mut static_entity: StaticEntity) {
         static_entity.add_to_world(&mut self.data);
         self.entities.static_entities.push(static_entity);
-    }
-
-    pub fn process_input(&mut self, input_system: &InputSystem) {
-        if let Some(player) = &mut self.entities.player {
-            player.process_input(input_system);
-        }
     }
 
     pub fn update(&mut self, delta_time: f32) {

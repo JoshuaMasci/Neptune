@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::material::{Material, MaterialTexture};
 use crate::mesh::{
     BoundingBox, IndexBuffer, Mesh, Primitive, VertexAttributes, VertexSkinningAttributes,
@@ -167,8 +168,11 @@ pub fn load_meshes(
         };
 
         for gltf_primitive in gltf_mesh.primitives() {
-            mesh.primitives
-                .push(load_primitive(device, gltf_buffers, &gltf_primitive)?);
+            mesh.primitives.push(Arc::new(load_primitive(
+                device,
+                gltf_buffers,
+                &gltf_primitive,
+            )?));
         }
         meshes.push(mesh);
     }

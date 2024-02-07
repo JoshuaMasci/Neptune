@@ -1,7 +1,7 @@
 use crate::camera::Camera;
 use crate::material::{Material, MaterialTexture};
 use crate::mesh;
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, Primitive};
 use crate::transform::Transform;
 use anyhow::Context;
 use glam::{Mat4, Vec3};
@@ -10,7 +10,7 @@ use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
 use neptune_vulkan::{
     vk, BufferUsage, Device, ImageDescription2D, ImageHandle, RasterPipelineHandle,
-    SamplerDescription, SamplerHandle, TransientImageDesc, TransientImageSize,
+    SamplerDescription, TransientImageDesc, TransientImageSize,
 };
 use slotmap::SlotMap;
 use std::cell::RefCell;
@@ -113,57 +113,73 @@ impl SceneRenderer {
         raster_pass_builder.add_depth_stencil_attachment(depth_image, Some((1.0, 0)));
 
         for (_key, instance) in scene.instance_map.iter() {
-            let primitive = &instance.mesh.primitives[0];
-            let texture = instance
-                .material
-                .base_color_texture
-                .as_ref()
-                .unwrap_or(&self.default_texture);
+            for model_primitive in instance.model.primitives.iter() {
+                let texture = model_primitive
+                    .material
+                    .as_ref()
+                    .and_then(|material| material.base_color_texture.clone())
+                    .unwrap_or_else(|| self.default_texture.clone());
 
-            let mut draw_command_builder =
-                neptune_vulkan::render_graph_builder::RasterDrawCommandBuilder::new(
-                    self.raster_pipeline,
-                );
+                let mut draw_command_builder =
+                    neptune_vulkan::render_graph_builder::RasterDrawCommandBuilder::new(
+                        self.raster_pipeline,
+                    );
 
-            draw_command_builder.add_vertex_buffer(
-                neptune_vulkan::render_graph_builder::BufferOffset {
-                    buffer: primitive.position_buffer,
-                    offset: 0,
-                },
-            );
-            draw_command_builder.add_vertex_buffer(
-                neptune_vulkan::render_graph_builder::BufferOffset {
-                    buffer: primitive.attributes_buffer,
-                    offset: 0,
-                },
-            );
-            draw_command_builder.read_buffer(camera.camera_buffer);
-            draw_command_builder.read_buffer(scene.model_matrix_buffer);
-            draw_command_builder.read_sampler(texture.sampler);
-            draw_command_builder.read_sampled_image(texture.image);
-
-            let instance_range = (instance.index as u32)..(instance.index as u32 + 1);
-
-            if let Some(index_buffer_ref) = &primitive.index_buffer {
-                draw_command_builder.draw_indexed(
-                    0,
-                    0..index_buffer_ref.count,
-                    instance_range,
+                draw_command_builder.add_vertex_buffer(
                     neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: index_buffer_ref.buffer,
+                        buffer: model_primitive.primitive.position_buffer,
                         offset: 0,
                     },
-                    neptune_vulkan::render_graph::IndexType::U32,
                 );
-            } else {
-                draw_command_builder.draw(0..primitive.vertex_count as u32, instance_range);
-            }
+                draw_command_builder.add_vertex_buffer(
+                    neptune_vulkan::render_graph_builder::BufferOffset {
+                        buffer: model_primitive.primitive.attributes_buffer,
+                        offset: 0,
+                    },
+                );
+                draw_command_builder.read_buffer(camera.camera_buffer);
+                draw_command_builder.read_buffer(scene.model_matrix_buffer);
+                draw_command_builder.read_sampler(texture.sampler);
+                draw_command_builder.read_sampled_image(texture.image);
 
-            draw_command_builder.build(&mut raster_pass_builder);
+                let instance_range = (instance.index as u32)..(instance.index as u32 + 1);
+
+                if let Some(index_buffer_ref) = &model_primitive.primitive.index_buffer {
+                    draw_command_builder.draw_indexed(
+                        0,
+                        0..index_buffer_ref.count,
+                        instance_range,
+                        neptune_vulkan::render_graph_builder::BufferOffset {
+                            buffer: index_buffer_ref.buffer,
+                            offset: 0,
+                        },
+                        neptune_vulkan::render_graph::IndexType::U32,
+                    );
+                } else {
+                    draw_command_builder.draw(
+                        0..model_primitive.primitive.vertex_count as u32,
+                        instance_range,
+                    );
+                }
+
+                draw_command_builder.build(&mut raster_pass_builder);
+            }
         }
 
         raster_pass_builder.build(render_graph_builder);
     }
+}
+
+#[derive(Clone)]
+pub struct Model {
+    pub name: String,
+    pub primitives: Vec<ModelPrimitive>,
+}
+
+#[derive(Clone)]
+pub struct ModelPrimitive {
+    pub primitive: Arc<Primitive>,
+    pub material: Option<Arc<Material>>,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -172,8 +188,7 @@ pub struct SceneInstanceHandle(slotmap::DefaultKey);
 struct SceneInstance {
     index: usize,
     transform: Transform,
-    mesh: Arc<Mesh>,
-    material: Arc<Material>,
+    model: Model,
 }
 
 pub struct Scene {
@@ -213,8 +228,7 @@ impl Scene {
     pub fn add_instance(
         &mut self,
         transform: Transform,
-        mesh: Arc<Mesh>,
-        material: Arc<Material>,
+        model: Model,
     ) -> Option<SceneInstanceHandle> {
         if let Some(index) = self.model_matrix_index_pool.get() {
             let mut data_mut = self.model_matrix_data.borrow_mut();
@@ -223,8 +237,7 @@ impl Scene {
                 SceneInstance {
                     index,
                     transform,
-                    mesh,
-                    material,
+                    model,
                 },
             )))
         } else {
