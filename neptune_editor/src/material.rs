@@ -11,6 +11,7 @@ pub struct MaterialTexture {
 #[derive(Debug, Clone)]
 pub struct Material {
     pub name: String,
+    pub alpha_blending: bool,
 
     pub base_color: Vec4,
     pub metallic_roughness_factor: Vec2,

@@ -1,15 +1,15 @@
-use std::sync::Arc;
 use crate::material::{Material, MaterialTexture};
 use crate::mesh::{
     BoundingBox, IndexBuffer, Mesh, Primitive, VertexAttributes, VertexSkinningAttributes,
 };
 use anyhow::anyhow;
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use gltf::image::Format;
 use gltf::material::NormalTexture;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle, SamplerHandle};
+use std::sync::Arc;
 
 fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
     match mode {
@@ -326,49 +326,58 @@ pub fn load_materials(
 ) -> Vec<Material> {
     gltf_doc
         .materials()
-        .map(|gltf_material| Material {
-            name: gltf_material
-                .name()
-                .unwrap_or("Unnamed Material")
-                .to_string(),
-            base_color: gltf_material
-                .pbr_metallic_roughness()
-                .base_color_factor()
-                .into(),
-            metallic_roughness_factor: Vec2::new(
-                gltf_material.pbr_metallic_roughness().metallic_factor(),
-                gltf_material.pbr_metallic_roughness().roughness_factor(),
-            ),
-            emissive_color: gltf_material.emissive_factor().into(),
-            base_color_texture: gltf_material
-                .pbr_metallic_roughness()
-                .base_color_texture()
-                .map(|info| {
+        .map(|gltf_material| {
+            info!(
+                "Material {} Alpha: {:?}",
+                gltf_material.name().unwrap_or("Unnamed Material"),
+                gltf_material.alpha_mode()
+            );
+
+            Material {
+                name: gltf_material
+                    .name()
+                    .unwrap_or("Unnamed Material")
+                    .to_string(),
+                alpha_blending: gltf_material.alpha_mode() == gltf::material::AlphaMode::Blend,
+                base_color: gltf_material
+                    .pbr_metallic_roughness()
+                    .base_color_factor()
+                    .into(),
+                metallic_roughness_factor: Vec2::new(
+                    gltf_material.pbr_metallic_roughness().metallic_factor(),
+                    gltf_material.pbr_metallic_roughness().roughness_factor(),
+                ),
+                emissive_color: gltf_material.emissive_factor().into(),
+                base_color_texture: gltf_material
+                    .pbr_metallic_roughness()
+                    .base_color_texture()
+                    .map(|info| {
+                        load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+                    }),
+                metallic_roughness_texture: gltf_material
+                    .pbr_metallic_roughness()
+                    .metallic_roughness_texture()
+                    .map(|info| {
+                        load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
+                    }),
+                normal_texture: gltf_material.normal_texture().map(|info| {
+                    // assert_eq!(
+                    //     info.scale(),
+                    //     1.0,
+                    //     "Normal Texture has a non-one scale, unsure of what todo here"
+                    // );
                     load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
                 }),
-            metallic_roughness_texture: gltf_material
-                .pbr_metallic_roughness()
-                .metallic_roughness_texture()
-                .map(|info| {
+                occlusion_texture: gltf_material.occlusion_texture().map(|info| {
+                    (
+                        load_material_texture(&info.texture(), info.tex_coord(), images, samplers),
+                        info.strength(),
+                    )
+                }),
+                emissive_texture: gltf_material.emissive_texture().map(|info| {
                     load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
                 }),
-            normal_texture: gltf_material.normal_texture().map(|info| {
-                // assert_eq!(
-                //     info.scale(),
-                //     1.0,
-                //     "Normal Texture has a non-one scale, unsure of what todo here"
-                // );
-                load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
-            }),
-            occlusion_texture: gltf_material.occlusion_texture().map(|info| {
-                (
-                    load_material_texture(&info.texture(), info.tex_coord(), images, samplers),
-                    info.strength(),
-                )
-            }),
-            emissive_texture: gltf_material.emissive_texture().map(|info| {
-                load_material_texture(&info.texture(), info.tex_coord(), images, samplers)
-            }),
+            }
         })
         .collect()
 }
@@ -390,5 +399,78 @@ fn load_material_texture(
         image,
         sampler,
         uv_index,
+    }
+}
+
+pub struct GltfScene {
+    pub meshes: Vec<Mesh>,
+    pub images: Vec<ImageHandle>,
+    pub samplers: GltfSamplers,
+    pub materials: Vec<Material>,
+
+    pub mesh_nodes: Vec<GltfNode>,
+}
+
+pub struct GltfNode {
+    pub transform: Mat4,
+    pub mesh_index: usize,
+    pub primitive_materials: Vec<usize>,
+}
+
+pub fn load_gltf_scene<P: AsRef<std::path::Path>>(
+    device: &mut neptune_vulkan::Device,
+    path: P,
+) -> anyhow::Result<GltfScene> {
+    let (gltf_doc, buffer_data, image_data) = {
+        let now = std::time::Instant::now();
+        let result = gltf::import(path)?;
+        info!("File Loading: {}", now.elapsed().as_secs_f32());
+        result
+    };
+
+    let now = std::time::Instant::now();
+    let meshes = load_meshes(device, &gltf_doc, &buffer_data)?;
+    info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
+
+    let now = std::time::Instant::now();
+    let images = load_images(device, &gltf_doc, &image_data)?;
+    info!("Image Convert/Upload: {}", now.elapsed().as_secs_f32());
+
+    let samplers = load_samplers(device, &gltf_doc)?;
+
+    let materials = load_materials(&gltf_doc, &images, &samplers);
+
+    let mut mesh_nodes = Vec::new();
+
+    for root_node in gltf_doc.default_scene().unwrap().nodes() {
+        gltf_node(Mat4::IDENTITY, &mut mesh_nodes, &root_node);
+    }
+
+    Ok(GltfScene {
+        meshes,
+        images,
+        samplers,
+        materials,
+        mesh_nodes,
+    })
+}
+
+fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf::Node) {
+    let local_transform: Mat4 = Mat4::from_cols_array_2d(&node.transform().matrix());
+    let world_transform = parent_transform * local_transform;
+
+    if let Some(mesh) = node.mesh() {
+        mesh_nodes.push(GltfNode {
+            transform: world_transform,
+            mesh_index: mesh.index(),
+            primitive_materials: mesh
+                .primitives()
+                .map(|primitive| primitive.material().index().unwrap())
+                .collect(),
+        });
+    }
+
+    for child in node.children() {
+        gltf_node(world_transform, mesh_nodes, &child);
     }
 }

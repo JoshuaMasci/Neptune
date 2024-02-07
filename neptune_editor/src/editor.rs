@@ -2,7 +2,7 @@ use crate::camera::Camera;
 use crate::game::entity::{Player, StaticEntity};
 use crate::game::world::{World, WorldData};
 use crate::gltf_loader;
-use crate::gltf_loader::{load_materials, load_samplers, GltfSamplers};
+use crate::gltf_loader::{load_gltf_scene, load_materials, load_samplers, GltfSamplers};
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
 use crate::material::Material;
 use crate::mesh::Mesh;
@@ -332,79 +332,6 @@ fn load_world<P: AsRef<std::path::Path>>(
     world.add_player(Player::with_position(Vec3::NEG_Z));
 
     Ok(world)
-}
-
-struct GltfScene {
-    meshes: Vec<Mesh>,
-    images: Vec<ImageHandle>,
-    samplers: GltfSamplers,
-    materials: Vec<Material>,
-
-    mesh_nodes: Vec<GltfNode>,
-}
-
-struct GltfNode {
-    transform: Mat4,
-    mesh_index: usize,
-    primitive_materials: Vec<usize>,
-}
-
-fn load_gltf_scene<P: AsRef<std::path::Path>>(
-    device: &mut neptune_vulkan::Device,
-    path: P,
-) -> anyhow::Result<GltfScene> {
-    let (gltf_doc, buffer_data, image_data) = {
-        let now = std::time::Instant::now();
-        let result = gltf::import(path)?;
-        info!("File Loading: {}", now.elapsed().as_secs_f32());
-        result
-    };
-
-    let now = std::time::Instant::now();
-    let meshes = gltf_loader::load_meshes(device, &gltf_doc, &buffer_data)?;
-    info!("Mesh Convert/Upload: {}", now.elapsed().as_secs_f32());
-
-    let now = std::time::Instant::now();
-    let images = gltf_loader::load_images(device, &gltf_doc, &image_data)?;
-    info!("Image Convert/Upload: {}", now.elapsed().as_secs_f32());
-
-    let samplers = load_samplers(device, &gltf_doc)?;
-
-    let materials = load_materials(&gltf_doc, &images, &samplers);
-
-    let mut mesh_nodes = Vec::new();
-
-    for root_node in gltf_doc.default_scene().unwrap().nodes() {
-        gltf_node(Mat4::IDENTITY, &mut mesh_nodes, &root_node);
-    }
-
-    Ok(GltfScene {
-        meshes,
-        images,
-        samplers,
-        materials,
-        mesh_nodes,
-    })
-}
-
-fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf::Node) {
-    let local_transform: Mat4 = Mat4::from_cols_array_2d(&node.transform().matrix());
-    let world_transform = parent_transform * local_transform;
-
-    if let Some(mesh) = node.mesh() {
-        mesh_nodes.push(GltfNode {
-            transform: world_transform,
-            mesh_index: mesh.index(),
-            primitive_materials: mesh
-                .primitives()
-                .map(|primitive| primitive.material().index().unwrap())
-                .collect(),
-        });
-    }
-
-    for child in node.children() {
-        gltf_node(world_transform, mesh_nodes, &child);
-    }
 }
 
 fn clear_surfaces(

@@ -114,6 +114,15 @@ impl SceneRenderer {
 
         for (_key, instance) in scene.instance_map.iter() {
             for model_primitive in instance.model.primitives.iter() {
+                if model_primitive
+                    .material
+                    .as_ref()
+                    .map(|material| material.alpha_blending)
+                    .unwrap_or_default()
+                {
+                    continue;
+                }
+
                 let texture = model_primitive
                     .material
                     .as_ref()
