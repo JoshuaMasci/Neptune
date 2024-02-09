@@ -6,6 +6,7 @@ use crate::gltf_loader::{load_gltf_scene, load_materials, load_samplers, GltfSam
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
 use crate::material::Material;
 use crate::mesh::Mesh;
+use crate::physics::physics_world::PhysicsWorld;
 use crate::platform::WindowEventReceiver;
 use crate::scene::scene_renderer::{Model, ModelPrimitive, Scene, SceneCamera, SceneRenderer};
 use crate::transform::Transform;
@@ -264,7 +265,7 @@ impl InputEventReceiver for Editor {
         }
 
         match axis_name {
-            "player_move_right_left" => {
+            "player_move_left_right" => {
                 self.camera_move_input.x = value;
                 true
             }
@@ -303,6 +304,7 @@ fn load_world<P: AsRef<std::path::Path>>(
     let mut world = World {
         data: WorldData {
             scene: Scene::new(device, 1024)?,
+            physics: PhysicsWorld::new(),
         },
         entities: Default::default(),
     };
@@ -325,7 +327,7 @@ fn load_world<P: AsRef<std::path::Path>>(
                 .collect(),
         };
 
-        let entity = StaticEntity::new(node.transform.into(), model);
+        let entity = StaticEntity::new(node.transform.into(), model, None);
         world.add_static_entity(entity);
     }
 

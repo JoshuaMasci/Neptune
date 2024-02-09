@@ -94,22 +94,22 @@ impl Sdl2Platform {
         let mut key_bindings = HashMap::new();
 
         key_bindings.insert(
-            Keycode::D,
+            Keycode::A,
             ButtonBinding::Axis {
-                name: "player_move_right_left",
+                name: "player_move_left_right",
                 direction: ButtonAxisDirection::Positive,
             },
         );
         key_bindings.insert(
-            Keycode::A,
+            Keycode::D,
             ButtonBinding::Axis {
-                name: "player_move_right_left",
+                name: "player_move_left_right",
                 direction: ButtonAxisDirection::Negitive,
             },
         );
 
         key_bindings.insert(
-            Keycode::LShift,
+            Keycode::Space,
             ButtonBinding::Axis {
                 name: "player_move_up_down",
                 direction: ButtonAxisDirection::Positive,
@@ -137,6 +137,8 @@ impl Sdl2Platform {
                 direction: ButtonAxisDirection::Negitive,
             },
         );
+
+        key_bindings.insert(Keycode::LShift, ButtonBinding::Button("player_move_sprint"));
 
         let mouse_button_bindings = HashMap::new();
 

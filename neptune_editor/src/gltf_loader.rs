@@ -465,7 +465,7 @@ fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf
             mesh_index: mesh.index(),
             primitive_materials: mesh
                 .primitives()
-                .map(|primitive| primitive.material().index().unwrap())
+                .map(|primitive| primitive.material().index().unwrap_or_default())
                 .collect(),
         });
     }

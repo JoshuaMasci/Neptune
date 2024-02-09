@@ -1,4 +1,5 @@
 use crate::game::entity::{Entity, Player, StaticEntity};
+use crate::physics::physics_world::PhysicsWorld;
 use crate::scene::scene_renderer::Scene;
 
 pub struct World {
@@ -18,6 +19,8 @@ impl World {
     }
 
     pub fn update(&mut self, delta_time: f32) {
+        self.data.physics.step(delta_time);
+
         for entity in self.entities.static_entities.iter_mut() {
             entity.update(delta_time, &mut self.data);
         }
@@ -30,7 +33,7 @@ impl World {
 
 pub struct WorldData {
     pub scene: Scene,
-    //TODO: Physics World
+    pub physics: PhysicsWorld,
 }
 
 #[derive(Default)]

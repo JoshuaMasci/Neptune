@@ -47,9 +47,9 @@ impl Camera {
         let fov_y = self.fov.get_fov_y_rad(aspect_ratio);
 
         let mut matrix = if let Some(far_clip) = self.far_clip {
-            Mat4::perspective_lh(fov_y, aspect_ratio, self.near_clip, far_clip)
+            Mat4::perspective_rh(fov_y, aspect_ratio, self.near_clip, far_clip)
         } else {
-            Mat4::perspective_infinite_lh(fov_y, aspect_ratio, self.near_clip)
+            Mat4::perspective_infinite_rh(fov_y, aspect_ratio, self.near_clip)
         };
         matrix.y_axis.y *= -1.0;
         matrix

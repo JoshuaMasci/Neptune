@@ -56,7 +56,7 @@ impl Transform {
     }
 
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_to_lh(
+        Mat4::look_to_rh(
             self.position,
             self.rotation * Vec3::Z,
             self.rotation * Vec3::Y,

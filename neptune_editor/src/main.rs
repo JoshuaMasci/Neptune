@@ -6,6 +6,7 @@ mod input;
 mod input_system;
 mod material;
 mod mesh;
+mod physics;
 mod platform;
 mod scene;
 mod shader;
