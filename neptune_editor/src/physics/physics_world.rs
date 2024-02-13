@@ -10,8 +10,9 @@ pub enum Collider {
 }
 
 pub struct PhysicsWorld {
-    rigid_body_set: RigidBodySet,
-    collider_set: ColliderSet,
+    pub rigid_body_set: RigidBodySet,
+    pub collider_set: ColliderSet,
+    pub query_pipeline: QueryPipeline,
 
     integration_parameters: IntegrationParameters,
     physics_pipeline: PhysicsPipeline,
@@ -26,7 +27,8 @@ pub struct PhysicsWorld {
 impl PhysicsWorld {
     pub fn new() -> Self {
         let rigid_body_set = RigidBodySet::new();
-        let mut collider_set = ColliderSet::new();
+        let collider_set = ColliderSet::new();
+        let query_pipeline = QueryPipeline::new();
 
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
@@ -37,14 +39,10 @@ impl PhysicsWorld {
         let multibody_joint_set = MultibodyJointSet::new();
         let ccd_solver = CCDSolver::new();
 
-        let ground_collider = ColliderBuilder::cuboid(128.0, 1.0, 128.0)
-            .translation(Vector::new(0.0, -10.0, 0.0))
-            .build();
-        collider_set.insert(ground_collider);
-
         Self {
             rigid_body_set,
             collider_set,
+            query_pipeline,
             integration_parameters,
             physics_pipeline,
             island_manager,

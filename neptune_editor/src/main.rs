@@ -24,7 +24,7 @@ pub const APP_NAME: &str = "Neptune Editor";
 fn main() -> anyhow::Result<()> {
     pretty_env_logger::init_timed();
 
-    let window_size = [1600, 900];
+    let window_size = [800, 450];
     let mut platform = platform::sdl2::Sdl2Platform::new(APP_NAME, window_size)?;
 
     let mut editor = Editor::new(&platform.window, window_size, &EditorConfig::parse())?;
