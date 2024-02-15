@@ -84,6 +84,7 @@ impl Sdl2Platform {
             .window(name, size[0], size[1])
             .position_centered()
             .resizable()
+            .maximized()
             .build()?;
 
         let event_pump = context

@@ -1,4 +1,5 @@
-use crate::game::entity::{Entity, Player, StaticEntity};
+use crate::game::entity::{Entity, StaticEntity};
+use crate::game::player::Player;
 use crate::physics::physics_world::PhysicsWorld;
 use crate::scene::scene_renderer::Scene;
 
@@ -39,5 +40,6 @@ pub struct WorldData {
 #[derive(Default)]
 pub struct WorldEntities {
     pub(crate) player: Option<Player>,
+
     static_entities: Vec<StaticEntity>,
 }

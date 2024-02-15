@@ -1,4 +1,4 @@
-mod character;
+pub mod character;
 pub mod physics_world;
 
 use glam::{Quat, Vec3};

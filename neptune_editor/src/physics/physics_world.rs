@@ -16,7 +16,7 @@ pub struct PhysicsWorld {
 
     integration_parameters: IntegrationParameters,
     physics_pipeline: PhysicsPipeline,
-    island_manager: IslandManager,
+    pub island_manager: IslandManager,
     broad_phase: BroadPhase,
     narrow_phase: NarrowPhase,
     impulse_joint_set: ImpulseJointSet,
@@ -55,7 +55,7 @@ impl PhysicsWorld {
     }
 
     pub fn step(&mut self, delta_time: f32) {
-        let gravity = vector![0.0, -9.8, 0.0];
+        let gravity = vector![0.0, 0.0, 0.0];
 
         let physics_hooks = ();
         let event_handler = ();
@@ -77,6 +77,9 @@ impl PhysicsWorld {
             &physics_hooks,
             &event_handler,
         );
+
+        self.query_pipeline
+            .update(&self.rigid_body_set, &self.collider_set);
     }
 
     pub fn add_rigid_body(&mut self, transform: &Transform) -> RigidBodyHandle {

@@ -1,19 +1,17 @@
 use crate::camera::Camera;
-use crate::game::entity::{Player, StaticEntity};
+use crate::game::entity::StaticEntity;
+use crate::game::player::Player;
 use crate::game::world::{World, WorldData};
-use crate::gltf_loader;
-use crate::gltf_loader::{load_gltf_scene, load_materials, load_samplers, GltfSamplers};
+use crate::gltf_loader::load_gltf_scene;
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
-use crate::material::Material;
-use crate::mesh::Mesh;
-use crate::physics::physics_world::PhysicsWorld;
+use crate::physics::physics_world::{Collider, PhysicsWorld};
 use crate::platform::WindowEventReceiver;
 use crate::scene::scene_renderer::{Model, ModelPrimitive, Scene, SceneCamera, SceneRenderer};
 use crate::transform::Transform;
 use anyhow::Context;
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
-use neptune_vulkan::{vk, DeviceSettings, ImageHandle, SurfaceHandle};
+use neptune_vulkan::{vk, DeviceSettings, SurfaceHandle};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
 
@@ -134,19 +132,20 @@ impl Editor {
 
         let scene_renderer = SceneRenderer::new(&mut device, Self::DEPTH_FORMAT)?;
 
-        let gltf_scene_path = if let Some(path) = &config.gltf_scene_path {
-            path.clone()
-        } else {
-            rfd::FileDialog::new()
-                .add_filter("gltf", &["gltf", "glb"])
-                .set_title("pick a gltf file")
-                .pick_file()
-                .expect("Failed to pick a gltf file")
-        };
+        // let gltf_scene_path = if let Some(path) = &config.gltf_scene_path {
+        //     path.clone()
+        // } else {
+        //     rfd::FileDialog::new()
+        //         .add_filter("gltf", &["gltf", "glb"])
+        //         .set_title("pick a gltf file")
+        //         .pick_file()
+        //         .expect("Failed to pick a gltf file")
+        // };
 
         let scene_camera = SceneCamera::new(&mut device)?;
 
-        let world = load_world(&mut device, gltf_scene_path)?;
+        //let world = load_world(&mut device, gltf_scene_path)?;
+        let world = create_test_world(&mut device)?;
 
         Ok(Self {
             instance,
@@ -196,7 +195,7 @@ impl Editor {
 
         let camera_transform = match &self.world.entities.player {
             None => self.camera_transform.clone(),
-            Some(player) => player.transform.clone(),
+            Some(player) => player.get_camera_transform(),
         };
 
         self.scene_camera.update(
@@ -336,6 +335,42 @@ fn load_world<P: AsRef<std::path::Path>>(
     Ok(world)
 }
 
+fn create_test_world(device: &mut neptune_vulkan::Device) -> anyhow::Result<World> {
+    let gltf_scene = load_gltf_scene(device, "neptune_editor/resource/PurpleCube2.glb")?;
+
+    let mut world = World {
+        data: WorldData {
+            scene: Scene::new(device, 1024)?,
+            physics: PhysicsWorld::new(),
+        },
+        entities: Default::default(),
+    };
+
+    let model = Model {
+        name: "Ground".to_string(),
+        primitives: vec![ModelPrimitive {
+            primitive: gltf_scene.meshes[0].primitives[0].clone(),
+            material: gltf_scene.materials.first().cloned().map(Arc::new),
+        }],
+    };
+    let ground_size = Vec3::new(8.0, 0.5, 8.0);
+    let ground_entity = StaticEntity::new(
+        Transform {
+            position: Vec3::NEG_Y * 0.5,
+            scale: ground_size,
+            ..Default::default()
+        },
+        model,
+        Some(Collider::Box(ground_size)),
+    );
+    world.add_static_entity(ground_entity);
+
+    world.add_player(Player::with_position(Vec3::Y * 3.0));
+
+    Ok(world)
+}
+
+/// Simple Render Graph to clear the screen before asset loading happens
 fn clear_surfaces(
     device: &mut neptune_vulkan::Device,
     color: [f32; 3],

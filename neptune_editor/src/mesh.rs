@@ -1,9 +1,10 @@
+use glam::Vec3;
 use memoffset::offset_of;
 use neptune_vulkan::vk;
 use std::sync::Arc;
 
 #[repr(transparent)]
-pub struct VertexPosition(glam::Vec3);
+pub struct VertexPosition(Vec3);
 
 impl VertexPosition {
     #[allow(unused)]
@@ -95,8 +96,8 @@ pub struct Mesh {
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct BoundingBox {
-    pub min: glam::Vec3,
-    pub max: glam::Vec3,
+    pub min: Vec3,
+    pub max: Vec3,
 }
 
 #[derive(Clone)]

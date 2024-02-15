@@ -5,3 +5,7 @@ members = [
     "neptune_vulkan",
     "neptune_editor",
 ]
+
+# Force rapier3d to always build with optimization
+[profile.dev.package.rapier3d]
+opt-level = 3

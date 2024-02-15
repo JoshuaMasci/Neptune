@@ -51,6 +51,14 @@ impl Transform {
         self.scale *= scale;
     }
 
+    pub fn transform(&self, child: &Transform) -> Transform {
+        Self {
+            position: self.position + (child.position * self.scale),
+            rotation: self.rotation * child.rotation,
+            scale: self.scale * child.scale,
+        }
+    }
+
     pub fn model_matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
     }
