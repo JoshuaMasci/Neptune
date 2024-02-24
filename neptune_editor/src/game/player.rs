@@ -38,7 +38,7 @@ impl Player {
             character: CharacterController::new(),
             gravity_velocity: Vec3::ZERO,
 
-            linear_speed: Vec3::splat(5.0),
+            linear_speed: Vec3::new(5.0, 5.0, 5.0),
             angular_speed: Vec2::splat(std::f32::consts::PI),
             linear_input: Vec3::ZERO,
             angular_input: Vec2::ZERO,
@@ -82,12 +82,6 @@ impl Entity for Player {
                 * self.linear_speed
                 * delta_time
                 * if self.is_sprinting { 10.0 } else { 1.0 });
-
-        if !self.character.on_ground() {
-            self.gravity_velocity += Vec3::NEG_Y * 9.8 * delta_time;
-        } else {
-            self.gravity_velocity = Vec3::ZERO;
-        }
 
         self.character.update(
             &mut world_data.physics,

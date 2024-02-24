@@ -1,5 +1,6 @@
 use crate::game::entity::{Entity, StaticEntity};
 use crate::game::player::Player;
+use crate::game::ship::Ship;
 use crate::physics::physics_world::PhysicsWorld;
 use crate::scene::scene_renderer::Scene;
 
@@ -19,11 +20,20 @@ impl World {
         self.entities.static_entities.push(static_entity);
     }
 
+    pub fn add_ship(&mut self, mut ship: Ship) {
+        ship.add_to_world(&mut self.data);
+        self.entities.ships.push(ship);
+    }
+
     pub fn update(&mut self, delta_time: f32) {
         self.data.physics.step(delta_time);
 
         for entity in self.entities.static_entities.iter_mut() {
             entity.update(delta_time, &mut self.data);
+        }
+
+        for ship in self.entities.ships.iter_mut() {
+            ship.update(delta_time, &mut self.data);
         }
 
         if let Some(player) = &mut self.entities.player {
@@ -42,4 +52,5 @@ pub struct WorldEntities {
     pub(crate) player: Option<Player>,
 
     static_entities: Vec<StaticEntity>,
+    ships: Vec<Ship>,
 }

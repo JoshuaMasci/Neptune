@@ -1,6 +1,7 @@
-use crate::camera::Camera;
+use crate::camera::{Camera, FieldOfView};
 use crate::game::entity::StaticEntity;
 use crate::game::player::Player;
+use crate::game::ship::{Module, ModuleType, Ship};
 use crate::game::world::{World, WorldData};
 use crate::gltf_loader::load_gltf_scene;
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
@@ -153,7 +154,7 @@ impl Editor {
             surface_size,
             device,
             scene_renderer,
-            camera: Default::default(),
+            camera: Camera::new(FieldOfView::X(90.0), 0.1, None),
             camera_transform: Transform::with_position(Vec3::NEG_Z),
             scene_camera,
             world,
@@ -360,12 +361,41 @@ fn create_test_world(device: &mut neptune_vulkan::Device) -> anyhow::Result<Worl
             scale: ground_size,
             ..Default::default()
         },
-        model,
+        model.clone(),
         Some(Collider::Box(ground_size)),
     );
     world.add_static_entity(ground_entity);
 
     world.add_player(Player::with_position(Vec3::Y * 3.0));
+
+    //Ship
+    {
+        let module = Module {
+            model: model.clone(),
+            collider: Collider::Box(Vec3::splat(0.5)),
+        };
+
+        let ship = Ship {
+            connector_module: module.clone(),
+            hallway_module: module.clone(),
+            room_module: module.clone(),
+            module_list: vec![
+                (Transform::default(), ModuleType::Connector),
+                (
+                    Transform::with_position(Vec3::Y * 2.0),
+                    ModuleType::Connector,
+                ),
+                (
+                    Transform::with_position(Vec3::Y * 4.0),
+                    ModuleType::Connector,
+                ),
+            ],
+            transform: Transform::with_position(Vec3::Y * 5.0 + Vec3::Z * 2.0),
+            rigid_body_handle: None,
+            modules: vec![],
+        };
+        world.add_ship(ship);
+    }
 
     Ok(world)
 }

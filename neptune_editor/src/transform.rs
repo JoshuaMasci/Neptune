@@ -53,7 +53,7 @@ impl Transform {
 
     pub fn transform(&self, child: &Transform) -> Transform {
         Self {
-            position: self.position + (child.position * self.scale),
+            position: self.position + (self.rotation * child.position * self.scale),
             rotation: self.rotation * child.rotation,
             scale: self.scale * child.scale,
         }

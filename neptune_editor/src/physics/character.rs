@@ -77,6 +77,9 @@ impl CharacterController {
 
             let collider_shape = world.collider_set.get(*collider_handle).unwrap().shape();
 
+            let filter = QueryFilter::new().exclude_collider(*collider_handle);
+
+            let mut collisions = vec![];
             let movement = self.controller.move_shape(
                 delta_time,
                 &world.rigid_body_set,
@@ -85,9 +88,22 @@ impl CharacterController {
                 collider_shape,
                 &transform,
                 vec3_glam_to_na(character_velocity),
-                QueryFilter::new().exclude_collider(*collider_handle),
-                |_| {},
+                filter,
+                |collision| collisions.push(collision),
             );
+
+            for collision in collisions.iter() {
+                self.controller.solve_character_collision_impulses(
+                    delta_time,
+                    &mut world.rigid_body_set,
+                    &world.collider_set,
+                    &world.query_pipeline,
+                    collider_shape,
+                    10.0,
+                    collision,
+                    filter,
+                );
+            }
 
             self.is_grounded = movement.grounded;
             self.is_sliding = movement.is_sliding_down_slope;
