@@ -1,8 +1,8 @@
 use crate::render_graph::{
     BufferBarrier, BufferGraphResource, BufferIndex, BufferRead, BufferResourceDescription,
-    BufferWrite, CommandBuffer, CommandBufferDependency, CompiledRenderGraph, Framebuffer,
-    ImageBarrier, ImageBarrierSource, ImageGraphResource, ImageIndex, ImageResourceDescription,
-    QueueType, RenderPassCommand,
+    BufferWrite, BufferWrite2, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
+    Framebuffer, ImageBarrier, ImageBarrierSource, ImageGraphResource, ImageIndex,
+    ImageResourceDescription, QueueType, RenderPassCommand,
 };
 use crate::render_graph_builder::{
     BufferOffset, ColorAttachment, ComputeDispatch, DepthStencilAttachment, DrawCommandDispatch,
@@ -39,6 +39,20 @@ impl Default for BasicRenderGraphBuilder {
 }
 
 impl RenderGraphBuilderTrait for BasicRenderGraphBuilder {
+    fn add_buffer_write(
+        &mut self,
+        buffer_offset: BufferOffset,
+        write_size: usize,
+        callback: BufferWriteCallback,
+    ) {
+        let buffer_offset = self.get_buffer_offset(buffer_offset);
+        self.render_graph.buffer_writes2.push(BufferWrite2 {
+            buffer_offset,
+            write_size,
+            callback,
+        });
+    }
+
     fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback) {
         let index = self.get_buffer_index(handle);
         self.render_graph

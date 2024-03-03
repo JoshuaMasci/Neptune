@@ -3,11 +3,13 @@ use crate::device::{AshDevice, AshQueue};
 use crate::image::vk_format_get_aspect_flags;
 use crate::pipeline::Pipelines;
 use crate::render_graph::{
-    BufferBarrierSource, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
+    BufferBarrierSource, BufferOffset, CommandBuffer, CommandBufferDependency, CompiledRenderGraph,
     ComputeDispatch, DrawCommandDispatch, Framebuffer, ImageBarrierSource, ImageIndex, IndexType,
     RasterDrawCommand, RenderPassCommand, ShaderResourceUsage, Transfer,
 };
-use crate::resource_managers::{BufferTempResource, ImageTempResource, ResourceManager};
+use crate::resource_managers::{
+    BufferResourceAccess, BufferTempResource, ImageTempResource, ResourceManager,
+};
 use crate::swapchain::{AcquiredSwapchainImage, SwapchainManager};
 use crate::upload_queue::UploadPass;
 use crate::{
@@ -365,6 +367,45 @@ impl RenderGraphExecutor {
         let mut images = resource_manager
             .get_image_resources(&acquired_swapchain_images, &render_graph.image_resources)?;
 
+        let mut staging_buffer_offset = 0;
+        let mut staging_buffer = resource_manager.get_write_staging_buffer(
+            render_graph
+                .buffer_writes2
+                .calc_needed_staging_size(&buffers),
+        )?;
+
+        // Write data to buffers
+        let mut staging_buffer_copies: Vec<(BufferOffset, usize, usize)> = Vec::new();
+        for buffer_write in render_graph.buffer_writes2.buffer_writes.iter() {
+            if let Some(mapped_slice) = &mut buffers[buffer_write.buffer_offset.buffer]
+                .mapped_slice
+                .as_mut()
+                .map(|mapped_slice| mapped_slice.slice_mut())
+            {
+                // If buffer is mapped write directly
+                let write_start = buffer_write.buffer_offset.offset as usize;
+                let write_end = write_start + buffer_write.write_size;
+                buffer_write
+                    .callback
+                    .call(&mut mapped_slice[write_start..write_end]);
+            } else {
+                // Else write to staging buffer and copy to final buffer
+                let staging_buffer = staging_buffer.as_mut().unwrap();
+                let mapped_slice = staging_buffer.mapped_slice.as_mut().unwrap().slice_mut();
+                let write_start = staging_buffer_offset;
+                let write_end = write_start + buffer_write.write_size;
+                buffer_write
+                    .callback
+                    .call(&mut mapped_slice[write_start..write_end]);
+                staging_buffer_copies.push((
+                    buffer_write.buffer_offset,
+                    buffer_write.write_size,
+                    staging_buffer_offset,
+                ));
+                staging_buffer_offset = write_end;
+            }
+        }
+
         //Buffer Writes/Reads
         resource_manager.write_buffers(&render_graph.buffer_writes);
         resource_manager.read_buffers(&render_graph.buffer_reads);
@@ -382,6 +423,24 @@ impl RenderGraphExecutor {
                     vulkan_command_buffer,
                     &vk::CommandBufferBeginInfo::builder(),
                 )?;
+
+                //TODO: Properly schedule and barrier staging uploads
+                for (target_buffer, write_size, src_offset) in staging_buffer_copies {
+                    let src_buffer = staging_buffer.as_ref().unwrap();
+                    let dst_buffer = &mut buffers[target_buffer.buffer];
+                    dst_buffer.last_access = BufferResourceAccess::TransferWrite;
+                    self.device.core.cmd_copy_buffer2(
+                        vulkan_command_buffer,
+                        &vk::CopyBufferInfo2::builder()
+                            .src_buffer(src_buffer.buffer.handle)
+                            .dst_buffer(dst_buffer.buffer.handle)
+                            .regions(&[vk::BufferCopy2::builder()
+                                .src_offset(src_offset as vk::DeviceSize)
+                                .dst_offset(target_buffer.offset as vk::DeviceSize)
+                                .size(write_size as vk::DeviceSize)
+                                .build()]),
+                    );
+                }
 
                 //Bind descriptor set
                 {

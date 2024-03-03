@@ -1,10 +1,11 @@
 use crate::render_graph_builder::{BufferReadCallback, BufferWriteCallback};
-use crate::resource_managers::{BufferResourceAccess, ImageResourceAccess};
+use crate::resource_managers::{BufferResourceAccess, BufferTempResource, ImageResourceAccess};
 use crate::{
     BufferKey, BufferUsage, ComputePipelineHandle, ImageKey, RasterPipelineHandle, SamplerHandle,
     SurfaceHandle, TransientImageDesc,
 };
 use ash::vk;
+use log::info;
 use std::fmt::{Debug, Formatter};
 use std::ops::Range;
 
@@ -221,6 +222,21 @@ impl Debug for BufferWrite {
     }
 }
 
+pub struct BufferWrite2 {
+    pub(crate) buffer_offset: BufferOffset,
+    pub(crate) write_size: usize,
+    pub(crate) callback: BufferWriteCallback,
+}
+impl Debug for BufferWrite2 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferWrite")
+            .field("index", &self.buffer_offset.buffer)
+            .field("offset", &self.buffer_offset.offset)
+            .field("write_size", &self.write_size)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct BufferRead {
     pub(crate) index: BufferIndex,
@@ -343,7 +359,38 @@ pub struct CommandBuffer {
 }
 
 #[derive(Debug, Default)]
+pub struct BufferWrites {
+    pub total_write_size: usize,
+    pub buffer_writes: Vec<BufferWrite2>,
+}
+
+impl BufferWrites {
+    pub fn push(&mut self, write: BufferWrite2) {
+        self.total_write_size += write.write_size;
+        self.buffer_writes.push(write);
+    }
+
+    pub fn calc_needed_staging_size(&self, buffer_resources: &[BufferTempResource]) -> usize {
+        self.buffer_writes
+            .iter()
+            .map(|write| {
+                if buffer_resources[write.buffer_offset.buffer]
+                    .mapped_slice
+                    .is_some()
+                {
+                    0
+                } else {
+                    write.write_size
+                }
+            })
+            .sum()
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct CompiledRenderGraph {
+    pub buffer_writes2: BufferWrites,
+
     pub buffer_writes: Vec<BufferWrite>,
     pub buffer_reads: Vec<BufferRead>,
 

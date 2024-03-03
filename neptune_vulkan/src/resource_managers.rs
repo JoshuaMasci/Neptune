@@ -4,14 +4,15 @@ use crate::device::AshDevice;
 use crate::image::{AshImage, Image, TransientImageSize};
 use crate::render_graph::{
     BufferGraphResource, BufferIndex, BufferRead, BufferResourceDescription, BufferWrite,
-    ImageGraphResource, ImageResourceDescription,
+    BufferWrites, ImageGraphResource, ImageResourceDescription,
 };
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
 use crate::{BufferKey, BufferUsage, ImageHandle, ImageKey, SamplerKey, VulkanError};
 use ash::vk;
+use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;
-use log::{error, warn};
+use log::{error, info, warn};
 use slotmap::SlotMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -181,7 +182,37 @@ pub struct BufferResource {
     pub last_access: BufferResourceAccess,
 }
 
+pub enum BufferTempDescription {
+    Persistent(BufferKey),
+    Transient(usize),
+}
+
+pub struct MappedSlice {
+    ptr: std::ptr::NonNull<std::ffi::c_void>,
+    size: usize,
+}
+
+impl MappedSlice {
+    pub fn new(allocation: &Allocation) -> Option<Self> {
+        allocation.mapped_ptr().map(|ptr| Self {
+            ptr,
+            size: allocation.size() as usize,
+        })
+    }
+
+    pub fn slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.cast().as_ptr(), self.size) }
+    }
+
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.cast().as_ptr(), self.size) }
+    }
+}
+
 pub struct BufferTempResource {
+    pub description: BufferTempDescription,
+    pub supports_direct_upload: bool,
+    pub mapped_slice: Option<MappedSlice>,
     pub buffer: AshBuffer,
     pub last_access: BufferResourceAccess,
 }
@@ -200,8 +231,10 @@ pub struct ImageTempResource {
 struct ResourceFrame {
     freed_buffers: Vec<BufferKey>,
     freed_images: Vec<ImageKey>,
-    pub(crate) transient_buffers: HashMap<BufferIndex, Buffer>,
-    pub(crate) transient_images: Vec<Image>,
+    transient_buffers: Vec<Buffer>,
+    transient_images: Vec<Image>,
+
+    write_staging_buffer: Option<Buffer>,
 
     buffer_reads: Vec<BufferRead>,
 }
@@ -264,17 +297,17 @@ impl ResourceManager {
         let frame = &mut self.frames_in_flight[self.frame_index];
 
         //Read callbacks
-        for buffer_read in frame.buffer_reads.drain(..) {
-            let buffer = frame.transient_buffers.get(&buffer_read.index).unwrap();
-            match buffer.allocation.mapped_slice() {
-                None => {
-                    todo!("Return Error, target buffer not mapped");
-                }
-                Some(buffer_slice) => {
-                    (buffer_read.callback)(buffer_slice);
-                }
-            }
-        }
+        // for buffer_read in frame.buffer_reads.drain(..) {
+        //     let buffer = frame.transient_buffers.get(&buffer_read.index).unwrap();
+        //     match buffer.allocation.mapped_slice() {
+        //         None => {
+        //             todo!("Return Error, target buffer not mapped");
+        //         }
+        //         Some(buffer_slice) => {
+        //             (buffer_read.callback)(buffer_slice);
+        //         }
+        //     }
+        // }
 
         for key in frame.freed_buffers.drain(..) {
             if self.buffers.remove(key).is_none() {
@@ -371,24 +404,144 @@ impl ResourceManager {
         }
     }
 
+    pub fn get_write_staging_buffer(
+        &mut self,
+        buffer_size: usize,
+    ) -> Result<Option<BufferTempResource>, VulkanError> {
+        let needed_staging_buffer_size = buffer_size;
+
+        //Resize if needed
+        Ok(if needed_staging_buffer_size > 0 {
+            let frame = &mut self.frames_in_flight[self.frame_index];
+
+            let current_size = frame
+                .write_staging_buffer
+                .as_ref()
+                .map(|buffer| buffer.size as usize)
+                .unwrap_or_default();
+
+            if needed_staging_buffer_size > current_size {
+                frame.write_staging_buffer = Some(Buffer::new2(
+                    self.device.clone(),
+                    "Write Staging Buffer",
+                    needed_staging_buffer_size as vk::DeviceSize,
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    MemoryLocation::CpuToGpu,
+                )?);
+            }
+
+            frame
+                .write_staging_buffer
+                .as_ref()
+                .map(|buffer| BufferTempResource {
+                    description: BufferTempDescription::Transient(0),
+                    supports_direct_upload: true,
+                    mapped_slice: MappedSlice::new(&buffer.allocation),
+                    buffer: buffer.get_copy(),
+                    last_access: BufferResourceAccess::None,
+                })
+        } else {
+            None
+        })
+    }
+
     pub fn write_buffers(&mut self, buffer_writes: &[BufferWrite]) {
         let frame = &mut self.frames_in_flight[self.frame_index];
 
-        for buffer_write in buffer_writes.iter() {
-            let buffer = frame
-                .transient_buffers
-                .get_mut(&buffer_write.index)
-                .unwrap();
+        // for buffer_write in buffer_writes.iter() {
+        //     let buffer = frame
+        //         .transient_buffers
+        //         .get_mut(&buffer_write.index)
+        //         .unwrap();
+        //
+        //     match buffer.allocation.mapped_slice_mut() {
+        //         None => {
+        //             todo!("Return Error, target buffer not mapped");
+        //         }
+        //         Some(buffer_slice) => {
+        //             buffer_write.callback.call(buffer_slice);
+        //         }
+        //     }
+        // }
+    }
 
-            match buffer.allocation.mapped_slice_mut() {
-                None => {
-                    todo!("Return Error, target buffer not mapped");
+    pub fn write_buffers2(
+        &mut self,
+        buffer_writes: &BufferWrites,
+        buffer_resources: &[BufferTempResource],
+    ) -> Result<(), VulkanError> {
+        // Make sure the staging buffer is large enough
+        let needed_staging_buffer_size: usize = buffer_writes
+            .buffer_writes
+            .iter()
+            .map(|write| {
+                if buffer_resources[write.buffer_offset.buffer].supports_direct_upload {
+                    0
+                } else {
+                    write.write_size
                 }
-                Some(buffer_slice) => {
-                    buffer_write.callback.call(buffer_slice);
-                }
+            })
+            .sum();
+
+        let frame = &mut self.frames_in_flight[self.frame_index];
+
+        //Resize if needed
+        if needed_staging_buffer_size > 0 {
+            let current_size = frame
+                .write_staging_buffer
+                .as_ref()
+                .map(|buffer| buffer.size as usize)
+                .unwrap_or_default();
+
+            if needed_staging_buffer_size > current_size {
+                frame.write_staging_buffer = Some(Buffer::new2(
+                    self.device.clone(),
+                    "Write Staging Buffer",
+                    needed_staging_buffer_size as vk::DeviceSize,
+                    vk::BufferUsageFlags::TRANSFER_SRC,
+                    MemoryLocation::CpuToGpu,
+                )?);
             }
         }
+
+        let mut staring_buffer_offset = 0;
+        for buffer_write in buffer_writes.buffer_writes.iter() {
+            let buffer = match &buffer_resources[buffer_write.buffer_offset.buffer].description {
+                BufferTempDescription::Persistent(buffer_key) => {
+                    &mut self.buffers.get_mut(*buffer_key).unwrap().buffer
+                }
+                BufferTempDescription::Transient(index) => &mut frame.transient_buffers[*index],
+            };
+
+            if buffer_resources[buffer_write.buffer_offset.buffer].supports_direct_upload {
+                let buffer_slice = buffer
+                    .allocation
+                    .mapped_slice_mut()
+                    .expect("Buffer should be memory mapped");
+                let write_start = buffer_write.buffer_offset.offset as usize;
+                let write_end = write_start + buffer_write.write_size;
+                buffer_write
+                    .callback
+                    .call(&mut buffer_slice[write_start..write_end]);
+            } else {
+                let buffer_slice = frame
+                    .write_staging_buffer
+                    .as_mut()
+                    .unwrap()
+                    .allocation
+                    .mapped_slice_mut()
+                    .expect("Staging buffer must be memory mapped");
+                let write_start = staring_buffer_offset;
+                let write_end = write_start + buffer_write.write_size;
+
+                buffer_write
+                    .callback
+                    .call(&mut buffer_slice[write_start..write_end]);
+                staring_buffer_offset = write_end;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn read_buffers(&mut self, buffer_reads: &[BufferRead]) {
@@ -403,19 +556,29 @@ impl ResourceManager {
         &mut self,
         graph_buffers: &[BufferGraphResource],
     ) -> Result<Vec<BufferTempResource>, VulkanError> {
+        let frame_count = self.frames_in_flight.len();
         let frame = &mut self.frames_in_flight[self.frame_index];
 
         let mut buffer_resources = Vec::with_capacity(graph_buffers.len());
         for (index, graph_buffer) in graph_buffers.iter().enumerate() {
             buffer_resources.push(match &graph_buffer.description {
                 BufferResourceDescription::Persistent(key) => {
-                    let buffer = &mut self.buffers[*key];
+                    let resource = &mut self.buffers[*key];
+
+                    // Can directly upload to persistent buffers only if there is one frame in flight
+                    let supports_direct_upload = resource.buffer.is_mapped() && frame_count == 1;
+
                     //TODO: get usages with multiple frames in flight
                     //TODO: write last usages + queue
                     BufferTempResource {
-                        buffer: buffer.buffer.get_copy(),
+                        description: BufferTempDescription::Persistent(*key),
+                        supports_direct_upload,
+                        mapped_slice: supports_direct_upload
+                            .then(|| MappedSlice::new(&resource.buffer.allocation))
+                            .flatten(),
+                        buffer: resource.buffer.get_copy(),
                         last_access: std::mem::replace(
-                            &mut buffer.last_access,
+                            &mut resource.last_access,
                             graph_buffer.last_access,
                         ),
                     }
@@ -436,11 +599,17 @@ impl ResourceManager {
                         buffer.storage_binding =
                             Some(self.descriptor_set.bind_storage_buffer(&buffer));
                     }
+
                     let resource = BufferTempResource {
+                        description: BufferTempDescription::Transient(
+                            frame.transient_buffers.len(),
+                        ),
+                        supports_direct_upload: buffer.is_mapped(),
+                        mapped_slice: MappedSlice::new(&buffer.allocation),
                         buffer: buffer.get_copy(),
                         last_access: BufferResourceAccess::None, //Never used before
                     };
-                    let _ = frame.transient_buffers.insert(index, buffer);
+                    frame.transient_buffers.push(buffer);
                     resource
                 }
             });

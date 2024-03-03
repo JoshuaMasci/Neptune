@@ -138,6 +138,14 @@ pub struct RasterDrawCommand {
 // 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
 pub trait RenderGraphBuilderTrait {
+    /// Uploads data to a buffer, if certain conditions are meet the write may be direct otherwise a copy is specified
+    fn add_buffer_write(
+        &mut self,
+        buffer_offset: BufferOffset,
+        write_size: usize,
+        callback: BufferWriteCallback,
+    );
+
     fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback);
     fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback);
 
