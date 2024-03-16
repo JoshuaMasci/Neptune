@@ -211,23 +211,11 @@ pub enum RenderPassCommand {
 // 4. GraphMultiQueue = Multiple Queues + Topological Sort + Image/Buffer Transitions
 
 pub struct BufferWrite {
-    pub(crate) index: BufferIndex,
-    pub(crate) callback: BufferWriteCallback,
-}
-impl Debug for BufferWrite {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BufferWrite")
-            .field("index", &self.index)
-            .finish()
-    }
-}
-
-pub struct BufferWrite2 {
     pub(crate) buffer_offset: BufferOffset,
     pub(crate) write_size: usize,
     pub(crate) callback: BufferWriteCallback,
 }
-impl Debug for BufferWrite2 {
+impl Debug for BufferWrite {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferWrite")
             .field("index", &self.buffer_offset.buffer)
@@ -361,11 +349,11 @@ pub struct CommandBuffer {
 #[derive(Debug, Default)]
 pub struct BufferWrites {
     pub total_write_size: usize,
-    pub buffer_writes: Vec<BufferWrite2>,
+    pub buffer_writes: Vec<BufferWrite>,
 }
 
 impl BufferWrites {
-    pub fn push(&mut self, write: BufferWrite2) {
+    pub fn push(&mut self, write: BufferWrite) {
         self.total_write_size += write.write_size;
         self.buffer_writes.push(write);
     }
@@ -389,9 +377,8 @@ impl BufferWrites {
 
 #[derive(Debug, Default)]
 pub struct CompiledRenderGraph {
-    pub buffer_writes2: BufferWrites,
+    pub buffer_writes: BufferWrites,
 
-    pub buffer_writes: Vec<BufferWrite>,
     pub buffer_reads: Vec<BufferRead>,
 
     //TODO: Update this to contain first and last usages with queue

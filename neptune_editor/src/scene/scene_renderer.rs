@@ -275,44 +275,10 @@ impl Scene {
         }
     }
 
-    //TODO: optimize this for shared memory platform
     pub fn write_render_passes<T: RenderGraphBuilderTrait>(
         &mut self,
         render_graph_builder: &mut T,
     ) {
-        let transient_model_matrix_buffer = render_graph_builder.create_transient_buffer(
-            self.model_matrix_buffer_size,
-            BufferUsage::TRANSFER,
-            MemoryLocation::CpuToGpu,
-        );
-
-        let model_matrix_data_clone = self.model_matrix_data.clone();
-        render_graph_builder.add_mapped_buffer_write(
-            transient_model_matrix_buffer,
-            BufferWriteCallback::new(move |slice| {
-                let model_matrix_data = model_matrix_data_clone.borrow();
-                slice.copy_from_slice(unsafe { slice_to_bytes_unsafe(&model_matrix_data) });
-            }),
-        );
-
-        let mut data_upload_pass = neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
-            "Camera Buffer Upload Pass",
-            neptune_vulkan::render_graph::QueueType::Graphics,
-        );
-        data_upload_pass.copy_buffer_to_buffer(
-            BufferOffset {
-                buffer: transient_model_matrix_buffer,
-                offset: 0,
-            },
-            BufferOffset {
-                buffer: self.model_matrix_buffer,
-                offset: 0,
-            },
-            self.model_matrix_buffer_size,
-        );
-        data_upload_pass.build(render_graph_builder);
-
-        //New upload method
         let model_matrix_data_clone = self.model_matrix_data.clone();
         render_graph_builder.add_buffer_write(
             BufferOffset {
@@ -374,45 +340,10 @@ impl SceneCamera {
         *data_mut = SceneCameraData::new(camera, camera_transform, aspect_ratio);
     }
 
-    //TODO: optimize this for shared memory platform
     pub fn write_render_passes<T: RenderGraphBuilderTrait>(
         &mut self,
         render_graph_builder: &mut T,
     ) {
-        let buffer_size = std::mem::size_of::<SceneCameraData>();
-        let transient_camera_buffer = render_graph_builder.create_transient_buffer(
-            buffer_size,
-            BufferUsage::TRANSFER,
-            MemoryLocation::CpuToGpu,
-        );
-
-        let camera_data_clone = self.camera_data.clone();
-        render_graph_builder.add_mapped_buffer_write(
-            transient_camera_buffer,
-            BufferWriteCallback::new(move |slice| {
-                let camera_data = camera_data_clone.borrow().clone();
-                slice.copy_from_slice(unsafe { slice_to_bytes_unsafe(&[camera_data]) });
-            }),
-        );
-
-        let mut data_upload_pass = neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
-            "Camera Buffer Upload Pass",
-            neptune_vulkan::render_graph::QueueType::Graphics,
-        );
-        data_upload_pass.copy_buffer_to_buffer(
-            BufferOffset {
-                buffer: transient_camera_buffer,
-                offset: 0,
-            },
-            BufferOffset {
-                buffer: self.camera_buffer,
-                offset: 0,
-            },
-            buffer_size,
-        );
-        data_upload_pass.build(render_graph_builder);
-
-        //New upload method
         let camera_data_clone = self.camera_data.clone();
         render_graph_builder.add_buffer_write(
             BufferOffset {

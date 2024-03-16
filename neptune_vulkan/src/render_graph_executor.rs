@@ -370,13 +370,13 @@ impl RenderGraphExecutor {
         let mut staging_buffer_offset = 0;
         let mut staging_buffer = resource_manager.get_write_staging_buffer(
             render_graph
-                .buffer_writes2
+                .buffer_writes
                 .calc_needed_staging_size(&buffers),
         )?;
 
         // Write data to buffers
         let mut staging_buffer_copies: Vec<(BufferOffset, usize, usize)> = Vec::new();
-        for buffer_write in render_graph.buffer_writes2.buffer_writes.iter() {
+        for buffer_write in render_graph.buffer_writes.buffer_writes.iter() {
             if let Some(mapped_slice) = &mut buffers[buffer_write.buffer_offset.buffer]
                 .mapped_slice
                 .as_mut()
@@ -407,7 +407,6 @@ impl RenderGraphExecutor {
         }
 
         //Buffer Writes/Reads
-        resource_manager.write_buffers(&render_graph.buffer_writes);
         resource_manager.read_buffers(&render_graph.buffer_reads);
 
         let submit_queue = self.device.graphics_queue.unwrap().handle;
@@ -425,21 +424,39 @@ impl RenderGraphExecutor {
                 )?;
 
                 //TODO: Properly schedule and barrier staging uploads
-                for (target_buffer, write_size, src_offset) in staging_buffer_copies {
-                    let src_buffer = staging_buffer.as_ref().unwrap();
-                    let dst_buffer = &mut buffers[target_buffer.buffer];
-                    dst_buffer.last_access = BufferResourceAccess::TransferWrite;
-                    self.device.core.cmd_copy_buffer2(
+                {
+                    self.device.core.cmd_pipeline_barrier2(
                         vulkan_command_buffer,
-                        &vk::CopyBufferInfo2::builder()
-                            .src_buffer(src_buffer.buffer.handle)
-                            .dst_buffer(dst_buffer.buffer.handle)
-                            .regions(&[vk::BufferCopy2::builder()
-                                .src_offset(src_offset as vk::DeviceSize)
-                                .dst_offset(target_buffer.offset as vk::DeviceSize)
-                                .size(write_size as vk::DeviceSize)
-                                .build()]),
+                        &vk::DependencyInfo::builder()
+                            .memory_barriers(&[vk::MemoryBarrier2::builder()
+                                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                                .src_access_mask(
+                                    vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+                                )
+                                .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                                .dst_access_mask(
+                                    vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+                                )
+                                .build()])
+                            .build(),
                     );
+
+                    for (target_buffer, write_size, src_offset) in staging_buffer_copies.iter() {
+                        let src_buffer = staging_buffer.as_ref().unwrap();
+                        let dst_buffer = &mut buffers[target_buffer.buffer];
+                        dst_buffer.last_access = BufferResourceAccess::TransferWrite;
+                        self.device.core.cmd_copy_buffer2(
+                            vulkan_command_buffer,
+                            &vk::CopyBufferInfo2::builder()
+                                .src_buffer(src_buffer.buffer.handle)
+                                .dst_buffer(dst_buffer.buffer.handle)
+                                .regions(&[vk::BufferCopy2::builder()
+                                    .src_offset(*src_offset as vk::DeviceSize)
+                                    .dst_offset(target_buffer.offset as vk::DeviceSize)
+                                    .size(*write_size as vk::DeviceSize)
+                                    .build()]),
+                        );
+                    }
                 }
 
                 //Bind descriptor set

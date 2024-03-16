@@ -139,6 +139,7 @@ pub struct RasterDrawCommand {
 // 3. Multi-Queue execution
 pub trait RenderGraphBuilderTrait {
     /// Uploads data to a buffer, if certain conditions are meet the write may be direct otherwise a copy is specified
+    /// TODO: make this part of a transfer pass? Pro: this would allow it to be queue aware in the future, Con: on shared memory systems this may mean a unneeded barrier is created
     fn add_buffer_write(
         &mut self,
         buffer_offset: BufferOffset,
@@ -146,7 +147,7 @@ pub trait RenderGraphBuilderTrait {
         callback: BufferWriteCallback,
     );
 
-    fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback);
+    //TODO: update buffer read to match buffer write
     fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback);
 
     fn create_transient_buffer(

@@ -3,8 +3,8 @@ use crate::descriptor_set::{DescriptorCount, DescriptorSet};
 use crate::device::AshDevice;
 use crate::image::{AshImage, Image, TransientImageSize};
 use crate::render_graph::{
-    BufferGraphResource, BufferIndex, BufferRead, BufferResourceDescription, BufferWrite,
-    BufferWrites, ImageGraphResource, ImageResourceDescription,
+    BufferGraphResource, BufferRead, BufferResourceDescription, BufferWrites, ImageGraphResource,
+    ImageResourceDescription,
 };
 use crate::sampler::Sampler;
 use crate::swapchain::AcquiredSwapchainImage;
@@ -12,9 +12,8 @@ use crate::{BufferKey, BufferUsage, ImageHandle, ImageKey, SamplerKey, VulkanErr
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;
-use log::{error, info, warn};
+use log::{error, warn};
 use slotmap::SlotMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone)]
@@ -443,26 +442,6 @@ impl ResourceManager {
         } else {
             None
         })
-    }
-
-    pub fn write_buffers(&mut self, buffer_writes: &[BufferWrite]) {
-        let frame = &mut self.frames_in_flight[self.frame_index];
-
-        // for buffer_write in buffer_writes.iter() {
-        //     let buffer = frame
-        //         .transient_buffers
-        //         .get_mut(&buffer_write.index)
-        //         .unwrap();
-        //
-        //     match buffer.allocation.mapped_slice_mut() {
-        //         None => {
-        //             todo!("Return Error, target buffer not mapped");
-        //         }
-        //         Some(buffer_slice) => {
-        //             buffer_write.callback.call(buffer_slice);
-        //         }
-        //     }
-        // }
     }
 
     pub fn write_buffers2(
