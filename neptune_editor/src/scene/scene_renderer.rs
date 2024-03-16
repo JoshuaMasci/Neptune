@@ -1,13 +1,15 @@
 use crate::camera::Camera;
 use crate::material::{Material, MaterialTexture};
 use crate::mesh;
-use crate::mesh::{Mesh, Primitive};
+use crate::mesh::Primitive;
 use crate::transform::Transform;
 use anyhow::Context;
 use glam::{Mat4, Vec3};
 use neptune_core::id_pool::IdPool;
 use neptune_vulkan::gpu_allocator::MemoryLocation;
-use neptune_vulkan::render_graph_builder::{BufferWriteCallback, RenderGraphBuilderTrait};
+use neptune_vulkan::render_graph_builder::{
+    BufferOffset, BufferWriteCallback, RenderGraphBuilderTrait,
+};
 use neptune_vulkan::{
     vk, BufferUsage, Device, ImageDescription2D, ImageHandle, RasterPipelineHandle,
     SamplerDescription, TransientImageDesc, TransientImageSize,
@@ -134,18 +136,14 @@ impl SceneRenderer {
                         self.raster_pipeline,
                     );
 
-                draw_command_builder.add_vertex_buffer(
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: model_primitive.primitive.position_buffer,
-                        offset: 0,
-                    },
-                );
-                draw_command_builder.add_vertex_buffer(
-                    neptune_vulkan::render_graph_builder::BufferOffset {
-                        buffer: model_primitive.primitive.attributes_buffer,
-                        offset: 0,
-                    },
-                );
+                draw_command_builder.add_vertex_buffer(BufferOffset {
+                    buffer: model_primitive.primitive.position_buffer,
+                    offset: 0,
+                });
+                draw_command_builder.add_vertex_buffer(BufferOffset {
+                    buffer: model_primitive.primitive.attributes_buffer,
+                    offset: 0,
+                });
                 draw_command_builder.read_buffer(camera.camera_buffer);
                 draw_command_builder.read_buffer(scene.model_matrix_buffer);
                 draw_command_builder.read_sampler(texture.sampler);
@@ -158,7 +156,7 @@ impl SceneRenderer {
                         0,
                         0..index_buffer_ref.count,
                         instance_range,
-                        neptune_vulkan::render_graph_builder::BufferOffset {
+                        BufferOffset {
                             buffer: index_buffer_ref.buffer,
                             offset: 0,
                         },
@@ -277,42 +275,22 @@ impl Scene {
         }
     }
 
-    //TODO: optimize this for shared memory platform
     pub fn write_render_passes<T: RenderGraphBuilderTrait>(
         &mut self,
         render_graph_builder: &mut T,
     ) {
-        let transient_model_matrix_buffer = render_graph_builder.create_transient_buffer(
-            self.model_matrix_buffer_size,
-            BufferUsage::TRANSFER,
-            MemoryLocation::CpuToGpu,
-        );
-
         let model_matrix_data_clone = self.model_matrix_data.clone();
-        render_graph_builder.add_mapped_buffer_write(
-            transient_model_matrix_buffer,
+        render_graph_builder.add_buffer_write(
+            BufferOffset {
+                buffer: self.model_matrix_buffer,
+                offset: 0,
+            },
+            self.model_matrix_buffer_size,
             BufferWriteCallback::new(move |slice| {
                 let model_matrix_data = model_matrix_data_clone.borrow();
                 slice.copy_from_slice(unsafe { slice_to_bytes_unsafe(&model_matrix_data) });
             }),
         );
-
-        let mut data_upload_pass = neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
-            "Camera Buffer Upload Pass",
-            neptune_vulkan::render_graph::QueueType::Graphics,
-        );
-        data_upload_pass.copy_buffer_to_buffer(
-            neptune_vulkan::render_graph_builder::BufferOffset {
-                buffer: transient_model_matrix_buffer,
-                offset: 0,
-            },
-            neptune_vulkan::render_graph_builder::BufferOffset {
-                buffer: self.model_matrix_buffer,
-                offset: 0,
-            },
-            self.model_matrix_buffer_size,
-        );
-        data_upload_pass.build(render_graph_builder);
     }
 }
 
@@ -362,42 +340,21 @@ impl SceneCamera {
         *data_mut = SceneCameraData::new(camera, camera_transform, aspect_ratio);
     }
 
-    //TODO: optimize this for shared memory platform
     pub fn write_render_passes<T: RenderGraphBuilderTrait>(
         &mut self,
         render_graph_builder: &mut T,
     ) {
-        let buffer_size = std::mem::size_of::<SceneCameraData>();
-        let transient_camera_buffer = render_graph_builder.create_transient_buffer(
-            buffer_size,
-            BufferUsage::TRANSFER,
-            MemoryLocation::CpuToGpu,
-        );
-
         let camera_data_clone = self.camera_data.clone();
-        render_graph_builder.add_mapped_buffer_write(
-            transient_camera_buffer,
+        render_graph_builder.add_buffer_write(
+            BufferOffset {
+                buffer: self.camera_buffer,
+                offset: 0,
+            },
+            std::mem::size_of::<SceneCameraData>(),
             BufferWriteCallback::new(move |slice| {
                 let camera_data = camera_data_clone.borrow().clone();
                 slice.copy_from_slice(unsafe { slice_to_bytes_unsafe(&[camera_data]) });
             }),
         );
-
-        let mut data_upload_pass = neptune_vulkan::render_graph_builder::TransferPassBuilder::new(
-            "Camera Buffer Upload Pass",
-            neptune_vulkan::render_graph::QueueType::Graphics,
-        );
-        data_upload_pass.copy_buffer_to_buffer(
-            neptune_vulkan::render_graph_builder::BufferOffset {
-                buffer: transient_camera_buffer,
-                offset: 0,
-            },
-            neptune_vulkan::render_graph_builder::BufferOffset {
-                buffer: self.camera_buffer,
-                offset: 0,
-            },
-            buffer_size,
-        );
-        data_upload_pass.build(render_graph_builder);
     }
 }

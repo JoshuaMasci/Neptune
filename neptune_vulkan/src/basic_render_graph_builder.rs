@@ -39,11 +39,18 @@ impl Default for BasicRenderGraphBuilder {
 }
 
 impl RenderGraphBuilderTrait for BasicRenderGraphBuilder {
-    fn add_mapped_buffer_write(&mut self, handle: BufferHandle, callback: BufferWriteCallback) {
-        let index = self.get_buffer_index(handle);
-        self.render_graph
-            .buffer_writes
-            .push(BufferWrite { index, callback });
+    fn add_buffer_write(
+        &mut self,
+        buffer_offset: BufferOffset,
+        write_size: usize,
+        callback: BufferWriteCallback,
+    ) {
+        let buffer_offset = self.get_buffer_offset(buffer_offset);
+        self.render_graph.buffer_writes.push(BufferWrite {
+            buffer_offset,
+            write_size,
+            callback,
+        });
     }
 
     fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback) {
