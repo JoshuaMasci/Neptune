@@ -53,11 +53,59 @@ pub struct MouseAxisBinding {
     sensitivity: f32,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct ControllerAxisBinding {
+    name: StaticString,
+    sensitivity: f32,
+    deadzone: f32,
+    inverted: bool,
+}
+
+impl ControllerAxisBinding {
+    pub(crate) fn calc(&self, value: i16) -> f32 {
+        let value = (value as f32) / (i16::MAX as f32);
+        let abs_value = value.abs();
+
+        if abs_value > self.deadzone {
+            let range = 1.0 - self.deadzone;
+            let sign = value.signum();
+            let invert = if self.inverted { -1.0 } else { 1.0 };
+            (((abs_value - self.deadzone) / range) * self.sensitivity * sign * invert)
+                .clamp(-1.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+pub struct SdlController {
+    controller: sdl2::controller::GameController,
+
+    button_bindings: HashMap<sdl2::controller::Button, ButtonBinding>,
+    button_axis_state: HashMap<StaticString, ButtonAxisState>,
+
+    axis_bindings: HashMap<sdl2::controller::Axis, ControllerAxisBinding>,
+}
+
+impl SdlController {
+    fn new(controller: sdl2::controller::GameController) -> Self {
+        Self {
+            controller,
+            button_bindings: HashMap::new(),
+            button_axis_state: HashMap::new(),
+            axis_bindings: HashMap::new(),
+        }
+    }
+}
+
 pub struct Sdl2Platform {
     context: sdl2::Sdl,
     event_pump: sdl2::EventPump,
 
     video: sdl2::VideoSubsystem,
+    game_controller: sdl2::GameControllerSubsystem,
+    haptic: sdl2::HapticSubsystem,
+
     pub(crate) window: sdl2::video::Window,
 
     should_quit: bool,
@@ -67,10 +115,14 @@ pub struct Sdl2Platform {
     key_bindings: HashMap<Keycode, ButtonBinding>,
 
     mouse_button_bindings: HashMap<MouseButton, ButtonBinding>,
+
+    mouse_moved: bool,
     mouse_axis_x_binding: Option<MouseAxisBinding>,
     mouse_axis_y_binding: Option<MouseAxisBinding>,
 
     button_axis_state: HashMap<StaticString, ButtonAxisState>,
+
+    controllers: HashMap<u32, SdlController>,
 }
 
 impl Sdl2Platform {
@@ -79,6 +131,12 @@ impl Sdl2Platform {
         let video = context
             .video()
             .map_err(|err| anyhow!("sdl2 video init error: {}", err))?;
+        let game_controller = context
+            .game_controller()
+            .map_err(|err| anyhow!("sdl2 game_controller init error: {}", err))?;
+        let haptic = context
+            .haptic()
+            .map_err(|err| anyhow!("sdl2 haptic init error: {}", err))?;
 
         let window = video
             .window(name, size[0], size[1])
@@ -149,12 +207,17 @@ impl Sdl2Platform {
         Ok(Self {
             context,
             event_pump,
+
             video,
+            game_controller,
+            haptic,
+
             window,
             should_quit: false,
             mouse_captured: false,
             key_bindings,
             mouse_button_bindings,
+            mouse_moved: false,
             mouse_axis_x_binding: Some(MouseAxisBinding {
                 name: "player_move_yaw",
                 sensitivity: 0.2,
@@ -164,6 +227,7 @@ impl Sdl2Platform {
                 sensitivity: 0.2,
             }),
             button_axis_state: HashMap::new(),
+            controllers: HashMap::new(),
         })
     }
 
@@ -180,8 +244,10 @@ impl Sdl2Platform {
         }
 
         // Clear movement from last frame
-        //TODO: figure out something less hacky
-        self.proccess_mouse_move_event(app, 0, 0);
+        if self.mouse_moved {
+            self.proccess_mouse_move_event(app, 0, 0);
+            self.mouse_moved = false;
+        }
 
         while let Some(event) = self.event_pump.poll_event() {
             match event {
@@ -233,6 +299,97 @@ impl Sdl2Platform {
                 Event::MouseMotion { xrel, yrel, .. } => {
                     if self.mouse_captured {
                         self.proccess_mouse_move_event(app, xrel, yrel);
+                        self.mouse_moved = true;
+                    }
+                }
+
+                Event::ControllerDeviceAdded { which, .. } => {
+                    if let Ok(game_controller) = self.game_controller.open(which) {
+                        //let _ = game_controller.set_led(127, 0, 255);
+                        //let _ = game_controller.set_rumble_triggers(u16::MAX, u16::MAX, 10);
+                        info!(
+                            "Game Controller Added: {}({}) Rumble {} Trigger Rumble {}",
+                            game_controller.name(),
+                            which,
+                            game_controller.has_rumble(),
+                            game_controller.has_rumble_triggers(),
+                        );
+
+                        let mut controller = SdlController::new(game_controller);
+
+                        //TODO: load config from file
+                        {
+                            let _ = controller.axis_bindings.insert(
+                                sdl2::controller::Axis::LeftX,
+                                ControllerAxisBinding {
+                                    name: "player_move_left_right",
+                                    sensitivity: 1.0,
+                                    deadzone: 0.1,
+                                    inverted: true,
+                                },
+                            );
+                            let _ = controller.axis_bindings.insert(
+                                sdl2::controller::Axis::LeftY,
+                                ControllerAxisBinding {
+                                    name: "player_move_forward_back",
+                                    sensitivity: 1.0,
+                                    deadzone: 0.1,
+                                    inverted: true,
+                                },
+                            );
+
+                            let _ = controller.axis_bindings.insert(
+                                sdl2::controller::Axis::RightX,
+                                ControllerAxisBinding {
+                                    name: "player_move_yaw",
+                                    sensitivity: 0.75,
+                                    deadzone: 0.1,
+                                    inverted: false,
+                                },
+                            );
+                            let _ = controller.axis_bindings.insert(
+                                sdl2::controller::Axis::RightY,
+                                ControllerAxisBinding {
+                                    name: "player_move_pitch",
+                                    sensitivity: 0.75,
+                                    deadzone: 0.1,
+                                    inverted: false,
+                                },
+                            );
+                        }
+
+                        let _ = self.controllers.insert(which, controller);
+                    }
+                }
+                Event::ControllerDeviceRemoved { which, .. } => {
+                    if let Some(game_controller) = self.controllers.remove(&which) {
+                        info!(
+                            "Game Controller Removed: {}({})",
+                            game_controller.controller.name(),
+                            which
+                        );
+                    }
+                }
+                Event::ControllerButtonDown { which, button, .. } => {
+                    if let Some(controller) = self.controllers.get_mut(&which) {
+                        if button == sdl2::controller::Button::RightShoulder {
+                            if let Err(err) = controller.controller.set_rumble(0, u16::MAX, 128) {
+                                error!("Rumble not supported: {}", err);
+                            }
+                        } else if button == sdl2::controller::Button::LeftShoulder {
+                            if let Err(err) = controller.controller.set_rumble(u16::MAX, 0, 128) {
+                                error!("Rumble not supported: {}", err);
+                            }
+                        }
+                    }
+                }
+                Event::ControllerAxisMotion {
+                    which, axis, value, ..
+                } => {
+                    if let Some(controller) = self.controllers.get_mut(&which) {
+                        if let Some(axis_binding) = controller.axis_bindings.get(&axis) {
+                            app.on_axis_event(axis_binding.name, axis_binding.calc(value));
+                        }
                     }
                 }
 

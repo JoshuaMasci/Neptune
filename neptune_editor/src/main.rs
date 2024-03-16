@@ -11,6 +11,7 @@ mod platform;
 mod scene;
 mod shader;
 mod transform;
+mod universe;
 
 #[macro_use]
 extern crate log;
