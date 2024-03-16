@@ -217,6 +217,14 @@ fn get_swapchain_extent_transform_count(
         let capabilities =
             surface_extension.get_physical_device_surface_capabilities(physical_device, surface)?;
 
+        let image_count = if capabilities.max_image_count != 0 {
+            settings
+                .image_count
+                .clamp(capabilities.min_image_count, capabilities.max_image_count)
+        } else {
+            settings.image_count.min(capabilities.min_image_count)
+        };
+
         Ok((
             vk::Extent2D {
                 width: settings.size[0].clamp(
@@ -229,9 +237,7 @@ fn get_swapchain_extent_transform_count(
                 ),
             },
             capabilities.current_transform,
-            settings
-                .image_count
-                .clamp(capabilities.min_image_count, capabilities.max_image_count),
+            image_count,
         ))
     }
 }
