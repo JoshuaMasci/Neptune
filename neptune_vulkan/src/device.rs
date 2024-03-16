@@ -10,12 +10,10 @@ use crate::sampler::{Sampler, SamplerDescription};
 use crate::swapchain::{SurfaceSettings, Swapchain, SwapchainManager};
 use crate::upload_queue::UploadQueue;
 use crate::{
-    BufferHandle, BufferSetHandle, ComputePipelineHandle, ImageHandle, PhysicalDevice,
-    RasterPipelineHandle, SamplerHandle, ShaderStage, SurfaceHandle, VulkanError,
+    BufferHandle, ComputePipelineHandle, ImageHandle, PhysicalDevice, RasterPipelineHandle,
+    SamplerHandle, ShaderStage, SurfaceHandle, VulkanError,
 };
 use ash::vk;
-use ash::vk::BufferUsageFlags;
-use gpu_allocator::MemoryLocation;
 use log::error;
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
@@ -241,7 +239,7 @@ impl Device {
         name: &str,
         size: usize,
         usage: BufferUsage,
-        location: MemoryLocation,
+        location: gpu_allocator::MemoryLocation,
     ) -> Result<BufferHandle, VulkanError> {
         Ok(BufferHandle::Persistent(
             self.resource_manager
@@ -351,7 +349,7 @@ impl Device {
             None => return Err(VulkanError::Vk(vk::Result::ERROR_MEMORY_MAP_FAILED)),
             Some(mut_slice) => mut_slice,
         };
-        mut_slice.copy_from_slice(data);
+        mut_slice[0..data.len()].copy_from_slice(data);
 
         let staging_handle =
             BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
