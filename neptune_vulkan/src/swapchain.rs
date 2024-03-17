@@ -222,7 +222,7 @@ fn get_swapchain_extent_transform_count(
                 .image_count
                 .clamp(capabilities.min_image_count, capabilities.max_image_count)
         } else {
-            settings.image_count.min(capabilities.min_image_count)
+            settings.image_count.max(capabilities.min_image_count)
         };
 
         Ok((
