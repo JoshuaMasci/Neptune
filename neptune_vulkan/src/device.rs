@@ -38,7 +38,7 @@ pub struct AshDevice {
     pub transfer_queue: Option<AshQueue>,
     pub core: ash::Device,
     pub swapchain: ash::extensions::khr::Swapchain,
-    pub mesh_shading: Option<ash::extensions::ext::MeshShader>,
+    pub mesh_shader: Option<ash::extensions::ext::MeshShader>,
     pub raytracing: Option<AshRaytracing>,
     pub allocator: ManuallyDrop<Mutex<gpu_allocator::vulkan::Allocator>>,
 }
@@ -75,7 +75,20 @@ impl AshDevice {
             );
         }
 
-        let device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+        let mut device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+
+        if physical_device.extension.raytracing_support {
+            device_extension_names_raw
+                .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
+            device_extension_names_raw
+                .push(ash::extensions::khr::RayTracingPipeline::name().as_ptr());
+            device_extension_names_raw
+                .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
+        }
+
+        if physical_device.extension.mesh_shader_support {
+            device_extension_names_raw.push(ash::extensions::ext::MeshShader::name().as_ptr());
+        }
 
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::builder()
             .buffer_device_address(true)
@@ -156,6 +169,25 @@ impl AshDevice {
             },
         )?));
 
+        let mesh_shader = physical_device
+            .extension
+            .mesh_shader_support
+            .then(|| ash::extensions::ext::MeshShader::new(&instance.core, &core));
+
+        let raytracing = physical_device
+            .extension
+            .raytracing_support
+            .then(|| AshRaytracing {
+                acceleration_structure: ash::extensions::khr::AccelerationStructure::new(
+                    &instance.core,
+                    &core,
+                ),
+                raytracing_pipeline: ash::extensions::khr::RayTracingPipeline::new(
+                    &instance.core,
+                    &core,
+                ),
+            });
+
         Ok(Self {
             instance,
             physical: physical_device.handle,
@@ -164,8 +196,8 @@ impl AshDevice {
             transfer_queue,
             core,
             swapchain,
-            mesh_shading: None,
-            raytracing: None,
+            mesh_shader,
+            raytracing,
             allocator,
         })
     }

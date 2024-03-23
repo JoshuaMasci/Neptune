@@ -309,6 +309,9 @@ impl PhysicalDevice {
             ) && supports_extension(
                 &extension_list,
                 ash::extensions::khr::RayTracingPipeline::name(),
+            ) && supports_extension(
+                &extension_list,
+                ash::extensions::khr::DeferredHostOperations::name(),
             ),
             mesh_shader_support: supports_extension(
                 &extension_list,
