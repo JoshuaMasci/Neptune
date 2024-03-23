@@ -98,6 +98,12 @@ impl SdlController {
     }
 }
 
+pub enum WindowSize {
+    Windowed([u32; 2]),
+    Fullscreen,
+    Maximized,
+}
+
 pub struct Sdl2Platform {
     context: sdl2::Sdl,
     event_pump: sdl2::EventPump,
@@ -126,7 +132,7 @@ pub struct Sdl2Platform {
 }
 
 impl Sdl2Platform {
-    pub fn new(name: &str, size: [u32; 2]) -> anyhow::Result<Self> {
+    pub fn new(name: &str, window_size: WindowSize) -> anyhow::Result<Self> {
         let context = sdl2::init().map_err(|err| anyhow!("sdl2 init error: {}", err))?;
         let video = context
             .video()
@@ -138,12 +144,25 @@ impl Sdl2Platform {
             .haptic()
             .map_err(|err| anyhow!("sdl2 haptic init error: {}", err))?;
 
-        let window = video
-            .window(name, size[0], size[1])
-            .position_centered()
-            .resizable()
-            .maximized()
-            .build()?;
+        let window = match window_size {
+            WindowSize::Windowed(size) => video
+                .window(name, size[0], size[1])
+                .position_centered()
+                .resizable()
+                .build()?,
+            WindowSize::Fullscreen => video
+                .window(name, 1920, 1080)
+                .fullscreen_desktop()
+                .position_centered()
+                .resizable()
+                .build()?,
+            WindowSize::Maximized => video
+                .window(name, 1920, 1080)
+                .maximized()
+                .position_centered()
+                .resizable()
+                .build()?,
+        };
 
         let event_pump = context
             .event_pump()

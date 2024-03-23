@@ -17,6 +17,7 @@ mod universe;
 extern crate log;
 
 use crate::editor::{Editor, EditorConfig};
+use crate::platform::sdl2::WindowSize;
 use clap::Parser;
 use std::time::Instant;
 
@@ -25,10 +26,19 @@ pub const APP_NAME: &str = "Neptune Editor";
 fn main() -> anyhow::Result<()> {
     pretty_env_logger::init_timed();
 
-    let window_size = [800, 450];
-    let mut platform = platform::sdl2::Sdl2Platform::new(APP_NAME, window_size)?;
+    let config = EditorConfig::parse();
 
-    let mut editor = Editor::new(&platform.window, window_size, &EditorConfig::parse())?;
+    let window_size = [800, 450];
+    let mut platform = platform::sdl2::Sdl2Platform::new(
+        APP_NAME,
+        if config.fullscreen {
+            WindowSize::Fullscreen
+        } else {
+            WindowSize::Maximized
+        },
+    )?;
+
+    let mut editor = Editor::new(&platform.window, window_size, &config)?;
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);

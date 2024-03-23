@@ -12,15 +12,18 @@ use crate::transform::Transform;
 use anyhow::Context;
 use glam::Vec3;
 use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
-use neptune_vulkan::{vk, DeviceSettings, SurfaceHandle};
+use neptune_vulkan::{vk, DeviceSettings};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct EditorConfig {
+    #[arg(short, long)]
+    pub fullscreen: bool,
+
     #[arg(short = 'p', long, value_name = "FILE")]
-    gltf_scene_path: Option<std::path::PathBuf>,
+    pub gltf_scene_path: Option<std::path::PathBuf>,
 }
 
 pub struct Editor {
@@ -405,7 +408,7 @@ fn create_test_world(device: &mut neptune_vulkan::Device) -> anyhow::Result<Worl
 fn clear_surfaces(
     device: &mut neptune_vulkan::Device,
     color: [f32; 3],
-    surface_handles: &[SurfaceHandle],
+    surface_handles: &[neptune_vulkan::SurfaceHandle],
 ) -> anyhow::Result<()> {
     let mut render_graph_builder =
         neptune_vulkan::basic_render_graph_builder::BasicRenderGraphBuilder::default();
