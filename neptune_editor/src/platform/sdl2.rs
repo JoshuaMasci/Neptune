@@ -258,7 +258,7 @@ impl Sdl2Platform {
         &mut self,
         app: &mut T,
     ) -> anyhow::Result<()> {
-        if !app.requests_mouse_capture() && self.mouse_captured {
+        if !app.requests_mouse_capture() {
             self.capture_mouse(false);
         }
 
@@ -426,14 +426,17 @@ impl Sdl2Platform {
     }
 
     pub fn capture_mouse(&mut self, capture: bool) {
-        if capture {
-            debug!("sdl2 capture mouse");
-            self.context.mouse().set_relative_mouse_mode(true);
-        } else {
-            debug!("sdl2 free mouse");
-            self.context.mouse().set_relative_mouse_mode(false);
+        // Don't re capture/free mouse
+        if capture != self.mouse_captured {
+            if capture {
+                debug!("sdl2 capture mouse");
+                self.context.mouse().set_relative_mouse_mode(true);
+            } else {
+                debug!("sdl2 free mouse");
+                self.context.mouse().set_relative_mouse_mode(false);
+            }
+            self.mouse_captured = capture;
         }
-        self.mouse_captured = capture;
     }
 
     pub fn proccess_mouse_move_event<T: InputEventReceiver>(
