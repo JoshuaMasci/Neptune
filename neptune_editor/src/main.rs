@@ -31,7 +31,6 @@ fn main() -> anyhow::Result<()> {
 
     let config = EditorConfig::parse();
 
-    let window_size = [800, 450];
     let mut platform = platform::sdl2::Sdl2Platform::new(
         APP_NAME,
         if config.fullscreen {
@@ -41,7 +40,9 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    let mut editor = Editor::new(&platform.window, window_size, &config)?;
+    let window_size = platform.window.drawable_size();
+    info!("window_size: {:?}", window_size);
+    let mut editor = Editor::new(&platform.window, [window_size.0, window_size.1], &config)?;
 
     let mut last_frame_start = Instant::now();
     let mut frame_count_time: (u32, f32) = (0, 0.0);
