@@ -151,7 +151,7 @@ impl Sdl2Platform {
                 .resizable()
                 .build()?,
             WindowSize::Fullscreen => video
-                .window(name, 1920, 1080)
+                .window(name, 0, 0)
                 .fullscreen_desktop()
                 .position_centered()
                 .resizable()
