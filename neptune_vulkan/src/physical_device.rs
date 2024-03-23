@@ -44,6 +44,12 @@ fn sum_memory_heaps(
         .map(|&memory_heap| memory_heap.size as usize)
         .sum()
 }
+fn supports_extension(extension_list: &[vk::ExtensionProperties], name: &CStr) -> bool {
+    extension_list.iter().any(|extension_properties| {
+        name == unsafe { CStr::from_ptr(extension_properties.extension_name.as_ptr()) }
+    })
+}
+
 #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
 pub enum PhysicalDeviceVendor {
     Amd,
@@ -140,7 +146,7 @@ fn get_driver_version(driver_version: u32, vendor: PhysicalDeviceVendor) -> Stri
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalDeviceInfo {
     pub name: String,
     pub device_id: u32,
@@ -149,7 +155,7 @@ pub struct PhysicalDeviceInfo {
     pub device_type: PhysicalDeviceType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalDeviceDriverInfo {
     pub id: String,
     pub name: String,
@@ -157,10 +163,42 @@ pub struct PhysicalDeviceDriverInfo {
     pub version: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct PhysicalDeviceMemoryInfo {
     pub device_local_bytes: usize,
     pub host_visible_bytes: usize,
+}
+
+#[derive(Clone)]
+pub struct PhysicalDeviceQueueInfo {
+    pub graphics_queue_family_index: Option<u32>,
+    pub compute_queue_family_index: Option<u32>,
+    pub transfer_queue_family_index: Option<u32>,
+}
+
+impl Debug for PhysicalDeviceQueueInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhysicalDeviceQueueInfo")
+            .field(
+                "graphics_support",
+                &self.graphics_queue_family_index.is_some(),
+            )
+            .field(
+                "async_compute_support",
+                &self.compute_queue_family_index.is_some(),
+            )
+            .field(
+                "async_transfer_support",
+                &self.transfer_queue_family_index.is_some(),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PhysicalDeviceExtensionInfo {
+    pub raytracing_support: bool,
+    pub mesh_shader_support: bool,
 }
 
 #[derive(Clone)]
@@ -173,9 +211,8 @@ pub struct PhysicalDevice {
     pub info: PhysicalDeviceInfo,
     pub driver: PhysicalDeviceDriverInfo,
     pub memory: PhysicalDeviceMemoryInfo,
-    pub(crate) graphics_queue_family_index: Option<u32>,
-    pub(crate) compute_queue_family_index: Option<u32>,
-    pub(crate) transfer_queue_family_index: Option<u32>,
+    pub queue: PhysicalDeviceQueueInfo,
+    pub extension: PhysicalDeviceExtensionInfo,
 }
 
 impl PhysicalDevice {
@@ -240,23 +277,44 @@ impl PhysicalDevice {
         //TODO: for the moment, only choose a queue family that supports all operations
         // This will work for most desktop GPU's, as they will have this type of queue family
         // However I would still like to make a more robust queue family selection system for the other GPU's
-        let graphics_queue_family_index = find_queue_index(
-            &queue_family_properties,
-            vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
-            vk::QueueFlags::empty(),
-        );
+        let queue = PhysicalDeviceQueueInfo {
+            graphics_queue_family_index: find_queue_index(
+                &queue_family_properties,
+                vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
+                vk::QueueFlags::empty(),
+            ),
+            compute_queue_family_index: find_queue_index(
+                &queue_family_properties,
+                vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
+                vk::QueueFlags::GRAPHICS,
+            ),
+            transfer_queue_family_index: find_queue_index(
+                &queue_family_properties,
+                vk::QueueFlags::TRANSFER,
+                vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE,
+            ),
+        };
 
-        let compute_queue_family_index = find_queue_index(
-            &queue_family_properties,
-            vk::QueueFlags::COMPUTE | vk::QueueFlags::TRANSFER,
-            vk::QueueFlags::GRAPHICS,
-        );
+        let extension_list = unsafe {
+            instance
+                .core
+                .enumerate_device_extension_properties(physical_device)
+        }
+        .unwrap_or_default();
 
-        let transfer_queue_family_index = find_queue_index(
-            &queue_family_properties,
-            vk::QueueFlags::TRANSFER,
-            vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE,
-        );
+        let extension = PhysicalDeviceExtensionInfo {
+            raytracing_support: supports_extension(
+                &extension_list,
+                ash::extensions::khr::AccelerationStructure::name(),
+            ) && supports_extension(
+                &extension_list,
+                ash::extensions::khr::RayTracingPipeline::name(),
+            ),
+            mesh_shader_support: supports_extension(
+                &extension_list,
+                ash::extensions::ext::MeshShader::name(),
+            ),
+        };
 
         Self {
             instance,
@@ -264,26 +322,25 @@ impl PhysicalDevice {
             info,
             driver,
             memory,
-            graphics_queue_family_index,
-            compute_queue_family_index,
-            transfer_queue_family_index,
+            queue,
+            extension,
         }
     }
 
     pub fn supports_graphics(&self) -> bool {
-        self.graphics_queue_family_index.is_some()
+        self.queue.graphics_queue_family_index.is_some()
     }
 
     pub fn supports_async_compute(&self) -> bool {
-        self.compute_queue_family_index.is_some()
+        self.queue.compute_queue_family_index.is_some()
     }
 
     pub fn supports_async_transfer(&self) -> bool {
-        self.transfer_queue_family_index.is_some()
+        self.queue.transfer_queue_family_index.is_some()
     }
 
     pub fn supports_surface(&self, surface_handle: SurfaceHandle) -> bool {
-        if let Some(graphics_queue_family_index) = self.graphics_queue_family_index {
+        if let Some(graphics_queue_family_index) = self.queue.graphics_queue_family_index {
             if let Some(surface) = self.instance.surface_list.get(surface_handle.0) {
                 unsafe {
                     match self.instance.surface.get_physical_device_surface_support(
@@ -318,18 +375,8 @@ impl Debug for PhysicalDevice {
             .field("info", &self.info)
             .field("driver", &self.driver)
             .field("memory", &self.memory)
-            .field(
-                "graphics_support",
-                &self.graphics_queue_family_index.is_some(),
-            )
-            .field(
-                "async_compute_support",
-                &self.compute_queue_family_index.is_some(),
-            )
-            .field(
-                "async_transfer_support",
-                &self.transfer_queue_family_index.is_some(),
-            )
+            .field("queue", &self.queue)
+            .field("extension", &self.extension)
             .finish()
     }
 }

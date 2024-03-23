@@ -166,6 +166,7 @@ impl Editor {
     }
 
     pub fn window_resize(&mut self, new_size: [u32; 2]) -> anyhow::Result<()> {
+        info!("Swapchain Resize: {:?}", new_size);
         self.surface_size = new_size;
         self.device.configure_surface(
             self.surface_handle,

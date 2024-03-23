@@ -50,7 +50,7 @@ impl AshDevice {
     ) -> Result<Self, VulkanError> {
         let mut queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = Vec::with_capacity(3);
 
-        if let Some(queue_family_index) = physical_device.graphics_queue_family_index {
+        if let Some(queue_family_index) = physical_device.queue.graphics_queue_family_index {
             queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
                     .queue_family_index(queue_family_index)
@@ -58,7 +58,7 @@ impl AshDevice {
                     .build(),
             );
         }
-        if let Some(queue_family_index) = physical_device.compute_queue_family_index {
+        if let Some(queue_family_index) = physical_device.queue.compute_queue_family_index {
             queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
                     .queue_family_index(queue_family_index)
@@ -66,7 +66,7 @@ impl AshDevice {
                     .build(),
             );
         }
-        if let Some(queue_family_index) = physical_device.transfer_queue_family_index {
+        if let Some(queue_family_index) = physical_device.queue.transfer_queue_family_index {
             queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
                     .queue_family_index(queue_family_index)
@@ -116,29 +116,34 @@ impl AshDevice {
                 .get_physical_device_queue_family_properties(physical_device.handle)
         };
 
-        let graphics_queue = physical_device
-            .graphics_queue_family_index
-            .map(|family_index| AshQueue {
-                family_index,
-                handle: unsafe { core.get_device_queue(family_index, 0) },
-                flags: queue_family_properties[family_index as usize].queue_flags,
-            });
+        let graphics_queue =
+            physical_device
+                .queue
+                .graphics_queue_family_index
+                .map(|family_index| AshQueue {
+                    family_index,
+                    handle: unsafe { core.get_device_queue(family_index, 0) },
+                    flags: queue_family_properties[family_index as usize].queue_flags,
+                });
 
         let compute_queue = physical_device
-            .graphics_queue_family_index
+            .queue
+            .compute_queue_family_index
             .map(|family_index| AshQueue {
                 family_index,
                 handle: unsafe { core.get_device_queue(family_index, 0) },
                 flags: queue_family_properties[family_index as usize].queue_flags,
             });
 
-        let transfer_queue = physical_device
-            .graphics_queue_family_index
-            .map(|family_index| AshQueue {
-                family_index,
-                handle: unsafe { core.get_device_queue(family_index, 0) },
-                flags: queue_family_properties[family_index as usize].queue_flags,
-            });
+        let transfer_queue =
+            physical_device
+                .queue
+                .transfer_queue_family_index
+                .map(|family_index| AshQueue {
+                    family_index,
+                    handle: unsafe { core.get_device_queue(family_index, 0) },
+                    flags: queue_family_properties[family_index as usize].queue_flags,
+                });
 
         let allocator = ManuallyDrop::new(Mutex::new(gpu_allocator::vulkan::Allocator::new(
             &gpu_allocator::vulkan::AllocatorCreateDesc {
@@ -147,6 +152,7 @@ impl AshDevice {
                 physical_device: physical_device.handle,
                 debug_settings: gpu_allocator::AllocatorDebugSettings::default(),
                 buffer_device_address: true,
+                allocation_sizes: gpu_allocator::AllocationSizes::default(),
             },
         )?));
 
