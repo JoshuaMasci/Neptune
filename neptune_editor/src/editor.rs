@@ -11,8 +11,11 @@ use crate::scene::scene_renderer::{Model, ModelPrimitive, Scene, SceneCamera, Sc
 use crate::transform::Transform;
 use anyhow::Context;
 use glam::Vec3;
-use neptune_vulkan::render_graph_builder::RenderGraphBuilderTrait;
-use neptune_vulkan::{vk, DeviceSettings};
+use neptune_vulkan::gpu_allocator::MemoryLocation;
+use neptune_vulkan::render_graph_builder::{
+    BufferOffset, BufferReadCallback, BufferWriteCallback, RenderGraphBuilderTrait,
+};
+use neptune_vulkan::{vk, BufferUsage, DeviceSettings};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::sync::Arc;
 
@@ -230,6 +233,43 @@ impl Editor {
             &self.world.data.scene,
             &mut render_graph_builder,
         );
+
+        //Round-trip Upload/Download Test
+        {
+            let test_data = &[127u8; 16];
+            let test_buffer = render_graph_builder.create_transient_buffer(
+                test_data.len(),
+                BufferUsage::TRANSFER,
+                MemoryLocation::GpuOnly,
+            );
+
+            //Upload data to gpu
+            render_graph_builder.add_buffer_write(
+                BufferOffset {
+                    buffer: test_buffer,
+                    offset: 0,
+                },
+                test_data.len(),
+                BufferWriteCallback::new(move |slice| {
+                    slice.copy_from_slice(test_data);
+                }),
+            );
+
+            //Download from gpu
+            render_graph_builder.add_buffer_read(
+                BufferOffset {
+                    buffer: test_buffer,
+                    offset: 0,
+                },
+                test_data.len(),
+                BufferReadCallback::new(move |slice| {
+                    assert_eq!(
+                        slice, test_data,
+                        "Downloaded data doesn't match uploaded data"
+                    );
+                }),
+            );
+        }
 
         let render_graph = render_graph_builder.build();
         self.device.submit_graph(&render_graph)?;

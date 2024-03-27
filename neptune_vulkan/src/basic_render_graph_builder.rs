@@ -53,11 +53,18 @@ impl RenderGraphBuilderTrait for BasicRenderGraphBuilder {
         });
     }
 
-    fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback) {
-        let index = self.get_buffer_index(handle);
-        self.render_graph
-            .buffer_reads
-            .push(BufferRead { index, callback });
+    fn add_buffer_read(
+        &mut self,
+        buffer_offset: BufferOffset,
+        read_size: usize,
+        callback: BufferReadCallback,
+    ) {
+        let buffer_offset = self.get_buffer_offset(buffer_offset);
+        self.render_graph.buffer_reads.push(BufferRead {
+            buffer_offset,
+            read_size,
+            callback,
+        });
     }
 
     fn create_transient_buffer(

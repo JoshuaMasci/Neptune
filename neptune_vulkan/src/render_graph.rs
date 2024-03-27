@@ -5,7 +5,6 @@ use crate::{
     SurfaceHandle, TransientImageDesc,
 };
 use ash::vk;
-use log::info;
 use std::fmt::{Debug, Formatter};
 use std::ops::Range;
 
@@ -225,15 +224,17 @@ impl Debug for BufferWrite {
     }
 }
 
-#[derive(Clone)]
 pub struct BufferRead {
-    pub(crate) index: BufferIndex,
+    pub(crate) buffer_offset: BufferOffset,
+    pub(crate) read_size: usize,
     pub(crate) callback: BufferReadCallback,
 }
 impl Debug for BufferRead {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferRead")
-            .field("index", &self.index)
+            .field("index", &self.buffer_offset.buffer)
+            .field("offset", &self.buffer_offset.offset)
+            .field("read_size", &self.read_size)
             .finish()
     }
 }
@@ -376,10 +377,38 @@ impl BufferWrites {
 }
 
 #[derive(Debug, Default)]
+pub struct BufferReads {
+    pub total_read_size: usize,
+    pub buffer_reads: Vec<BufferRead>,
+}
+
+impl BufferReads {
+    pub fn push(&mut self, read: BufferRead) {
+        self.total_read_size += read.read_size;
+        self.buffer_reads.push(read);
+    }
+
+    pub fn calc_needed_staging_size(&self, buffer_resources: &[BufferTempResource]) -> usize {
+        self.buffer_reads
+            .iter()
+            .map(|read| {
+                if buffer_resources[read.buffer_offset.buffer]
+                    .mapped_slice
+                    .is_some()
+                {
+                    0
+                } else {
+                    read.read_size
+                }
+            })
+            .sum()
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct CompiledRenderGraph {
     pub buffer_writes: BufferWrites,
-
-    pub buffer_reads: Vec<BufferRead>,
+    pub buffer_reads: BufferReads,
 
     //TODO: Update this to contain first and last usages with queue
     /// List of buffers used by this graph

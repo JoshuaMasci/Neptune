@@ -5,7 +5,7 @@ use crate::{
 };
 use ash::vk;
 use std::ops::Range;
-use std::rc::Rc;
+use std::sync::Arc;
 
 type BufferWriteCallbackType = Box<dyn Fn(&mut [u8])>;
 pub struct BufferWriteCallback(BufferWriteCallbackType);
@@ -19,7 +19,19 @@ impl BufferWriteCallback {
     }
 }
 
-pub type BufferReadCallback = Rc<dyn Fn(&[u8])>;
+type BufferReadCallbackType = Arc<dyn Fn(&[u8])>;
+
+#[derive(Clone)]
+pub struct BufferReadCallback(BufferReadCallbackType);
+impl BufferReadCallback {
+    pub fn new(function: impl Fn(&[u8]) + 'static) -> Self {
+        Self(Arc::new(function))
+    }
+
+    pub fn call(&self, slice: &[u8]) {
+        (self.0)(slice)
+    }
+}
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct BufferOffset {
@@ -138,8 +150,7 @@ pub struct RasterDrawCommand {
 // 2. Whole graph evaluation with pass reordering and dead code culling
 // 3. Multi-Queue execution
 pub trait RenderGraphBuilderTrait {
-    /// Uploads data to a buffer, if certain conditions are meet the write may be direct otherwise a copy is specified
-    /// TODO: make this part of a transfer pass? Pro: this would allow it to be queue aware in the future, Con: on shared memory systems this may mean a unneeded barrier is created
+    /// Uploads data to a buffer, if certain conditions are meet the write may be direct otherwise a staging buffer is used
     fn add_buffer_write(
         &mut self,
         buffer_offset: BufferOffset,
@@ -147,8 +158,13 @@ pub trait RenderGraphBuilderTrait {
         callback: BufferWriteCallback,
     );
 
-    //TODO: update buffer read to match buffer write
-    fn add_mapped_buffer_read(&mut self, handle: BufferHandle, callback: BufferReadCallback);
+    /// Downloads data to a buffer, if certain conditions are meet the read may be direct otherwise a staging buffer is used
+    fn add_buffer_read(
+        &mut self,
+        buffer_offset: BufferOffset,
+        read_size: usize,
+        callback: BufferReadCallback,
+    );
 
     fn create_transient_buffer(
         &mut self,
@@ -158,6 +174,9 @@ pub trait RenderGraphBuilderTrait {
     ) -> BufferHandle;
     fn create_transient_image(&mut self, desc: TransientImageDesc) -> ImageHandle;
     fn acquire_swapchain_image(&mut self, surface_handle: SurfaceHandle) -> ImageHandle;
+
+    // fn create_transient_buffer_set(&mut self, buffer_handles: &[BufferHandle]) -> BufferSetHandle;
+    // fn create_transient_image_set(&mut self, image_handles: &[ImageHandle]) -> ImageSetHandle;
 
     fn add_transfer_pass(
         &mut self,

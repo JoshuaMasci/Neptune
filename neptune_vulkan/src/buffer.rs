@@ -89,66 +89,6 @@ impl Buffer {
     pub fn new(
         device: Arc<AshDevice>,
         name: &str,
-        description: &BufferDescription,
-    ) -> Result<Self, VulkanError> {
-        let handle = unsafe {
-            device.core.create_buffer(
-                &vk::BufferCreateInfo::builder()
-                    .size(description.size)
-                    .usage(description.usage)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
-                None,
-            )
-        }?;
-
-        if let Some(debug_util) = &device.instance.debug_utils {
-            debug_util.set_object_name(device.core.handle(), handle, name);
-        }
-
-        let requirements = unsafe { device.core.get_buffer_memory_requirements(handle) };
-
-        let allocation = match device.allocator.lock().unwrap().allocate(
-            &gpu_allocator::vulkan::AllocationCreateDesc {
-                name,
-                requirements,
-                location: description.location,
-                linear: true,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            },
-        ) {
-            Ok(allocation) => allocation,
-            Err(err) => unsafe {
-                device.core.destroy_buffer(handle, None);
-                return Err(VulkanError::from(err));
-            },
-        };
-
-        if let Err(err) = unsafe {
-            device
-                .core
-                .bind_buffer_memory(handle, allocation.memory(), allocation.offset())
-        } {
-            unsafe {
-                device.core.destroy_buffer(handle, None);
-            };
-            let _ = device.allocator.lock().unwrap().free(allocation);
-            return Err(VulkanError::from(err));
-        }
-
-        Ok(Self {
-            device,
-            handle,
-            allocation,
-            size: description.size,
-            usage: description.usage,
-            location: description.location,
-            storage_binding: None,
-        })
-    }
-
-    pub fn new2(
-        device: Arc<AshDevice>,
-        name: &str,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         location: gpu_allocator::MemoryLocation,
@@ -210,26 +150,6 @@ impl Buffer {
 
     pub fn is_mapped(&self) -> bool {
         self.allocation.mapped_slice().is_some()
-    }
-
-    pub fn write_data(
-        &mut self,
-        _frame_index: usize,
-        offset: usize,
-        data: &[u8],
-    ) -> Result<(), BufferWriteError> {
-        if offset + data.len() > self.size as usize {
-            return Err(BufferWriteError::WriteOutOfBounds);
-        }
-
-        let mut_slice = match self.allocation.mapped_slice_mut() {
-            None => return Err(BufferWriteError::BufferNotMapped),
-            Some(mut_slice) => mut_slice,
-        };
-
-        mut_slice[offset..].copy_from_slice(data);
-
-        Ok(())
     }
 
     pub fn get_copy(&self) -> AshBuffer {

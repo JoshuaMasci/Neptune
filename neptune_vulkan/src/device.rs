@@ -82,12 +82,17 @@ impl AshDevice {
                 .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
             device_extension_names_raw
                 .push(ash::extensions::khr::RayTracingPipeline::name().as_ptr());
+            device_extension_names_raw.push(vk::KhrRayQueryFn::name().as_ptr());
             device_extension_names_raw
                 .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
         }
 
         if physical_device.extension.mesh_shader_support {
             device_extension_names_raw.push(ash::extensions::ext::MeshShader::name().as_ptr());
+        }
+
+        if instance.debug_utils.is_some() {
+            device_extension_names_raw.push(vk::KhrShaderNonSemanticInfoFn::name().as_ptr());
         }
 
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::builder()
@@ -285,57 +290,6 @@ impl Device {
         ))
     }
 
-    pub fn destroy_buffer(&mut self, buffer_handle: BufferHandle) {
-        match buffer_handle {
-            BufferHandle::Persistent(key) => self.resource_manager.remove_buffer(key),
-            BufferHandle::Transient(index) => {
-                error!("Transient buffer {index} cannot be destroyed, this shouldn't happen")
-            }
-        }
-    }
-
-    pub fn update_data_to_buffer(
-        &mut self,
-        buffer_handle: BufferHandle,
-        buffer_offset: u32,
-        data: &[u8],
-    ) -> Result<(), VulkanError> {
-        let mut staging_buffer = Buffer::new(
-            self.device.clone(),
-            "Stating Buffer",
-            &BufferDescription {
-                size: data.len() as vk::DeviceSize,
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                location: gpu_allocator::MemoryLocation::CpuToGpu,
-            },
-        )?;
-
-        let mut_slice = match staging_buffer.allocation.mapped_slice_mut() {
-            None => return Err(VulkanError::Vk(vk::Result::ERROR_MEMORY_MAP_FAILED)),
-            Some(mut_slice) => mut_slice,
-        };
-        mut_slice[0..data.len()].copy_from_slice(data);
-
-        let staging_handle =
-            BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
-
-        self.upload_queue.add_buffer_upload(
-            BufferOffset {
-                buffer: staging_handle,
-                offset: 0,
-            },
-            BufferOffset {
-                buffer: buffer_handle,
-                offset: buffer_offset as usize,
-            },
-            data.len(),
-        );
-
-        //Destroy stating buffer once frame is done
-        self.destroy_buffer(staging_handle);
-
-        Ok(())
-    }
     pub fn create_buffer_init(
         &mut self,
         name: &str,
@@ -343,9 +297,61 @@ impl Device {
         location: gpu_allocator::MemoryLocation,
         data: &[u8],
     ) -> Result<BufferHandle, VulkanError> {
-        let buffer = self.create_buffer(name, data.len(), usage, location)?;
-        self.update_data_to_buffer(buffer, 0, data)?;
-        Ok(buffer)
+        let buffer_key = self
+            .resource_manager
+            .create_buffer(name, data.len(), usage, location)?;
+        let buffer_handle = BufferHandle::Persistent(buffer_key);
+
+        let buffer = self.resource_manager.buffers.get_mut(buffer_key).unwrap();
+
+        if let Some(mapped_slice) = buffer.buffer.allocation.mapped_slice_mut() {
+            mapped_slice[0..data.len()].copy_from_slice(data);
+        } else {
+            let mut staging_buffer = Buffer::new(
+                self.device.clone(),
+                "Stating Buffer",
+                data.len() as vk::DeviceSize,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                gpu_allocator::MemoryLocation::CpuToGpu,
+            )?;
+
+            let mut_slice = match staging_buffer.allocation.mapped_slice_mut() {
+                None => return Err(VulkanError::Vk(vk::Result::ERROR_MEMORY_MAP_FAILED)),
+                Some(mut_slice) => mut_slice,
+            };
+            mut_slice[0..data.len()].copy_from_slice(data);
+
+            let staging_handle =
+                BufferHandle::Persistent(self.resource_manager.add_buffer(staging_buffer));
+
+            self.upload_queue.add_buffer_upload(
+                BufferOffset {
+                    buffer: staging_handle,
+                    offset: 0,
+                },
+                BufferOffset {
+                    buffer: buffer_handle,
+                    offset: 0,
+                },
+                data.len(),
+            );
+
+            //Destroy stating buffer once frame is done
+            self.destroy_buffer(staging_handle);
+        }
+
+        //let buffer = self.create_buffer(name, data.len(), usage, location)?;
+        //self.update_data_to_buffer(buffer, 0, data)?;
+        Ok(BufferHandle::Persistent(buffer_key))
+    }
+
+    pub fn destroy_buffer(&mut self, buffer_handle: BufferHandle) {
+        match buffer_handle {
+            BufferHandle::Persistent(key) => self.resource_manager.remove_buffer(key),
+            BufferHandle::Transient(index) => {
+                error!("Transient buffer {index} cannot be destroyed, this shouldn't happen")
+            }
+        }
     }
 
     pub fn create_image(
@@ -376,11 +382,9 @@ impl Device {
         let mut staging_buffer = Buffer::new(
             self.device.clone(),
             "Stating Buffer",
-            &BufferDescription {
-                size: data.len() as vk::DeviceSize,
-                usage: vk::BufferUsageFlags::TRANSFER_SRC,
-                location: gpu_allocator::MemoryLocation::CpuToGpu,
-            },
+            data.len() as vk::DeviceSize,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            gpu_allocator::MemoryLocation::CpuToGpu,
         )?;
 
         let mut_slice = match staging_buffer.allocation.mapped_slice_mut() {

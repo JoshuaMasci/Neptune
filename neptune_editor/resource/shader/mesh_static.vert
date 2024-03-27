@@ -28,7 +28,6 @@ layout(push_constant) uniform PushConstants
 
 void main() {
     mat4 model_matrix = ModelMatrices[push_constants.model_matrices_index].model_matrices[gl_InstanceIndex];
-    //mat4 model_matrix = mat4(1.0);
     mat4 mvp_matrix = Matrices[push_constants.view_projection_matrix_index].view_projection_matrix * model_matrix;
     gl_Position = mvp_matrix * vec4(position, 1.0);
 

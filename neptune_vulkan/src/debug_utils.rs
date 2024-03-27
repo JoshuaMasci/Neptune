@@ -110,14 +110,12 @@ unsafe extern "system" fn vulkan_debug_callback(
         CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
-    if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE {
-        trace!("{:?}", message);
-    } else if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
-        info!("{:?}", message);
-    } else if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
-        warn!("{:?}", message);
-    } else if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
-        error!("{:?}", message);
+    match message_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => trace!("{:?}", message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => info!("{:?}", message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!("{:?}", message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => error!("{:?}", message),
+        _ => info!("Unknown Severity {:?}: {:?}", message_severity, message),
     }
 
     vk::FALSE

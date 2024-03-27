@@ -406,14 +406,21 @@ impl RenderGraphExecutor {
             }
         }
 
+        let read_staging_buffer =
+            resource_manager.get_read_staging_buffer(&render_graph.buffer_reads, &buffers)?;
+
         //Buffer Writes/Reads
-        resource_manager.read_buffers(&render_graph.buffer_reads);
 
         let submit_queue = self.device.graphics_queue.unwrap().handle;
 
         for (command_buffer_index, graph_command_buffer) in
             render_graph.command_buffers.iter().enumerate()
         {
+            //TODO: change these when multi-queue is implemented
+            let is_first_command_buffer = command_buffer_index == 0;
+            let is_last_command_buffer =
+                command_buffer_index == render_graph.command_buffers.len() - 1;
+
             //TODO: multi-queue
             let vulkan_command_buffer = frame_context.graphics_command_pool.get()?;
 
@@ -424,7 +431,16 @@ impl RenderGraphExecutor {
                 )?;
 
                 //TODO: Properly schedule and barrier staging uploads
-                {
+                //TODO: Make a separate command_buffer?
+                if is_first_command_buffer {
+                    if let Some(debug_util) = &self.device.instance.debug_utils {
+                        debug_util.cmd_begin_label(
+                            vulkan_command_buffer,
+                            "Staging Buffer Upload",
+                            [0.0, 1.0, 1.0, 1.0],
+                        );
+                    }
+
                     self.device.core.cmd_pipeline_barrier2(
                         vulkan_command_buffer,
                         &vk::DependencyInfo::builder()
@@ -457,6 +473,10 @@ impl RenderGraphExecutor {
                                     .build()]),
                         );
                     }
+
+                    if let Some(debug_util) = &self.device.instance.debug_utils {
+                        debug_util.cmd_end_label(vulkan_command_buffer);
+                    }
                 }
 
                 //Bind descriptor set
@@ -482,7 +502,7 @@ impl RenderGraphExecutor {
                     debug_util.cmd_begin_label(
                         vulkan_command_buffer,
                         &format!("Command Buffer {}", command_buffer_index),
-                        [1.0; 4],
+                        [1.0, 1.0, 0.0, 1.0],
                     );
                 }
 
@@ -548,6 +568,61 @@ impl RenderGraphExecutor {
                             .image_memory_barriers(&swapchain_transitions)
                             .build(),
                     );
+                }
+
+                //TODO: Properly schedule and barrier staging downloads
+                //TODO: Make a separate command_buffer?
+                if is_last_command_buffer {
+                    if let Some(debug_util) = &self.device.instance.debug_utils {
+                        debug_util.cmd_begin_label(
+                            vulkan_command_buffer,
+                            "Staging Buffer Download",
+                            [1.0, 0.0, 1.0, 1.0],
+                        );
+                    }
+
+                    if let Some(staging_reads) = &read_staging_buffer {
+                        self.device.core.cmd_pipeline_barrier2(
+                            vulkan_command_buffer,
+                            &vk::DependencyInfo::builder()
+                                .memory_barriers(&[vk::MemoryBarrier2::builder()
+                                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                                    .src_access_mask(
+                                        vk::AccessFlags2::MEMORY_READ
+                                            | vk::AccessFlags2::MEMORY_WRITE,
+                                    )
+                                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                                    .dst_access_mask(
+                                        vk::AccessFlags2::MEMORY_READ
+                                            | vk::AccessFlags2::MEMORY_WRITE,
+                                    )
+                                    .build()])
+                                .build(),
+                        );
+
+                        let dst_buffer = &staging_reads.staging_buffer;
+                        for staging_copy in staging_reads.copies_required.iter() {
+                            let src_buffer = &mut buffers[staging_copy.buffer_offset.buffer];
+                            src_buffer.last_access = BufferResourceAccess::TransferRead;
+                            self.device.core.cmd_copy_buffer2(
+                                vulkan_command_buffer,
+                                &vk::CopyBufferInfo2::builder()
+                                    .src_buffer(src_buffer.buffer.handle)
+                                    .dst_buffer(dst_buffer.buffer.handle)
+                                    .regions(&[vk::BufferCopy2::builder()
+                                        .src_offset(
+                                            staging_copy.buffer_offset.offset as vk::DeviceSize,
+                                        )
+                                        .dst_offset(staging_copy.staging_offset as vk::DeviceSize)
+                                        .size(staging_copy.read_size as vk::DeviceSize)
+                                        .build()]),
+                            );
+                        }
+                    }
+
+                    if let Some(debug_util) = &self.device.instance.debug_utils {
+                        debug_util.cmd_end_label(vulkan_command_buffer);
+                    }
                 }
 
                 self.device.core.end_command_buffer(vulkan_command_buffer)?;
