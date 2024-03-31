@@ -402,6 +402,10 @@ impl Sdl2Platform {
                     }
                 }
                 Event::ControllerButtonDown { which, button, .. } => {
+                    if button == sdl2::controller::Button::Back {
+                        panic!("This is a debug quit method for SteamDeck testing!!!!!!");
+                    }
+
                     if let Some(controller) = self.controllers.get(&which) {
                         if let Some(binding) = controller.button_bindings.get(&button) {
                             self.process_button_event(app, *binding, ButtonState::Pressed);
