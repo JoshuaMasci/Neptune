@@ -124,12 +124,12 @@ impl InputEventReceiver for Player {
 
     fn on_button_event(&mut self, button_name: StaticString, state: ButtonState) -> bool {
         match button_name {
-            "player_move_sprint" => {
-                self.is_sprinting = state.is_down();
+            "player_jump" => {
+                self.is_jumping = state.is_down() && self.character.on_ground();
                 true
             }
-            "player_jump" => {
-                self.is_jumping = state.is_down();
+            "player_move_sprint" => {
+                self.is_sprinting = state.is_down();
                 true
             }
             _ => false,

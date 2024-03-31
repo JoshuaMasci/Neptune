@@ -383,6 +383,10 @@ impl Sdl2Platform {
                                 sdl2::controller::Button::A,
                                 ButtonBinding::Button("player_jump"),
                             );
+                            controller.button_bindings.insert(
+                                sdl2::controller::Button::RightShoulder,
+                                ButtonBinding::Button("player_move_sprint"),
+                            );
                         }
 
                         let _ = self.controllers.insert(which, controller);
