@@ -55,7 +55,7 @@ impl PhysicsWorld {
     }
 
     pub fn step(&mut self, delta_time: f32) {
-        let gravity = vector![0.0, 0.0, 0.0];
+        let gravity = vector![0.0, -9.8, 0.0];
 
         let physics_hooks = ();
         let event_handler = ();

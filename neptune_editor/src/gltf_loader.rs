@@ -5,10 +5,10 @@ use crate::mesh::{
 use anyhow::anyhow;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use gltf::image::Format;
-use gltf::material::NormalTexture;
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use neptune_vulkan::gpu_allocator::MemoryLocation;
 use neptune_vulkan::{vk, AddressMode, FilterMode, ImageHandle, SamplerHandle};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn neptune_address_mode(mode: WrappingMode) -> AddressMode {
@@ -46,7 +46,15 @@ pub fn load_samplers(
 
     let mut samplers = Vec::with_capacity(gltf_doc.samplers().len());
     for gltf_sampler in gltf_doc.samplers() {
-        let name = gltf_sampler.name().unwrap_or("Unnamed Sampler");
+        let name = gltf_sampler
+            .name()
+            .map(|str| str.to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "Unnamed Sampler {}",
+                    gltf_sampler.index().unwrap_or_default()
+                )
+            });
 
         let address_mode_u = neptune_address_mode(gltf_sampler.wrap_s());
         let address_mode_v = neptune_address_mode(gltf_sampler.wrap_t());
@@ -81,7 +89,7 @@ pub fn load_samplers(
             unnormalized_coordinates: false,
         };
 
-        samplers.push(device.create_sampler(name, &description)?);
+        samplers.push(device.create_sampler(&name, &description)?);
     }
 
     Ok(GltfSamplers {
@@ -97,10 +105,12 @@ pub fn load_images(
 ) -> anyhow::Result<Vec<ImageHandle>> {
     let mut images = Vec::with_capacity(gltf_doc.images().len());
     for gltf_image in gltf_doc.images() {
-        let name = gltf_image.name().unwrap_or("Unnamed Image");
+        let name = gltf_image
+            .name()
+            .map(|str| str.to_string())
+            .unwrap_or_else(|| format!("Unnamed Image {}", gltf_image.index()));
 
         let gltf_image_data = &gltf_images[gltf_image.index()];
-
         let mut format = match gltf_image_data.format {
             Format::R8 => vk::Format::R8_UNORM,
             Format::R8G8 => vk::Format::R8G8_UNORM,
@@ -145,7 +155,7 @@ pub fn load_images(
             location: MemoryLocation::GpuOnly,
         };
 
-        images.push(device.create_image_init(name, &description, image_data_slice)?);
+        images.push(device.create_image_init(&name, &description, image_data_slice)?);
     }
 
     Ok(images)
@@ -159,11 +169,13 @@ pub fn load_meshes(
     let mut meshes = Vec::with_capacity(gltf_doc.meshes().len());
 
     for gltf_mesh in gltf_doc.meshes() {
+        let name = gltf_mesh
+            .name()
+            .map(|str| str.to_string())
+            .unwrap_or_else(|| format!("Unnamed Mesh {}", gltf_mesh.index()));
+
         let mut mesh = Mesh {
-            name: gltf_mesh
-                .name()
-                .map(|str| str.to_string())
-                .unwrap_or(String::from("Unnamed Mesh")),
+            name,
             primitives: Vec::new(),
         };
 
@@ -327,17 +339,18 @@ pub fn load_materials(
     gltf_doc
         .materials()
         .map(|gltf_material| {
-            info!(
-                "Material {} Alpha: {:?}",
-                gltf_material.name().unwrap_or("Unnamed Material"),
-                gltf_material.alpha_mode()
-            );
+            let name = gltf_material
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| {
+                    format!(
+                        "Unnamed Material {}",
+                        gltf_material.index().unwrap_or_default()
+                    )
+                });
 
             Material {
-                name: gltf_material
-                    .name()
-                    .unwrap_or("Unnamed Material")
-                    .to_string(),
+                name,
                 alpha_blending: gltf_material.alpha_mode() == gltf::material::AlphaMode::Blend,
                 base_color: gltf_material
                     .pbr_metallic_roughness()
@@ -401,7 +414,6 @@ fn load_material_texture(
         uv_index,
     }
 }
-
 pub struct GltfScene {
     pub meshes: Vec<Mesh>,
     pub images: Vec<ImageHandle>,
@@ -442,8 +454,10 @@ pub fn load_gltf_scene<P: AsRef<std::path::Path>>(
 
     let mut mesh_nodes = Vec::new();
 
-    for root_node in gltf_doc.default_scene().unwrap().nodes() {
-        gltf_node(Mat4::IDENTITY, &mut mesh_nodes, &root_node);
+    if let Some(scene) = gltf_doc.default_scene() {
+        for root_node in scene.nodes() {
+            gltf_node(Mat4::IDENTITY, &mut mesh_nodes, &root_node);
+        }
     }
 
     Ok(GltfScene {
@@ -473,4 +487,29 @@ fn gltf_node(parent_transform: Mat4, mesh_nodes: &mut Vec<GltfNode>, node: &gltf
     for child in node.children() {
         gltf_node(world_transform, mesh_nodes, &child);
     }
+}
+
+pub struct GltfResources {
+    pub meshes: HashMap<String, Mesh>,
+    pub materials: HashMap<String, Material>,
+}
+
+pub fn load_gltf_resources<P: AsRef<std::path::Path>>(
+    device: &mut neptune_vulkan::Device,
+    path: P,
+) -> anyhow::Result<GltfResources> {
+    let mut gltf_scene = load_gltf_scene(device, path)?;
+
+    Ok(GltfResources {
+        meshes: gltf_scene
+            .meshes
+            .drain(..)
+            .map(|mesh| (mesh.name.clone(), mesh))
+            .collect(),
+        materials: gltf_scene
+            .materials
+            .drain(..)
+            .map(|material| (material.name.clone(), material))
+            .collect(),
+    })
 }

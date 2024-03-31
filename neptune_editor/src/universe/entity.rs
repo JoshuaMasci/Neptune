@@ -1,10 +1,14 @@
 use crate::transform::Transform;
+use crate::universe::world::World;
 use rapier3d::parry::utils::hashmap::HashMap;
 use std::any::TypeId;
 
 pub trait EntitySystem {
     fn update_pre_physics(&mut self, entity: &mut Entity, delta_time: f32);
-    fn update_pre_post(&mut self, entity: &mut Entity, delta_time: f32);
+    fn update_post_physics(&mut self, entity: &mut Entity, delta_time: f32);
+
+    fn add_to_world(&mut self, world: &mut World, entity: &mut Entity);
+    fn remove_from_world(&mut self, world: &mut World, entity: &mut Entity);
 }
 
 pub trait EntityComponent {}
@@ -40,7 +44,7 @@ pub trait NodeComponent {}
 pub struct Node {
     name: String,
     local_transform: Transform,
-    //global_transform: Transform,
+    root_transform: Transform,
     components: HashMap<TypeId, Box<dyn NodeComponent>>,
     children: Vec<NodeIndex>,
 }

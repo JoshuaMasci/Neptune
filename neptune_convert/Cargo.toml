@@ -1,0 +1,16 @@
+[package]
+name = "neptune_convert"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+pretty_env_logger = "0.5.0"
+
+anyhow = "1.0.72"
+thiserror = "1.0.58"
+serde = "1.0.183"
+
+glam = "0.25.0"
+gltf = { version =  "1.2.0", features = ["utils"] }
+clap = { version = "4.4.0", features = ["derive"] }

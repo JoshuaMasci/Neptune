@@ -3,7 +3,7 @@ use crate::game::entity::StaticEntity;
 use crate::game::player::Player;
 use crate::game::ship::{Module, ModuleType, Ship};
 use crate::game::world::{World, WorldData};
-use crate::gltf_loader::load_gltf_scene;
+use crate::gltf_loader::{load_gltf_resources, load_gltf_scene};
 use crate::input::{ButtonState, InputEventReceiver, StaticString};
 use crate::physics::physics_world::{Collider, PhysicsWorld};
 use crate::platform::WindowEventReceiver;
@@ -24,9 +24,6 @@ use std::sync::Arc;
 pub struct EditorConfig {
     #[arg(short, long)]
     pub fullscreen: bool,
-
-    #[arg(short = 'p', long, value_name = "FILE")]
-    pub gltf_scene_path: Option<std::path::PathBuf>,
 }
 
 pub struct Editor {
@@ -334,54 +331,16 @@ impl InputEventReceiver for Editor {
         }
     }
 
-    fn on_text_event(&mut self, text: String) -> bool {
+    fn on_text_event(&mut self, _text: String) -> bool {
         false
     }
 }
 
-fn load_world<P: AsRef<std::path::Path>>(
-    device: &mut neptune_vulkan::Device,
-    path: P,
-) -> anyhow::Result<World> {
-    let gltf_scene = load_gltf_scene(device, path)?;
-
-    let mut world = World {
-        data: WorldData {
-            scene: Scene::new(device, 1024)?,
-            physics: PhysicsWorld::new(),
-        },
-        entities: Default::default(),
-    };
-
-    for node in gltf_scene.mesh_nodes.iter() {
-        let model = Model {
-            name: gltf_scene.meshes[node.mesh_index].name.clone(),
-            primitives: gltf_scene.meshes[node.mesh_index]
-                .primitives
-                .iter()
-                .zip(node.primitive_materials.iter())
-                .map(|(primitive, material_index)| ModelPrimitive {
-                    primitive: primitive.clone(),
-                    material: gltf_scene
-                        .materials
-                        .get(*material_index)
-                        .cloned()
-                        .map(Arc::new),
-                })
-                .collect(),
-        };
-
-        let entity = StaticEntity::new(node.transform.into(), model, None);
-        world.add_static_entity(entity);
-    }
-
-    world.add_player(Player::with_position(Vec3::NEG_Z));
-
-    Ok(world)
-}
-
 fn create_test_world(device: &mut neptune_vulkan::Device) -> anyhow::Result<World> {
-    let gltf_scene = load_gltf_scene(device, "neptune_editor/resource/PurpleCube2.glb")?;
+    let gltf_data = load_gltf_resources(device, "neptune_editor/resource/NeptuneResources.glb")?;
+
+    info!("Available Meshes: {:?}", gltf_data.meshes.keys());
+    info!("Available Materials: {:?}", gltf_data.materials.keys());
 
     let mut world = World {
         data: WorldData {
@@ -391,32 +350,51 @@ fn create_test_world(device: &mut neptune_vulkan::Device) -> anyhow::Result<Worl
         entities: Default::default(),
     };
 
-    let model = Model {
-        name: "Ground".to_string(),
+    let purple_cube_model = Model {
+        name: "PurpleCube".to_string(),
         primitives: vec![ModelPrimitive {
-            primitive: gltf_scene.meshes[0].primitives[0].clone(),
-            material: gltf_scene.materials.first().cloned().map(Arc::new),
+            primitive: gltf_data.meshes["Cube"].primitives[0].clone(),
+            material: gltf_data.materials.get("Purple").cloned().map(Arc::new),
         }],
     };
-    let ground_size = Vec3::new(8.0, 0.5, 8.0);
-    let ground_entity = StaticEntity::new(
-        Transform {
-            position: Vec3::NEG_Y * 0.5,
-            scale: ground_size,
-            ..Default::default()
-        },
-        model.clone(),
-        Some(Collider::Box(ground_size)),
-    );
-    world.add_static_entity(ground_entity);
+
+    let orange_cube_model = Model {
+        name: "OrangeCube".to_string(),
+        primitives: vec![ModelPrimitive {
+            primitive: gltf_data.meshes["Cube"].primitives[0].clone(),
+            material: gltf_data.materials.get("Orange").cloned().map(Arc::new),
+        }],
+    };
+
+    {
+        let ground_size = Vec3::new(8.0, 0.5, 8.0);
+        world.add_static_entity(StaticEntity::new(
+            Transform {
+                position: Vec3::NEG_Y * 0.5,
+                scale: ground_size,
+                ..Default::default()
+            },
+            orange_cube_model.clone(),
+            Some(Collider::Box(ground_size)),
+        ));
+        world.add_static_entity(StaticEntity::new(
+            Transform {
+                position: (Vec3::NEG_Y * 0.5) + (Vec3::Z * 8.0),
+                scale: ground_size,
+                ..Default::default()
+            },
+            orange_cube_model.clone(),
+            Some(Collider::Box(ground_size)),
+        ));
+    }
 
     world.add_player(Player::with_position(Vec3::Y * 3.0));
 
     //Ship
     {
         let module = Module {
-            model: model.clone(),
-            collider: Collider::Box(Vec3::splat(0.5)),
+            model: purple_cube_model.clone(),
+            collider: Collider::Box(Vec3::splat(1.0)),
         };
 
         let ship = Ship {

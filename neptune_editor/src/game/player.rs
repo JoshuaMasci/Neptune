@@ -12,7 +12,8 @@ pub struct Player {
     camera_offset: Vec3,
 
     character: CharacterController,
-    gravity_velocity: Vec3,
+    gravity_acceleration: f32,
+    gravity_velocity: f32,
 
     // Properties
     /// units: m/s
@@ -36,9 +37,10 @@ impl Player {
             camera_offset: Vec3::Y * 0.5,
 
             character: CharacterController::new(),
-            gravity_velocity: Vec3::ZERO,
+            gravity_acceleration: 9.8,
+            gravity_velocity: 0.0,
 
-            linear_speed: Vec3::new(5.0, 5.0, 5.0),
+            linear_speed: Vec3::new(5.0, 0.0, 5.0),
             angular_speed: Vec2::splat(std::f32::consts::PI),
             linear_input: Vec3::ZERO,
             angular_input: Vec2::ZERO,
@@ -77,16 +79,36 @@ impl Entity for Player {
         let up = self.transform.rotation * Vec3::Y;
         self.transform.rotation *= Quat::from_axis_angle(up, angular_movement.y);
 
-        let velocity = self.transform.rotation
+        let mut move_velocity = self.transform.rotation
             * (self.linear_input
                 * self.linear_speed
-                * delta_time
-                * if self.is_sprinting { 10.0 } else { 1.0 });
+                * if self.is_sprinting && self.character.on_ground() {
+                    5.0
+                } else {
+                    1.0
+                });
+
+        if self.character.on_ground() {
+            self.gravity_velocity = 0.0;
+
+            //Bad Jump Code
+            if self.linear_input.y > 0.0 {
+                self.gravity_velocity = -self.gravity_acceleration;
+            }
+        } else {
+            self.gravity_velocity += self.gravity_acceleration * delta_time;
+        }
+
+        if self.gravity_acceleration != 0.0 {
+            move_velocity += self.transform.rotation * (Vec3::NEG_Y * self.gravity_velocity);
+        }
+
+        move_velocity *= delta_time;
 
         self.character.update(
             &mut world_data.physics,
             &mut self.transform,
-            &(velocity + self.gravity_velocity),
+            &move_velocity,
             delta_time,
         );
     }

@@ -3,7 +3,7 @@
 members = [
     "neptune_core",
     "neptune_vulkan",
-    "neptune_editor",
+    "neptune_editor", "neptune_convert",
 ]
 
 # Force rapier3d to always build with optimization

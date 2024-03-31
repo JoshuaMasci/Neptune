@@ -24,9 +24,6 @@ use std::time::Instant;
 pub const APP_NAME: &str = "Neptune Editor";
 
 fn main() -> anyhow::Result<()> {
-    #[cfg(debug_assertions)]
-    std::env::set_var("RUST_LOG", "TRACE");
-
     pretty_env_logger::init_timed();
 
     let config = EditorConfig::parse();
