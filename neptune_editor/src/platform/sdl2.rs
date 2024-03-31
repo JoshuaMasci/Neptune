@@ -9,7 +9,7 @@ use std::collections::HashMap;
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum ButtonAxisDirection {
     Positive,
-    Negitive,
+    Negative,
 }
 
 #[derive(Default, Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -23,7 +23,7 @@ impl ButtonAxisState {
         let state = state.is_down();
         match dir {
             ButtonAxisDirection::Positive => self.positive_state = state,
-            ButtonAxisDirection::Negitive => self.negative_state = state,
+            ButtonAxisDirection::Negative => self.negative_state = state,
         }
     }
 
@@ -182,7 +182,7 @@ impl Sdl2Platform {
             Keycode::D,
             ButtonBinding::Axis {
                 name: "player_move_left_right",
-                direction: ButtonAxisDirection::Negitive,
+                direction: ButtonAxisDirection::Negative,
             },
         );
 
@@ -197,7 +197,7 @@ impl Sdl2Platform {
             Keycode::LCtrl,
             ButtonBinding::Axis {
                 name: "player_move_up_down",
-                direction: ButtonAxisDirection::Negitive,
+                direction: ButtonAxisDirection::Negative,
             },
         );
 
@@ -212,10 +212,11 @@ impl Sdl2Platform {
             Keycode::S,
             ButtonBinding::Axis {
                 name: "player_move_forward_back",
-                direction: ButtonAxisDirection::Negitive,
+                direction: ButtonAxisDirection::Negative,
             },
         );
 
+        key_bindings.insert(Keycode::Space, ButtonBinding::Button("player_jump"));
         key_bindings.insert(Keycode::LShift, ButtonBinding::Button("player_move_sprint"));
 
         let mouse_button_bindings = HashMap::new();
@@ -338,42 +339,49 @@ impl Sdl2Platform {
 
                         //TODO: load config from file
                         {
-                            let _ = controller.axis_bindings.insert(
+                            const DEADZONE_VALUE: f32 = 0.2;
+
+                            controller.axis_bindings.insert(
                                 sdl2::controller::Axis::LeftX,
                                 ControllerAxisBinding {
                                     name: "player_move_left_right",
                                     sensitivity: 1.0,
-                                    deadzone: 0.1,
+                                    deadzone: DEADZONE_VALUE,
                                     inverted: true,
                                 },
                             );
-                            let _ = controller.axis_bindings.insert(
+                            controller.axis_bindings.insert(
                                 sdl2::controller::Axis::LeftY,
                                 ControllerAxisBinding {
                                     name: "player_move_forward_back",
                                     sensitivity: 1.0,
-                                    deadzone: 0.1,
+                                    deadzone: DEADZONE_VALUE,
                                     inverted: true,
                                 },
                             );
 
-                            let _ = controller.axis_bindings.insert(
+                            controller.axis_bindings.insert(
                                 sdl2::controller::Axis::RightX,
                                 ControllerAxisBinding {
                                     name: "player_move_yaw",
                                     sensitivity: 0.75,
-                                    deadzone: 0.1,
+                                    deadzone: DEADZONE_VALUE,
                                     inverted: false,
                                 },
                             );
-                            let _ = controller.axis_bindings.insert(
+                            controller.axis_bindings.insert(
                                 sdl2::controller::Axis::RightY,
                                 ControllerAxisBinding {
                                     name: "player_move_pitch",
                                     sensitivity: 0.75,
-                                    deadzone: 0.1,
+                                    deadzone: DEADZONE_VALUE,
                                     inverted: false,
                                 },
+                            );
+
+                            controller.button_bindings.insert(
+                                sdl2::controller::Button::A,
+                                ButtonBinding::Button("player_jump"),
                             );
                         }
 
@@ -390,15 +398,16 @@ impl Sdl2Platform {
                     }
                 }
                 Event::ControllerButtonDown { which, button, .. } => {
-                    if let Some(controller) = self.controllers.get_mut(&which) {
-                        if button == sdl2::controller::Button::RightShoulder {
-                            if let Err(err) = controller.controller.set_rumble(0, u16::MAX, 128) {
-                                error!("Rumble not supported: {}", err);
-                            }
-                        } else if button == sdl2::controller::Button::LeftShoulder {
-                            if let Err(err) = controller.controller.set_rumble(u16::MAX, 0, 128) {
-                                error!("Rumble not supported: {}", err);
-                            }
+                    if let Some(controller) = self.controllers.get(&which) {
+                        if let Some(binding) = controller.button_bindings.get(&button) {
+                            self.process_button_event(app, *binding, ButtonState::Pressed);
+                        }
+                    }
+                }
+                Event::ControllerButtonUp { which, button, .. } => {
+                    if let Some(controller) = self.controllers.get(&which) {
+                        if let Some(binding) = controller.button_bindings.get(&button) {
+                            self.process_button_event(app, *binding, ButtonState::Released);
                         }
                     }
                 }

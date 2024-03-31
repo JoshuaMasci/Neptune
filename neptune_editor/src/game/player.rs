@@ -26,6 +26,7 @@ pub struct Player {
     linear_input: Vec3,
     angular_input: Vec2,
     is_sprinting: bool,
+    is_jumping: bool,
 }
 
 impl Player {
@@ -45,6 +46,7 @@ impl Player {
             linear_input: Vec3::ZERO,
             angular_input: Vec2::ZERO,
             is_sprinting: false,
+            is_jumping: false,
         }
     }
 
@@ -92,8 +94,9 @@ impl Entity for Player {
             self.gravity_velocity = 0.0;
 
             //Bad Jump Code
-            if self.linear_input.y > 0.0 {
+            if self.is_jumping {
                 self.gravity_velocity = -self.gravity_acceleration;
+                self.is_jumping = false;
             }
         } else {
             self.gravity_velocity += self.gravity_acceleration * delta_time;
@@ -125,6 +128,10 @@ impl InputEventReceiver for Player {
                 self.is_sprinting = state.is_down();
                 true
             }
+            "player_jump" => {
+                self.is_jumping = state.is_down();
+                true
+            }
             _ => false,
         }
     }
@@ -135,10 +142,10 @@ impl InputEventReceiver for Player {
                 self.linear_input.x = value;
                 true
             }
-            "player_move_up_down" => {
-                self.linear_input.y = value;
-                true
-            }
+            // "player_move_up_down" => {
+            //     self.linear_input.y = value;
+            //     true
+            // }
             "player_move_forward_back" => {
                 self.linear_input.z = value;
                 true
