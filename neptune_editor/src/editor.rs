@@ -151,6 +151,9 @@ impl Editor {
         //let world = load_world(&mut device, gltf_scene_path)?;
         let world = create_test_world(&mut device)?;
 
+        let new_world = crate::universe::world::init_test_world();
+        drop(new_world);
+
         Ok(Self {
             instance,
             surface_handle,
